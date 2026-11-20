@@ -22,6 +22,9 @@ données exploitable (comptes rendus structurés, actions, prochaines étapes).
 | Visibilité des CR | Pas de préférence exprimée : **proposition** = CR visible par les intervenants du client et leur hiérarchie, plus un champ « note privée » réservé à l'auteur **[À VALIDER]** | Un client partagé implique que l'historique est commun ; la note privée limite le risque de fuite d'informations sensibles |
 | Fournisseur transcription/IA | Non choisi, à comparer | Comparatif à produire (traitement UE, langues, coût, DPA) à partir de sources vérifiées |
 | MDM | NinjaOne | Distribution et politiques de l'appli via NinjaOne ; à vérifier : plateformes mobiles gérées (iOS/Android), mode de déploiement d'une appli privée, configuration à distance (AppConfig), effacement à distance |
+| Volume de dictée | ~10 h d'audio par commercial et par mois | Base de calcul du budget : 10 h/mois/utilisateur, à comparer au plafond de 30 € |
+| Parc | Mixte iOS + Android, géré par NinjaOne | Appli multiplateforme, tests sur les deux systèmes ; dictée native différente selon l'OS |
+| Authentification | Pas de SSO, comptes propres | Gestion des comptes dans le back : mots de passe (hachage), réinitialisation, authentification à deux facteurs, verrouillage, désactivation à distance ; à prévoir dans le périmètre et le budget |
 | Budget IA | 30 € maximum par mois et par utilisateur (transcription + IA) | Contrainte de coût à vérifier sur chaque fournisseur : volume mensuel d'audio estimé par commercial à définir, plafond/quotas par utilisateur à prévoir dans le back |
 | Données | Hébergement UE obligatoire | Fournisseurs transcription/IA limités à ceux qui traitent dans l'UE (ou auto-hébergement UE) ; contrat de sous-traitance (DPA) ; pas de transfert hors UE |
 
@@ -36,7 +39,7 @@ données exploitable (comptes rendus structurés, actions, prochaines étapes).
 ## 3. Périmètre fonctionnel
 
 ### MVP (v1)
-1. **Authentification** : SSO/e-mail + déverrouillage biométrique de l'appli.
+1. **Authentification** : comptes propres (e-mail + mot de passe, double authentification) + déverrouillage biométrique de l'appli.
 2. **Clients / contacts** : liste, recherche, fiche (société, contacts, adresse, historique des visites, actions ouvertes). Création rapide sur le terrain.
 3. **Visites** : planifier, voir l'agenda du jour/semaine, démarrer, clôturer, annuler/reporter.
 4. **Compte rendu** : champs structurés (objet, participants, résumé, besoins, objections, concurrents, décisions, prochaine étape, statut/température de l'opportunité) + notes libres + photos.
@@ -122,7 +125,7 @@ Garde-fous :
 
 ## 11. Questions ouvertes
 
-1. Quel parc géré par NinjaOne (iOS/Android, modèles, versions minimales) et quel fournisseur d'identité pour le SSO ?
+1. Versions minimales d'iOS et d'Android du parc ?
 2. Combien de niveaux hiérarchiques ? Confirmer la règle de visibilité des CR (§1 bis).
-3. Volume de dictée par commercial et par mois (heures d'audio) pour valider le budget de 30 €/utilisateur/mois ?
+3. Qui administre les comptes (création, réinitialisation) : l'IT, les managers, ou en libre-service ?
 4. Import initial des clients : quelle source (fichier, ancien outil) ?
