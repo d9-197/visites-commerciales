@@ -15,6 +15,9 @@ données exploitable (comptes rendus structurés, actions, prochaines étapes).
 | Volume | Grande structure, > 50 utilisateurs | Hiérarchie multi-équipes, droits fins, SSO d'entreprise, administration, montée en charge du back |
 | CRM | Aucun : le back est la source de vérité | Pas d'intégration en v1 ; import initial des clients (CSV) à prévoir ; le modèle de données est le nôtre |
 | Langues | Multilingue | Interface i18n dès le départ ; reconnaissance vocale et IA dans chaque langue ; liste des langues à fixer |
+| Langues précises | Français, anglais, espagnol, italien, allemand, néerlandais | 6 langues à tester en transcription et IA ; glossaire par langue ; langue du CR distincte de la langue de l'interface |
+| Appareils | Parc imposé géré par MDM | Modèle exact (iOS/Android, versions) à communiquer ; distribution et politiques via le MDM ; pas de store public nécessaire |
+| Clients | Partagés entre plusieurs commerciaux | Table d'affectation client-commerciaux ; historique visible par tous les intervenants ; droits par client ; gestion des modifications concurrentes |
 | Données | Hébergement UE obligatoire | Fournisseurs transcription/IA limités à ceux qui traitent dans l'UE (ou auto-hébergement UE) ; contrat de sous-traitance (DPA) ; pas de transfert hors UE |
 
 ## 2. Utilisateurs et rôles [À VALIDER]
@@ -114,8 +117,8 @@ Garde-fous :
 
 ## 11. Questions ouvertes
 
-1. Quelles langues exactement (interface et dictée) ? Un même commercial dicte-t-il en plusieurs langues ?
-2. Appareils : iOS, Android ou les deux ? Gestion via MDM ? SSO d'entreprise (quel fournisseur d'identité) ?
-3. Organisation : combien de niveaux hiérarchiques, un client peut-il être partagé entre commerciaux ?
+1. Un même commercial dicte-t-il en plusieurs langues (détection automatique ou choix manuel) ?
+2. Quel MDM, quel parc (iOS/Android, modèles, versions) et quel fournisseur d'identité pour le SSO ?
+3. Combien de niveaux hiérarchiques ? Un compte rendu est-il visible par tous les commerciaux du client, ou seulement par son auteur et sa hiérarchie ?
 4. Budget et fournisseur pour transcription et IA (hébergés UE) ?
 5. Import initial des clients : quelle source (fichier, ancien outil) ?
