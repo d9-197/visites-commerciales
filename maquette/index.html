@@ -1,0 +1,249 @@
+<title>Visites commerciales, maquette</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;700&family=Inter:wght@400;500;600&display=swap">
+<style>
+/* Layout: poste de démonstration, panneau de commandes à gauche, téléphone à droite. Données d'exemple. */
+:root{
+  --bg:#EEF0EE; --surface:#FFFFFF; --ink:#14212B; --muted:#5B6A74; --line:#D9DEDC;
+  --accent:#0E6A87; --accent-ink:#FFFFFF; --accent-soft:#DCEDF3;
+  --rec:#CF3F28; --ok:#2B7A4B; --ok-soft:#DDEFE4; --warn:#9A6200; --warn-soft:#F7EACB; --ai:#6B4FB3; --ai-soft:#E9E4F6;
+  --display:'Bricolage Grotesque',system-ui,sans-serif; --body:'Inter',system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0C1317; --surface:#152028; --ink:#E7EDF0; --muted:#98A8B2; --line:#25333D;
+  --accent:#4FB4D3; --accent-ink:#06222C; --accent-soft:#12303B;
+  --rec:#F0745F; --ok:#6CC58D; --ok-soft:#173526; --warn:#E3B04B; --warn-soft:#3A2D10; --ai:#B6A1F0; --ai-soft:#2A2243; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0C1317; --surface:#152028; --ink:#E7EDF0; --muted:#98A8B2; --line:#25333D;
+  --accent:#4FB4D3; --accent-ink:#06222C; --accent-soft:#12303B;
+  --rec:#F0745F; --ok:#6CC58D; --ok-soft:#173526; --warn:#E3B04B; --warn-soft:#3A2D10; --ai:#B6A1F0; --ai-soft:#2A2243; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.4;
+  padding-block:24px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+h1,h2,h3{font-family:var(--display);margin:0;text-wrap:balance}
+button{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.stage{display:flex;gap:32px;justify-content:center;align-items:flex-start;flex-wrap:wrap}
+.side{width:min(100%,300px);display:flex;flex-direction:column;gap:16px}
+.side h1{font-size:24px;line-height:1.1}
+.side p{margin:0;color:var(--muted);font-size:13px}
+.shortcuts{display:flex;flex-direction:column;gap:6px}
+.shortcuts button{text-align:left;border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:9px 12px;font-size:13px}
+.shortcuts button[aria-current="true"]{border-color:var(--accent);background:var(--accent-soft)}
+.ctl{display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:9px 12px;font-size:13px}
+.sw{appearance:none;width:40px;height:24px;border-radius:12px;background:var(--line);position:relative;cursor:pointer;border:0;flex:none}
+.sw::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;transition:transform .15s}
+.sw[aria-checked="true"]{background:var(--accent)}
+.sw[aria-checked="true"]::after{transform:translateX(16px)}
+.phone{width:min(100%,390px);height:780px;max-height:calc(100dvh - 48px);min-height:560px;background:var(--surface);border:1px solid var(--line);border-radius:28px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 12px 40px rgba(10,20,30,.14);position:relative}
+.status{display:flex;justify-content:space-between;align-items:center;padding:10px 18px 6px;font-size:12px;color:var(--muted);flex:none}
+.pill{display:inline-flex;align-items:center;gap:6px;border-radius:99px;padding:3px 10px;font-size:12px;font-weight:600}
+.pill i{width:7px;height:7px;border-radius:50%;background:currentColor}
+.pill.on{background:var(--ok-soft);color:var(--ok)}
+.pill.off{background:var(--warn-soft);color:var(--warn)}
+main{flex:1;overflow-y:auto;padding:4px 18px 20px;display:flex;flex-direction:column;gap:14px}
+.top{display:flex;align-items:center;gap:8px}
+.top h2{font-size:22px;line-height:1.1}
+.back{border:0;background:none;font-size:15px;color:var(--accent);padding:6px 4px;font-weight:600}
+.sub{color:var(--muted);font-size:13px}
+.card{border:1px solid var(--line);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:10px;background:var(--surface)}
+.card.hero{background:var(--accent-soft);border-color:transparent}
+.row{display:flex;gap:10px;align-items:center;justify-content:space-between}
+.row.start{justify-content:flex-start}
+.t{font-weight:600}
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:12px 14px;font-weight:600;min-height:48px;flex:1;text-align:center}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.btn.small{min-height:40px;padding:8px 12px;flex:none}
+.list{display:flex;flex-direction:column}
+.item{display:flex;gap:12px;align-items:center;padding:12px 2px;border-bottom:1px solid var(--line);width:100%;background:none;border-left:0;border-right:0;border-top:0;text-align:left;min-height:56px}
+.item:last-child{border-bottom:0}
+.time{font-variant-numeric:tabular-nums;font-weight:600;min-width:46px}
+.badge{font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;background:var(--line);color:var(--muted);white-space:nowrap}
+.badge.late{background:var(--warn-soft);color:var(--warn)}
+.badge.ai{background:var(--ai-soft);color:var(--ai)}
+.badge.ok{background:var(--ok-soft);color:var(--ok)}
+.label{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+ul.plain{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px}
+.tabs{display:flex;border-top:1px solid var(--line);flex:none;padding-bottom:6px}
+.tabs button{flex:1;border:0;background:none;padding:10px 2px 8px;font-size:11px;font-weight:600;color:var(--muted);display:flex;flex-direction:column;align-items:center;gap:3px;min-height:56px}
+.tabs button[aria-current="true"]{color:var(--accent)}
+.tabs svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.seg{display:flex;background:var(--bg);border-radius:10px;padding:3px;gap:3px}
+.seg button{flex:1;border:0;background:none;border-radius:8px;padding:9px;font-weight:600;font-size:13px;color:var(--muted);min-height:40px}
+.seg button[aria-pressed="true"]{background:var(--surface);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.mic{width:84px;height:84px;border-radius:50%;border:0;background:var(--accent);color:var(--accent-ink);display:grid;place-items:center;margin:4px auto;flex:none}
+.mic svg{width:34px;height:34px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.mic.rec{background:var(--rec);animation:pulse 1.4s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--rec) 45%,transparent)}100%{box-shadow:0 0 0 20px transparent}}
+@media (prefers-reduced-motion:reduce){.mic.rec{animation:none}.bars i{animation:none!important}}
+.bars{display:flex;gap:3px;align-items:center;justify-content:center;height:28px}
+.bars i{width:4px;height:6px;border-radius:2px;background:var(--rec);animation:lv .9s infinite ease-in-out}
+.bars i:nth-child(2n){animation-delay:.2s}.bars i:nth-child(3n){animation-delay:.45s}
+@keyframes lv{50%{height:26px}}
+.timer{font-family:var(--display);font-size:30px;font-variant-numeric:tabular-nums;text-align:center}
+mark{background:var(--ai-soft);color:inherit;border-radius:4px;padding:0 3px}
+.field{display:flex;flex-direction:column;gap:4px;border-bottom:1px solid var(--line);padding-bottom:10px}
+.field:last-of-type{border-bottom:0}
+.raw{font-style:italic;color:var(--muted)}
+.chk{display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--line);min-height:48px;width:100%;background:none;border-left:0;border-right:0;border-top:0;text-align:left}
+.box{width:22px;height:22px;border-radius:6px;border:2px solid var(--muted);flex:none;display:grid;place-items:center;margin-top:1px}
+.box[data-on="true"]{background:var(--ok);border-color:var(--ok)}
+.box[data-on="true"]::after{content:"";width:6px;height:11px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg) translate(-1px,-1px)}
+.done{text-decoration:line-through;color:var(--muted)}
+input[type=search],select{width:100%;border:1px solid var(--line);border-radius:12px;padding:12px;font:inherit;background:var(--surface);color:var(--ink);min-height:48px}
+.toast{position:absolute;left:16px;right:16px;bottom:78px;background:var(--ink);color:var(--bg);padding:12px 14px;border-radius:12px;font-size:13px;font-weight:500}
+.note{border-radius:12px;background:var(--bg);padding:10px 12px;font-size:14px;display:flex;flex-direction:column;gap:2px}
+.avatar{width:38px;height:38px;border-radius:50%;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;font-weight:700;flex:none;font-family:var(--display)}
+.empty{color:var(--muted);text-align:center;padding:20px 0}
+.banner{border-radius:12px;background:var(--warn-soft);color:var(--warn);padding:10px 12px;font-size:13px;font-weight:500}
+.ex{font-size:11px;color:var(--muted);text-align:center}
+</style>
+
+<div class="stage">
+  <aside class="side">
+    <div><h1>Visites commerciales</h1><p>Maquette cliquable. Toutes les données sont des exemples.</p></div>
+    <div class="shortcuts" id="shortcuts"></div>
+    <div class="ctl"><span>Simuler le mode hors-ligne</span><button class="sw" id="offSw" role="switch" aria-checked="false" aria-label="Mode hors-ligne"></button></div>
+    <p>Hors-ligne : la saisie fonctionne, la transcription et l'IA attendent le retour du réseau.</p>
+  </aside>
+  <div class="phone" id="phone">
+    <div class="status"><span id="clock">10:24</span><span id="net"></span></div>
+    <main id="screen"></main>
+    <nav class="tabs" id="tabs" aria-label="Navigation"></nav>
+  </div>
+</div>
+
+<script>
+const ic={
+ today:'<svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>',
+ clients:'<svg viewBox="0 0 24 24"><path d="M3 20V8l9-4 9 4v12M9 20v-6h6v6"/></svg>',
+ actions:'<svg viewBox="0 0 24 24"><path d="M5 12l4.5 4.5L19 7"/></svg>',
+ settings:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/></svg>',
+ mic:'<svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>'
+};
+const CLIENTS=[
+ {id:'dup',name:'Dupont SA',city:'Lyon',addr:'12 rue des Lilas, Lyon',last:'12 oct.',contacts:[['M. Martin','Directeur achats'],['Mme Leroy','Responsable technique']]},
+ {id:'rou',name:'Atelier Roux',city:'Villeurbanne',addr:'8 quai Jean Moulin, Villeurbanne',last:'28 sept.',contacts:[['Mme Roux','Gérante']]},
+ {id:'ber',name:'Groupe Bernard',city:'Grenoble',addr:'41 avenue de la Gare, Grenoble',last:'3 oct.',contacts:[['M. Bernard','PDG'],['M. Faure','Acheteur']]},
+ {id:'van',name:'Van Dijk Logistics',city:'Rotterdam',addr:'Maasboulevard 14, Rotterdam',last:'19 sept.',contacts:[['Mw. de Vries','Inkoop']]}
+];
+const AGENDA=[{t:'10:30',c:'dup',type:'Suivi offre B'},{t:'14:00',c:'rou',type:'Démonstration'},{t:'16:30',c:'ber',type:'Renouvellement'}];
+const S={screen:'today',client:'dup',tab:'Visites',off:false,rec:false,secs:0,notes:[],cr:'ia',actions:[
+ {id:1,txt:'Envoyer le devis offre B',c:'dup',due:'22 nov.',late:true,done:false},
+ {id:2,txt:'Rappeler Mme Roux',c:'rou',due:'20 nov.',late:false,done:false},
+ {id:3,txt:'Envoyer la fiche technique',c:'ber',due:'18 nov.',late:true,done:false},
+ {id:4,txt:'Confirmer le rendez-vous de décembre',c:'van',due:'2 déc.',late:false,done:true}],
+ filter:'Ouvertes',q:'',toast:'',crActs:[true,true],validated:false};
+let timer=null,toastT=null;
+const $=s=>document.querySelector(s);
+const cl=id=>CLIENTS.find(c=>c.id===id);
+const fmt=s=>String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');
+const esc=s=>s.replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+function toast(m){S.toast=m;render();clearTimeout(toastT);toastT=setTimeout(()=>{S.toast='';render()},2600)}
+function go(s,p){if(p)Object.assign(S,p);S.screen=s;render();$('#screen').scrollTop=0}
+const SCREENS=[['today','Aujourd’hui'],['prep','Préparation de visite'],['visit','Visite en cours'],['cr','Compte rendu'],['clients','Clients'],['client','Fiche client'],['actions','Actions'],['settings','Réglages']];
+const TABS={today:'today',prep:'today',visit:'today',cr:'today',clients:'clients',client:'clients',actions:'actions',settings:'settings'};
+function netPill(){return S.off?'<span class="pill off"><i></i>Hors-ligne · 2 en attente</span>':'<span class="pill on"><i></i>Synchronisé</span>'}
+function back(to,label){return `<div class="top"><button class="back" data-go="${to}">‹ ${label}</button></div>`}
+
+const V={
+today(){return `
+ <div><h2>Jeudi 20 novembre</h2><div class="sub">3 visites aujourd'hui</div></div>
+ <div class="card hero"><div class="row"><span class="label">Prochaine visite</span><span class="time">10:30</span></div>
+  <div><div class="t" style="font-size:18px">Dupont SA · M. Martin</div><div class="sub">12 rue des Lilas, Lyon · Suivi offre B</div></div>
+  <div class="row"><button class="btn small" data-go="prep">Préparer</button><button class="btn primary" data-start>Démarrer la visite</button></div></div>
+ <div class="label">Plus tard</div>
+ <div class="list">${AGENDA.slice(1).map(a=>`<button class="item" data-client="${a.c}"><span class="time">${a.t}</span><span style="flex:1"><div class="t">${cl(a.c).name}</div><div class="sub">${a.type} · ${cl(a.c).city}</div></span><span class="sub">›</span></button>`).join('')}</div>
+ <button class="card" style="text-align:left" data-go="actions"><div class="row"><span class="t">Actions en retard</span><span class="badge late">${S.actions.filter(a=>a.late&&!a.done).length}</span></div><div class="sub">Envoyer le devis offre B · Envoyer la fiche technique</div></button>`},
+prep(){const c=cl('dup');return back('today','Aujourd’hui')+`
+ <div><h2>${c.name}</h2><div class="sub">Dernière visite : ${c.last} · Suivi offre B</div></div>
+ <div class="card"><div class="row"><span class="label">Résumé de la dernière visite</span><span class="badge ai">IA · à vérifier</span></div>
+  <ul class="plain"><li>M. Martin est intéressé par l'offre B.</li><li>Budget non confirmé.</li><li>Concurrent mentionné : Alpha Systèmes.</li></ul>
+  ${S.off?'<div class="banner">Hors-ligne : résumé du 12 oct. gardé sur l\'appareil, pas de nouvelle synthèse.</div>':''}</div>
+ <div class="card"><span class="label">Actions ouvertes</span><div class="row start"><div class="box" data-on="false"></div><div><div class="t">Envoyer le devis offre B</div><div class="sub">avant le 22 nov.</div></div></div></div>
+ <div class="card"><span class="label">Participants attendus</span>${c.contacts.map(p=>`<div class="row start"><div class="avatar">${p[0].split(' ')[1][0]}</div><div><div class="t">${p[0]}</div><div class="sub">${p[1]}</div></div></div>`).join('')}</div>
+ <button class="btn primary" data-start>Démarrer la visite</button>`},
+visit(){return `
+ <div class="top"><h2 style="flex:1">Dupont SA</h2><span class="badge ok">En cours</span></div>
+ <div class="timer" id="tm">${fmt(S.secs)}</div>
+ ${S.rec?'<div class="bars" aria-hidden="true">'+'<i></i>'.repeat(14)+'</div>':'<div class="sub" style="text-align:center">Appuyez pour dicter une note</div>'}
+ <button class="mic ${S.rec?'rec':''}" data-mic aria-label="${S.rec?'Arrêter l\'enregistrement':'Dicter une note'}">${ic.mic}</button>
+ <div class="row"><button class="btn small" data-note="text" style="flex:1">+ Texte</button><button class="btn small" data-note="photo" style="flex:1">+ Photo</button></div>
+ <div class="label">Notes de la visite</div>
+ ${S.notes.length?S.notes.map(n=>`<div class="note"><span class="sub">${n.t} · ${n.k}</span><span>${n.x}</span></div>`).join(''):'<div class="empty">Aucune note pour l\'instant.</div>'}
+ <button class="btn primary" data-go="cr" style="flex:none">Terminer et rédiger le compte rendu</button>`},
+cr(){
+ const off=S.off,ia=S.cr==='ia'&&!off;
+ const raw='<span class="raw">« alors euh monsieur Martin est intéressé par l\'offre B mais il n\'a pas confirmé le budget il parle de quarante k euro, il faut qu\'on lui envoie un devis avant jeudi prochain et rappeler la responsable technique »</span>';
+ return back('visit','Visite')+`<div><h2>Compte rendu</h2><div class="sub">Dupont SA · 20 nov. · 00:${String(Math.max(S.secs,23)).padStart(2,'0')}</div></div>
+ <div class="seg" role="group"><button data-cr="orig" aria-pressed="${!ia}">Dictée d'origine</button><button data-cr="ia" aria-pressed="${ia}">Proposé par l'IA</button></div>
+ ${off?'<div class="banner">Hors-ligne : la dictée est enregistrée. Transcription et proposition IA à la reconnexion. Vous pouvez saisir à la main.</div>':''}
+ ${ia?`
+ <div class="card">
+  <div class="field"><span class="label">Résumé</span><span>M. Martin est intéressé par l'<mark>offre B</mark>. Le budget n'est pas confirmé (<mark>environ 40 k€</mark>).</span></div>
+  <div class="field"><span class="label">Besoins</span><span>Offre B pour son atelier de Lyon.</span></div>
+  <div class="field"><span class="label">Prochaine étape</span><span>Envoyer un devis <mark>avant jeudi 27 novembre</mark>.</span></div>
+  <div class="row"><span class="badge ai">Surligné = modifié par l'IA</span><span class="sub">Touchez pour comparer</span></div>
+ </div>
+ <div class="card"><span class="label">Actions détectées</span>
+  <button class="chk" data-act="0"><span class="box" data-on="${S.crActs[0]}"></span><span><div class="t">Envoyer le devis</div><div class="sub">Dupont SA · 27 nov.</div></span></button>
+  <button class="chk" data-act="1"><span class="box" data-on="${S.crActs[1]}"></span><span><div class="t">Rappeler Mme Leroy (responsable technique)</div><div class="sub">échéance à préciser</div></span></button>
+ </div>
+ <div class="card"><div class="row"><span class="label">Note privée</span><span class="badge">Visible par vous seul</span></div><span class="sub">Ajouter une remarque non partagée.</span></div>`
+ :`<div class="card"><span class="label">Texte dicté</span>${off?'<span class="sub">En attente de transcription.</span>':raw}</div>
+ <div class="card"><span class="label">Saisie manuelle</span><span class="sub">Résumé, besoins, décisions, prochaine étape.</span></div>`}
+ <div class="row"><button class="btn small" data-note="voice">Compléter à la voix</button><button class="btn primary" data-valid ${ia||off?'':'disabled'}>${off?'Enregistrer (envoi plus tard)':'Valider'}</button></div>`},
+clients(){const q=S.q.toLowerCase();const r=CLIENTS.filter(c=>(c.name+c.city).toLowerCase().includes(q));
+ return `<h2>Clients</h2><input type="search" id="q" placeholder="Rechercher un client" value="${esc(S.q)}" aria-label="Rechercher un client">
+ <div class="sub">Source : CRM, lecture seule</div>
+ <div class="list">${r.length?r.map(c=>`<button class="item" data-client="${c.id}"><div class="avatar">${c.name[0]}</div><span style="flex:1"><div class="t">${c.name}</div><div class="sub">${c.city} · dernière visite ${c.last}</div></span><span class="sub">›</span></button>`).join(''):'<div class="empty">Aucun client ne correspond.</div>'}</div>`},
+client(){const c=cl(S.client);const tabs=['Visites','Contacts','Actions'];
+ const body={Visites:`<div class="note"><span class="sub">${c.last} · Suivi</span><span>Compte rendu validé. Prochaine étape : devis.</span></div><div class="note"><span class="sub">Août · Découverte</span><span>Premier rendez-vous, besoins recueillis.</span></div>`,
+ Contacts:c.contacts.map(p=>`<div class="row start"><div class="avatar">${p[0].split(' ')[1][0]}</div><div><div class="t">${p[0]}</div><div class="sub">${p[1]}</div></div></div>`).join(''),
+ Actions:S.actions.filter(a=>a.c===c.id).map(a=>`<div class="note"><span class="${a.done?'done':'t'}">${a.txt}</span><span class="sub">${a.due}</span></div>`).join('')||'<div class="empty">Aucune action.</div>'}[S.tab];
+ return back('clients','Clients')+`<div><h2>${c.name}</h2><div class="sub">${c.addr}</div></div>
+ <div class="seg" role="group">${tabs.map(t=>`<button data-tab="${t}" aria-pressed="${S.tab===t}">${t}</button>`).join('')}</div>
+ <div class="card">${body}</div><button class="btn primary" data-start data-for="${c.id}" style="flex:none">Nouvelle visite</button>`},
+actions(){const f=S.filter;const l=S.actions.filter(a=>f==='Toutes'||(f==='Ouvertes'?!a.done:a.done));
+ return `<h2>Actions</h2><div class="seg" role="group">${['Ouvertes','Terminées','Toutes'].map(t=>`<button data-filter="${t}" aria-pressed="${f===t}">${t}</button>`).join('')}</div>
+ <div class="list">${l.length?l.map(a=>`<button class="chk" data-toggle="${a.id}"><span class="box" data-on="${a.done}"></span><span style="flex:1"><div class="${a.done?'done':'t'}">${a.txt}</div><div class="sub">${cl(a.c).name} · ${a.due}</div></span>${a.late&&!a.done?'<span class="badge late">En retard</span>':''}</button>`).join(''):'<div class="empty">Rien à afficher.</div>'}</div>`},
+settings(){return `<h2>Réglages</h2>
+ <div class="card"><div class="row"><span class="t">Langue de dictée</span><span class="sub">Français (fixée par l'IT)</span></div><div class="row"><span class="t">Interface</span><span class="sub">Français</span></div></div>
+ <div class="card"><span class="t">Données gardées hors-ligne</span><select id="off" aria-label="Données hors-ligne"><option>7 prochains jours + historique récent</option><option>14 prochains jours</option></select></div>
+ <div class="card"><span class="t">Conservation de l'audio</span><select aria-label="Conservation audio"><option>Supprimer après transcription validée</option><option>30 jours</option></select><span class="sub">Valeurs d'exemple, fixées par l'organisation.</span></div>
+ <div class="card"><div class="row"><span class="t">Glossaire personnel</span><span class="badge">3 termes</span></div><span class="sub">Offre B · Alpha Systèmes · ERP Lumen</span></div>
+ <div class="card"><div class="row"><span class="t">Compte</span><span class="sub">c.dupuis@exemple.fr</span></div><button class="btn">Se déconnecter</button></div>`}
+};
+
+function render(){
+ $('#net').innerHTML=netPill();
+ $('#screen').innerHTML=V[S.screen]()+(S.screen==='today'?'<div class="ex">Données d\'exemple</div>':'');
+ const hide=S.screen==='visit'||S.screen==='cr'||S.screen==='prep';
+ $('#tabs').hidden=hide;
+ $('#tabs').innerHTML=[['today','Aujourd’hui'],['clients','Clients'],['actions','Actions'],['settings','Réglages']].map(([k,l])=>`<button data-go="${k}" aria-current="${TABS[S.screen]===k}">${ic[k]}${l}</button>`).join('');
+ $('#shortcuts').innerHTML=SCREENS.map(([k,l])=>`<button data-sc="${k}" aria-current="${S.screen===k}">${l}</button>`).join('');
+ $('#offSw').setAttribute('aria-checked',S.off);
+ if(S.toast){const t=document.createElement('div');t.className='toast';t.setAttribute('role','status');t.textContent=S.toast;$('#phone').appendChild(t)}
+}
+function startVisit(c){if(c)S.client=c;S.notes=[];S.secs=0;S.rec=false;go('visit')}
+function tick(){clearInterval(timer);timer=setInterval(()=>{S.secs++;const e=$('#tm');if(e)e.textContent=fmt(S.secs)},1000)}
+document.addEventListener('click',e=>{
+ const t=e.target.closest('[data-go],[data-sc],[data-start],[data-client],[data-mic],[data-note],[data-cr],[data-act],[data-valid],[data-tab],[data-filter],[data-toggle],#offSw');
+ if(!t)return;
+ if(t.id==='offSw'){S.off=!S.off;return render()}
+ if(t.dataset.sc){const k=t.dataset.sc;if(k==='visit'&&!S.secs){S.secs=23;S.notes=[{t:'10:41',k:'Voix',x:'Budget autour de 40 k€, pas confirmé.'}]}return go(k)}
+ if('start' in t.dataset)return startVisit(t.dataset.for),tick();
+ if(t.dataset.client){S.client=t.dataset.client;S.tab='Visites';return go('client')}
+ if('mic' in t.dataset){S.rec=!S.rec;if(!S.rec){S.notes.push({t:'10:'+(41+S.notes.length*3),k:'Voix',x:S.off?'Audio enregistré, transcription en attente du réseau.':'Le client souhaite un devis pour l\'offre B avant la fin du mois.'})}return render()}
+ if(t.dataset.note){const k=t.dataset.note;if(k==='text')S.notes.push({t:'10:'+(41+S.notes.length*3),k:'Texte',x:'Concurrent présent : Alpha Systèmes.'});else if(k==='photo')S.notes.push({t:'10:'+(41+S.notes.length*3),k:'Photo',x:'Tableau blanc de l\'atelier (exemple).'});else return toast('Dictée de complément (exemple)');return render()}
+ if(t.dataset.cr){S.cr=t.dataset.cr;return render()}
+ if(t.dataset.act!==undefined){const i=+t.dataset.act;S.crActs[i]=!S.crActs[i];return render()}
+ if('valid' in t.dataset){clearInterval(timer);S.rec=false;if(!S.off)S.actions.unshift({id:Date.now(),txt:'Envoyer le devis',c:'dup',due:'27 nov.',late:false,done:false});S.screen='today';render();return toast(S.off?'Compte rendu enregistré, envoi dès la reconnexion.':'Compte rendu validé, 2 actions créées.')}
+ if(t.dataset.tab){S.tab=t.dataset.tab;return render()}
+ if(t.dataset.filter){S.filter=t.dataset.filter;return render()}
+ if(t.dataset.toggle){const a=S.actions.find(x=>x.id==t.dataset.toggle);a.done=!a.done;return render()}
+ if(t.dataset.go){if(t.dataset.go!=='visit'&&t.dataset.go!=='cr')clearInterval(timer);return go(t.dataset.go)}
+});
+document.addEventListener('input',e=>{if(e.target.id==='q'){S.q=e.target.value;const p=e.target.selectionStart;render();const q=$('#q');q.focus();q.setSelectionRange(p,p)}});
+render();
+</script>
