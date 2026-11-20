@@ -22,6 +22,8 @@ données exploitable (comptes rendus structurés, actions, prochaines étapes).
 | Visibilité des CR | Pas de préférence exprimée : **proposition** = CR visible par les intervenants du client et leur hiérarchie, plus un champ « note privée » réservé à l'auteur **[À VALIDER]** | Un client partagé implique que l'historique est commun ; la note privée limite le risque de fuite d'informations sensibles |
 | Fournisseur transcription/IA | Non choisi, à comparer | Comparatif à produire (traitement UE, langues, coût, DPA) à partir de sources vérifiées |
 | MDM | NinjaOne | Distribution et politiques de l'appli via NinjaOne ; à vérifier : plateformes mobiles gérées (iOS/Android), mode de déploiement d'une appli privée, configuration à distance (AppConfig), effacement à distance |
+| CRM (précisions du 20/11) | CRM interne, non nommé ; clients en lecture seule dans l'appli (pas de création) ; le CRM vient **récupérer** visites et CR par API | Le back expose une API REST dédiée au CRM (authentification par clé/jeton de service, pagination, filtre « modifié depuis », identifiants stables, suppression logique) ; le back lit les clients du CRM de son côté ; pas d'écriture dans le CRM |
+| Administration des comptes | L'IT, via une console d'administration | Console web (création, réinitialisation, désactivation, rôles, rattachement hiérarchique, affectation client-commerciaux) ; pas d'inscription libre-service |
 | Volume de dictée | ~10 h d'audio par commercial et par mois | Base de calcul du budget : 10 h/mois/utilisateur, à comparer au plafond de 30 € |
 | Parc | Mixte iOS + Android, géré par NinjaOne | Appli multiplateforme, tests sur les deux systèmes ; dictée native différente selon l'OS |
 | Authentification | Pas de SSO, comptes propres | Gestion des comptes dans le back : mots de passe (hachage), réinitialisation, authentification à deux facteurs, verrouillage, désactivation à distance ; à prévoir dans le périmètre et le budget |
@@ -40,7 +42,7 @@ données exploitable (comptes rendus structurés, actions, prochaines étapes).
 
 ### MVP (v1)
 1. **Authentification** : comptes propres (e-mail + mot de passe, double authentification) + déverrouillage biométrique de l'appli.
-2. **Clients / contacts** : liste, recherche, fiche (société, contacts, adresse, historique des visites, actions ouvertes). Alimentés par le CRM (lecture seule dans l'appli). Création rapide d'un prospect sur le terrain **[À VALIDER : voir §11]**.
+2. **Clients / contacts** : liste, recherche, fiche (société, contacts, adresse, historique des visites, actions ouvertes). Alimentés par le CRM (lecture seule dans l'appli). Pas de création de client dans l'application (décision du 20/11).
 3. **Visites** : planifier, voir l'agenda du jour/semaine, démarrer, clôturer, annuler/reporter.
 4. **Compte rendu** : champs structurés (objet, participants, résumé, besoins, objections, concurrents, décisions, prochaine étape, statut/température de l'opportunité) + notes libres + photos.
 5. **Saisie vocale** : dictée dans n'importe quel champ ou dictée globale de la visite (voir §5).
@@ -127,8 +129,6 @@ Garde-fous :
 
 1. Versions minimales d'iOS et d'Android du parc ?
 2. Combien de niveaux hiérarchiques ? Confirmer la règle de visibilité des CR (§1 bis).
-3. Qui administre les comptes (création, réinitialisation) : l'IT, les managers, ou en libre-service ?
-4. Quel CRM, quelle documentation d'API, quels champs client/contact sont fournis, et quels quotas ?
-5. Un client créé sur le terrain doit-il être renvoyé au CRM, ou l'appli est-elle en lecture seule sur les clients ?
-6. Les CR et visites doivent-ils être renvoyés au CRM (le sens exposé est CRM vers back uniquement) ?
-7. Un client supprimé ou fusionné dans le CRM : que deviennent ses visites dans le back ?
+3. Documentation de l'API du CRM : authentification, champs client/contact, quotas, identifiant de référence ?
+4. Format et contenu attendus par le CRM pour récupérer visites et CR (champs, fréquence d'appel, historique initial) ?
+5. Un client supprimé ou fusionné dans le CRM : que deviennent ses visites dans le back ?
