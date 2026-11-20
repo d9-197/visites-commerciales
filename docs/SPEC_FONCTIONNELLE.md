@@ -18,6 +18,9 @@ données exploitable (comptes rendus structurés, actions, prochaines étapes).
 | Langues précises | Français, anglais, espagnol, italien, allemand, néerlandais | 6 langues à tester en transcription et IA ; glossaire par langue ; langue du CR distincte de la langue de l'interface |
 | Appareils | Parc imposé géré par MDM | Modèle exact (iOS/Android, versions) à communiquer ; distribution et politiques via le MDM ; pas de store public nécessaire |
 | Clients | Partagés entre plusieurs commerciaux | Table d'affectation client-commerciaux ; historique visible par tous les intervenants ; droits par client ; gestion des modifications concurrentes |
+| Langue de dictée | Une langue par commercial, fixée dans le profil | Pas de détection automatique en v1 ; une langue de dictée passée au moteur ; la langue du CR peut différer de celle de l'interface |
+| Visibilité des CR | Pas de préférence exprimée : **proposition** = CR visible par les intervenants du client et leur hiérarchie, plus un champ « note privée » réservé à l'auteur **[À VALIDER]** | Un client partagé implique que l'historique est commun ; la note privée limite le risque de fuite d'informations sensibles |
+| Fournisseur transcription/IA | Non choisi, à comparer | Comparatif à produire (traitement UE, langues, coût, DPA) à partir de sources vérifiées |
 | Données | Hébergement UE obligatoire | Fournisseurs transcription/IA limités à ceux qui traitent dans l'UE (ou auto-hébergement UE) ; contrat de sous-traitance (DPA) ; pas de transfert hors UE |
 
 ## 2. Utilisateurs et rôles [À VALIDER]
@@ -117,8 +120,7 @@ Garde-fous :
 
 ## 11. Questions ouvertes
 
-1. Un même commercial dicte-t-il en plusieurs langues (détection automatique ou choix manuel) ?
-2. Quel MDM, quel parc (iOS/Android, modèles, versions) et quel fournisseur d'identité pour le SSO ?
-3. Combien de niveaux hiérarchiques ? Un compte rendu est-il visible par tous les commerciaux du client, ou seulement par son auteur et sa hiérarchie ?
-4. Budget et fournisseur pour transcription et IA (hébergés UE) ?
-5. Import initial des clients : quelle source (fichier, ancien outil) ?
+1. Quel MDM, quel parc (iOS/Android, modèles, versions) et quel fournisseur d'identité pour le SSO ?
+2. Combien de niveaux hiérarchiques ? Confirmer la règle de visibilité des CR (§1 bis).
+3. Budget et fournisseur pour transcription et IA (hébergés UE) ?
+4. Import initial des clients : quelle source (fichier, ancien outil) ?
