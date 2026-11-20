@@ -8,12 +8,21 @@ Permettre à un commercial terrain de préparer, réaliser et documenter ses vis
 en un minimum de saisie, y compris sans réseau, et donner au back une base de
 données exploitable (comptes rendus structurés, actions, prochaines étapes).
 
+## 1 bis. Décisions validées (20/11/2026)
+
+| Sujet | Décision | Conséquence |
+|-------|----------|-------------|
+| Volume | Grande structure, > 50 utilisateurs | Hiérarchie multi-équipes, droits fins, SSO d'entreprise, administration, montée en charge du back |
+| CRM | Aucun : le back est la source de vérité | Pas d'intégration en v1 ; import initial des clients (CSV) à prévoir ; le modèle de données est le nôtre |
+| Langues | Multilingue | Interface i18n dès le départ ; reconnaissance vocale et IA dans chaque langue ; liste des langues à fixer |
+| Données | Hébergement UE obligatoire | Fournisseurs transcription/IA limités à ceux qui traitent dans l'UE (ou auto-hébergement UE) ; contrat de sous-traitance (DPA) ; pas de transfert hors UE |
+
 ## 2. Utilisateurs et rôles [À VALIDER]
 
 | Rôle | Droits |
 |------|--------|
 | Commercial | Ses clients, ses visites, ses actions |
-| Manager | Lecture/commentaire sur les visites de son équipe, tableaux de bord |
+| Manager | Lecture/commentaire sur les visites de son équipe (hiérarchie multi-niveaux), tableaux de bord |
 | Admin | Utilisateurs, référentiels (types de visite, statuts, produits), paramétrage IA |
 
 ## 3. Périmètre fonctionnel
@@ -100,14 +109,13 @@ Garde-fous :
 - Démarrage de la saisie d'une visite en ≤ 3 appuis.
 - Utilisable d'une main, gros éléments tactiles, mode sombre, lisible en plein soleil.
 - Tablette : affichage en deux colonnes (liste + détail).
-- Langues : français ; internationalisation prévue dès le départ **[À VALIDER]**.
+- Langues : multilingue ; liste des langues de l'interface et de la dictée à fixer. Attention : la qualité de transcription et de l'IA varie fortement d'une langue à l'autre ; chaque langue supportée doit être testée.
 - RGPD : base légale, durée de conservation, droit d'accès/suppression, registre des sous-traitants (transcription, IA).
 
 ## 11. Questions ouvertes
 
-1. Nombre d'utilisateurs, présence de managers ?
-2. CRM existant à synchroniser, ou le back est la source de vérité ?
-3. Français uniquement ?
-4. Données sensibles ? Contraintes d'hébergement (UE, interne) ?
-5. Appareils : parc imposé (iOS, Android, les deux) ? Gestion via MDM ?
-6. Budget et fournisseur pour transcription et IA ?
+1. Quelles langues exactement (interface et dictée) ? Un même commercial dicte-t-il en plusieurs langues ?
+2. Appareils : iOS, Android ou les deux ? Gestion via MDM ? SSO d'entreprise (quel fournisseur d'identité) ?
+3. Organisation : combien de niveaux hiérarchiques, un client peut-il être partagé entre commerciaux ?
+4. Budget et fournisseur pour transcription et IA (hébergés UE) ?
+5. Import initial des clients : quelle source (fichier, ancien outil) ?
