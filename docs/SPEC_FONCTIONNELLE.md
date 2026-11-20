@@ -13,7 +13,7 @@ données exploitable (comptes rendus structurés, actions, prochaines étapes).
 | Sujet | Décision | Conséquence |
 |-------|----------|-------------|
 | Volume | Grande structure, > 50 utilisateurs | Hiérarchie multi-équipes, droits fins, SSO d'entreprise, administration, montée en charge du back |
-| CRM | Aucun : le back est la source de vérité | Pas d'intégration en v1 ; import initial des clients (CSV) à prévoir ; le modèle de données est le nôtre |
+| CRM | **Modifié le 20/11** : le back est synchronisé avec le CRM par API REST (côté back). Le CRM envoie les infos clients ; les plannings de visite et les CR vivent dans l'application (le back). Remplace la décision « aucun CRM ». CRM non nommé, documentation d'API à fournir | Clients et contacts = lecture seule venant du CRM (source de vérité CRM) ; visites, CR, actions = source de vérité back ; synchro périodique (5-15 min) via un module d'intégration dans le back ; table de correspondance des identifiants ; reprise sur erreur, journal de synchro, respect des quotas de l'API |
 | Langues | Multilingue | Interface i18n dès le départ ; reconnaissance vocale et IA dans chaque langue ; liste des langues à fixer |
 | Langues précises | Français, anglais, espagnol, italien, allemand, néerlandais | 6 langues à tester en transcription et IA ; glossaire par langue ; langue du CR distincte de la langue de l'interface |
 | Appareils | Parc imposé géré par MDM | Modèle exact (iOS/Android, versions) à communiquer ; distribution et politiques via le MDM ; pas de store public nécessaire |
@@ -40,7 +40,7 @@ données exploitable (comptes rendus structurés, actions, prochaines étapes).
 
 ### MVP (v1)
 1. **Authentification** : comptes propres (e-mail + mot de passe, double authentification) + déverrouillage biométrique de l'appli.
-2. **Clients / contacts** : liste, recherche, fiche (société, contacts, adresse, historique des visites, actions ouvertes). Création rapide sur le terrain.
+2. **Clients / contacts** : liste, recherche, fiche (société, contacts, adresse, historique des visites, actions ouvertes). Alimentés par le CRM (lecture seule dans l'appli). Création rapide d'un prospect sur le terrain **[À VALIDER : voir §11]**.
 3. **Visites** : planifier, voir l'agenda du jour/semaine, démarrer, clôturer, annuler/reporter.
 4. **Compte rendu** : champs structurés (objet, participants, résumé, besoins, objections, concurrents, décisions, prochaine étape, statut/température de l'opportunité) + notes libres + photos.
 5. **Saisie vocale** : dictée dans n'importe quel champ ou dictée globale de la visite (voir §5).
@@ -128,4 +128,7 @@ Garde-fous :
 1. Versions minimales d'iOS et d'Android du parc ?
 2. Combien de niveaux hiérarchiques ? Confirmer la règle de visibilité des CR (§1 bis).
 3. Qui administre les comptes (création, réinitialisation) : l'IT, les managers, ou en libre-service ?
-4. Import initial des clients : quelle source (fichier, ancien outil) ?
+4. Quel CRM, quelle documentation d'API, quels champs client/contact sont fournis, et quels quotas ?
+5. Un client créé sur le terrain doit-il être renvoyé au CRM, ou l'appli est-elle en lecture seule sur les clients ?
+6. Les CR et visites doivent-ils être renvoyés au CRM (le sens exposé est CRM vers back uniquement) ?
+7. Un client supprimé ou fusionné dans le CRM : que deviennent ses visites dans le back ?
