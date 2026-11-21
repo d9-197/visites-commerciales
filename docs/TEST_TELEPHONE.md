@@ -4,7 +4,7 @@ Version minimaliste : une **application web** (la même interface que l'applicat
 
 ## Ce qu'elle permet
 
-Connexion · liste des clients reçus du « CRM » (données de démonstration) · création d'une visite depuis un client · démarrer/terminer · notes · compte rendu saisi à la main et validé · actions (créer, modifier, terminer, annuler) · état « synchronisé / hors-ligne, n en attente » · déconnexion qui efface les données de l'appareil.
+Connexion · visites regroupées par client (ou à plat par date) avec date prévue, commencée et réalisée, date prévue modifiable · mode clair, sombre ou réglage du système (Réglages › Affichage) · liste des clients reçus du « CRM » (données de démonstration) · création d'une visite depuis un client · démarrer/terminer · notes · compte rendu saisi à la main et validé · actions (créer, modifier, terminer, annuler) · état « synchronisé / hors-ligne, n en attente » · déconnexion qui efface les données de l'appareil.
 
 ## Ce qu'elle ne fait pas
 
@@ -31,10 +31,11 @@ Sans Docker : `npm install && npm run pg:start`, puis `npm -w server run seed` e
 
 1. Ouvrir l'adresse dans le navigateur du téléphone, se connecter avec `commercial1@exemple.invalid`.
 2. **Clients** → toucher « Dupont SA » : une visite est créée. **Démarrer**, ajouter une note, écrire un compte rendu, **Valider**.
-3. **Actions** → « + Nouvelle » : créer « Envoyer le devis » avec une échéance (AAAA-MM-JJ).
-4. **Hors-ligne** : activer le mode avion, créer une autre action. La barre du haut doit passer à « Hors-ligne · 1 en attente ». Réactiver le réseau, toucher **Synchroniser** : « Synchronisé ».
-5. Vérifier côté serveur (ou avec un second téléphone/compte) que les données sont arrivées. Avec `manager@exemple.invalid`, les visites de `commercial1` apparaissent aussi (règle de hiérarchie).
-6. **Réglages** → **Se déconnecter** : les données locales sont effacées.
+3. Dans la visite, **Modifier la date prévue**, puis **Terminer** : la date réalisée apparaît. Dans **Visites**, essayer « Par client » et « Par date ». Dans **Réglages**, essayer le mode sombre.
+4. **Actions** → « + Nouvelle » : créer « Envoyer le devis » avec une échéance (AAAA-MM-JJ).
+5. **Hors-ligne** : activer le mode avion, créer une autre action. La barre du haut doit passer à « Hors-ligne · 1 en attente ». Réactiver le réseau, toucher **Synchroniser** : « Synchronisé ».
+6. Vérifier côté serveur (ou avec un second téléphone/compte) que les données sont arrivées. Avec `manager@exemple.invalid`, les visites de `commercial1` apparaissent aussi (règle de hiérarchie).
+7. **Réglages** → **Se déconnecter** : les données locales sont effacées.
 
 Chaque appareil/navigateur garde ses données dans le stockage du site : vider les données du site efface aussi la file d'attente non synchronisée.
 

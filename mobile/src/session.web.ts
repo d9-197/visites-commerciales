@@ -13,3 +13,9 @@ export async function saveTokens(t: Tokens | undefined) {
   if (t) localStorage.setItem(K, JSON.stringify({ ...cur, tokens: t })); else localStorage.removeItem(K);
 }
 export async function clearSession() { localStorage.removeItem(K); }
+
+export type ThemePref = 'system' | 'light' | 'dark';
+export async function loadTheme(): Promise<ThemePref> {
+  try { const v = localStorage.getItem('visites.theme'); return v === 'light' || v === 'dark' ? v : 'system'; } catch { return 'system'; }
+}
+export async function saveTheme(t: ThemePref) { try { localStorage.setItem('visites.theme', t); } catch { /* stockage bloqué : préférence non conservée */ } }

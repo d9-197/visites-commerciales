@@ -19,3 +19,11 @@ export async function saveTokens(t: Tokens | undefined) {
   if (t) await SecureStore.setItemAsync(K.tokens, JSON.stringify(t)); else await SecureStore.deleteItemAsync(K.tokens);
 }
 export async function clearSession() { for (const k of Object.values(K)) await SecureStore.deleteItemAsync(k); }
+
+// Préférence d'affichage : conservée à la déconnexion (ce n'est pas une donnée métier).
+export type ThemePref = 'system' | 'light' | 'dark';
+export async function loadTheme(): Promise<ThemePref> {
+  const v = await SecureStore.getItemAsync('theme');
+  return v === 'light' || v === 'dark' ? v : 'system';
+}
+export async function saveTheme(t: ThemePref) { await SecureStore.setItemAsync('theme', t); }
