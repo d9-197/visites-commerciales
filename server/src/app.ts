@@ -7,12 +7,13 @@ import { errorHandler, HttpError } from './errors.js';
 import { mobileRouter } from './routes/mobile.js';
 import { crmRouter } from './routes/crm.js';
 import { adminRouter } from './routes/admin.js';
+import type { AiService } from './ai/index.js';
 
-export function createApp(pool: Pool, cfg: Config = defaultConfig, opts: { webDir?: string } = {}) {
+export function createApp(pool: Pool, cfg: Config = defaultConfig, opts: { webDir?: string; ai?: { service: AiService; prices: boolean } } = {}) {
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ limit: '5mb' }));
-  app.use('/api/mobile/v1', mobileRouter(pool, cfg));
+  app.use('/api/mobile/v1', mobileRouter(pool, cfg, opts.ai));
   app.use('/api/crm/v1', crmRouter(pool, cfg));
   app.use('/api/admin/v1', adminRouter(pool, cfg));
   // Application web (même origine que l'API : pas de CORS). Les routes /api/* inconnues restent en 404 JSON.

@@ -1,6 +1,15 @@
 import type { Operation, OperationResult, PullResponse } from './types';
 import { ApiError, NetworkError, type Transport } from './engine';
 
+export interface AiProposalResponse {
+  id: string; report_id: string; source_text: string; provider: string; model: string;
+  proposal: {
+    fields: { summary: string; needs: string; objections: string; competitors: string; decisions: string; next_step: string };
+    actions: { title: string; due_date: string | null; due_date_certain: boolean }[];
+  };
+  warnings: string[];
+}
+
 export interface Tokens { access_token: string; refresh_token: string; device_id: string }
 export type FetchLike = (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) =>
   Promise<{ status: number; text(): Promise<string> }>;
@@ -47,6 +56,11 @@ export class ApiClient implements Transport {
   }
 
   me() { return this.call('GET', '/me'); }
+
+  /** Synthèse par IA des notes d'une visite. Nécessite le réseau ; la proposition n'est enregistrée nulle part côté appareil. */
+  aiPropose(reportId: string, sourceText: string, today: string): Promise<AiProposalResponse> {
+    return this.call('POST', `/reports/${reportId}/ai-proposals`, { source_text: sourceText, today });
+  }
   async push(operations: Operation[]): Promise<OperationResult[]> {
     return (await this.call('POST', '/sync/push', { device_id: this.tokens?.device_id, operations })).results;
   }

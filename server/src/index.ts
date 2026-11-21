@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 import { createPool } from './db.js';
 import { createApp } from './app.js';
 import { migrate } from './migrate.js';
+import { aiFromEnv } from './ai/index.js';
 import { defaultConfig, DEV_JWT_SECRET } from './config.js';
 
 if (process.env.NODE_ENV === 'production' && (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32)) {
@@ -18,4 +19,6 @@ if (applied.length) console.log('Migrations appliquées :', applied.join(', '));
 
 const webDir = resolve(process.env.WEB_DIR ?? new URL('../../mobile/dist-web', import.meta.url).pathname);
 const port = Number(process.env.PORT ?? 3000);
-createApp(pool, defaultConfig, { webDir }).listen(port, () => console.log(`API et application web sur http://localhost:${port}`));
+const ai = aiFromEnv();
+console.log(ai ? 'Synthèse par IA : activée (Mistral).' : 'Synthèse par IA : désactivée (MISTRAL_API_KEY absente).');
+createApp(pool, defaultConfig, { webDir, ai }).listen(port, () => console.log(`API et application web sur http://localhost:${port}`));

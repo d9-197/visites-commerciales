@@ -110,7 +110,7 @@ sequenceDiagram
 ```
 
 - La proposition arrive par `pull` (`ai_proposals`) avec le texte source, les passages modifiés et les avertissements du contrôle automatique (nombre ou nom absent de la dictée).
-- `POST /reports/{id}/ai-proposals` relance ou complète le traitement ; réponse 402 `quota_exceeded` si le plafond mensuel est atteint ; `GET /usage` donne le budget et la consommation.
+- **Implémenté (première tranche, voir `IA_MISTRAL.md`)** : `POST /reports/{id}/ai-proposals` avec `source_text` renvoie **tout de suite** la proposition et ses avertissements (réponse 200, pas de traitement asynchrone, entrée texte seulement). Réponses : 402 `quota_exceeded`, 403 si l'appelant n'est pas l'auteur, 429, 502 `ai_failed`, 503 `ai_unavailable` (pas de clé). Le traitement asynchrone à partir de l'audio reste à faire ; `GET /usage` aussi.
 - **L'IA ne crée rien directement** : les actions proposées ne deviennent des actions qu'après validation par l'utilisateur, via `push`.
 - `PUT /reports/{id}/quality` n'envoie que des mesures (jamais de contenu). `POST /error-reports` reçoit les signalements des utilisateurs.
 

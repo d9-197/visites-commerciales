@@ -112,6 +112,24 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   assert.equal(await page.getByRole('button', { name: 'Modifier la date prévue' }).count(), 0, 'date prévue non modifiable une fois la visite commencée');
   await page.getByLabel('Nouvelle note').fill('M. Martin intéressé par l\'offre B');
   await page.getByRole('button', { name: 'Ajouter' }).click();
+
+  // 2 sexies bis. Synthèse par IA (faux Mistral) : proposition à relire, avertissements, application, action créée
+  await page.getByRole('button', { name: 'Synthétiser les notes avec l\'IA' }).click();
+  await page.getByText('Proposition de l\'IA').waitFor();
+  assert.ok(await page.getByText('Nombre absent des notes : 50000', { exact: false }).first().isVisible(), 'nombre qui ne figure pas dans les notes : signalé');
+  assert.ok(await page.getByText(/Échéance calculée à partir d'une date relative/).first().isVisible(), 'échéance relative signalée');
+  assert.equal(await page.getByLabel('Proposition : Résumé').inputValue(), 'M. Martin est intéressé par l\'offre B (réponse simulée).');
+  await page.waitForTimeout(500);   // fin de l'animation d'ouverture avant la capture
+  await shot(page, '3g-proposition-ia');
+  assert.equal((await page.getByLabel('Résumé du compte rendu').inputValue()), '', 'rien n\'est appliqué avant la validation de la proposition');
+  await page.getByRole('button', { name: 'Appliquer au compte rendu' }).click();
+  await page.getByText('Proposition de l\'IA').waitFor({ state: 'detached' });
+  assert.match(await page.getByLabel('Résumé du compte rendu').inputValue(), /offre B \(réponse simulée\)/, 'résumé appliqué');
+  assert.match(await page.getByLabel('Besoins').inputValue(), /atelier/, 'champs détaillés appliqués');
+  const sent = await (await fetch('http://127.0.0.1:4010/__requests')).json();
+  assert.equal(sent.length, 1); assert.equal(sent[0].auth, 'Bearer cle-de-test');
+  assert.ok(sent[0].body.messages[1].content.includes('M. Martin intéressé par l\'offre B'), 'les notes sont envoyées');
+  assert.ok(!JSON.stringify(sent[0].body).includes('Dupont'), 'le nom du client n\'est pas envoyé');
   await page.getByLabel('Résumé du compte rendu').fill('Intéressé par l\'offre B, budget à confirmer.');
   await page.getByRole('button', { name: 'Valider' }).click();
   await page.getByRole('button', { name: 'Terminer la visite' }).click();
@@ -151,6 +169,8 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await page.getByText('Relancer le client (en retard)').waitFor();
   assert.equal(await page.getByText('En retard', { exact: true }).count(), 1, 'seule l\'action dont l\'échéance est passée est signalée en retard');
   assert.equal(await borderOf(page.getByText('En retard', { exact: true })), 'rgb(198, 40, 40)', 'pastille « En retard » en rouge');
+  await page.getByText('Préparer la démo').waitFor();     // action proposée par l'IA, créée après relecture
+  await page.getByText('Rappeler M. Martin').waitFor();
   await shot(page, '4-actions');
 
   // 4. Hors-ligne : saisie locale, file en attente, puis reconnexion

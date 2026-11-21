@@ -20,6 +20,11 @@ services:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET requis (32 caractères minimum)}
       SEED_DEMO: ${SEED_DEMO:-0}
       SEED_PASSWORD: ${SEED_PASSWORD:-}
+      # Synthèse par IA (facultatif) : sans clé, la fonction est désactivée.
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+      MISTRAL_MODEL: ${MISTRAL_MODEL:-}
+      MISTRAL_PRICE_IN_EUR_PER_M: ${MISTRAL_PRICE_IN_EUR_PER_M:-}
+      MISTRAL_PRICE_OUT_EUR_PER_M: ${MISTRAL_PRICE_OUT_EUR_PER_M:-}
       PORT: "3000"
     ports: ["${APP_PORT:-3000}:3000"]
 volumes:

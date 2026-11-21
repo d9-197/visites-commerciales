@@ -7,14 +7,16 @@ import { HttpError, wrap } from '../errors.js';
 import { requireAuth, signAccess, verifyPassword, sha256, randomToken, versionLt } from '../auth.js';
 import { pull } from '../sync/pull.js';
 import { push, pushSchema } from '../sync/push.js';
+import { AiError, type AiService } from '../ai/index.js';
 
 const loginSchema = z.object({
   email: z.string().email(), password: z.string().min(1),
   device: z.object({ device_id: z.string().uuid().optional(), platform: z.enum(['ios', 'android', 'web']), os_version: z.string().optional(), app_version: z.string() }),
 });
 
-export function mobileRouter(pool: Pool, cfg: Config) {
+export function mobileRouter(pool: Pool, cfg: Config, ai?: { service: AiService; prices: boolean }) {
   const r = express.Router();
+  const aiCalls = new Map<string, number[]>();      // limitation de débit de l'IA, par utilisateur (en mémoire : une seule instance du back)
   const auth = requireAuth(pool, cfg, { checkVersion: true });
 
   async function issueTokens(userId: string, deviceId: string, isAdmin: boolean) {
@@ -107,6 +109,54 @@ export function mobileRouter(pool: Pool, cfg: Config) {
     const b = pushSchema.safeParse(req.body);
     if (!b.success) throw new HttpError(400, 'validation_failed', 'Entre 1 et 200 opérations attendues');
     res.json({ results: await push(pool, req.auth!.id, req.auth!.deviceId, b.data.operations) });
+  }));
+
+  /**
+   * Synthèse par IA d'un compte rendu à partir de notes brutes. Rien n'est enregistré dans le compte rendu : la proposition est
+   * renvoyée à l'application, qui la fait relire et valider par l'utilisateur. Contenu des notes : jamais journalisé.
+   */
+  r.post('/reports/:id/ai-proposals', auth, wrap(async (req, res) => {
+    const b = z.object({ source_text: z.string().trim().min(1).max(20000), today: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() }).safeParse(req.body);
+    if (!b.success) throw new HttpError(400, 'validation_failed', 'source_text requis (20 000 caractères au plus)');
+    if (!ai) throw new HttpError(503, 'ai_unavailable', 'Le service d\'IA n\'est pas configuré');
+    const userId = req.auth!.id;
+
+    const now = Date.now();
+    const recent = (aiCalls.get(userId) ?? []).filter(t => now - t < 60_000);
+    if (recent.length >= Number(process.env.AI_RATE_PER_MIN ?? 10)) throw new HttpError(429, 'rate_limited', 'Trop de demandes de synthèse, réessayez dans une minute');
+    aiCalls.set(userId, [...recent, now]);
+
+    const rep = (await pool.query(`SELECT r.id, r.language, r.visit_id, v.author_id FROM visit_report r JOIN visit v ON v.id = r.visit_id WHERE r.id = $1`, [req.params.id])).rows[0];
+    const readable = rep && (await pool.query(`SELECT can_read_visit($1,$2) AS ok`, [userId, rep.visit_id])).rows[0].ok;
+    if (!rep || !readable) throw new HttpError(404, 'not_found', 'Compte rendu inconnu');
+    if (rep.author_id !== userId) throw new HttpError(403, 'forbidden', 'Réservé à l\'auteur de la visite');
+
+    if (ai.prices) {   // plafond mensuel : appliqué seulement si les tarifs sont connus (sinon le coût est enregistré à 0)
+      const q = (await pool.query(
+        `SELECT COALESCE((SELECT sum(cost_cents) FROM ai_usage WHERE user_id = $1 AND created_at >= date_trunc('month', now())), 0) AS used,
+                COALESCE((SELECT ai_budget_cents FROM app_user WHERE id = $1), (SELECT (value #>> '{}')::int FROM app_setting WHERE key = 'ai_monthly_budget_cents')) AS budget`, [userId])).rows[0];
+      if (Number(q.used) >= Number(q.budget)) throw new HttpError(402, 'quota_exceeded', 'Plafond mensuel d\'IA atteint');
+    }
+
+    const glossary = (await pool.query(
+      `SELECT term FROM glossary_term WHERE deleted_at IS NULL AND language = $1 AND (scope = 'global' OR user_id = $2) ORDER BY term LIMIT 50`, [rep.language, userId])).rows.map(x => x.term as string);
+    const serverToday = new Date().toISOString().slice(0, 10);
+    const close = (d: string) => Math.abs(new Date(d).getTime() - new Date(serverToday).getTime()) <= 2 * 86_400_000;
+    const today = b.data.today && close(b.data.today) ? b.data.today : serverToday;     // date locale de l'appareil, à 2 jours près
+
+    let result;
+    try { result = await ai.service.structure({ sourceText: b.data.source_text, language: rep.language, today, glossary }); }
+    catch (e) {
+      if (e instanceof AiError) throw new HttpError(e.kind === 'unavailable' ? 503 : 502, e.kind === 'unavailable' ? 'ai_unavailable' : 'ai_failed', e.message);
+      throw e;
+    }
+    const id = (await pool.query(
+      `INSERT INTO ai_proposal(report_id, provider, model_version, source_text, proposal, checks, cost_cents) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+      [rep.id, result.provider, result.model, b.data.source_text, result.proposal, { warnings: result.warnings }, result.costCents])).rows[0].id;
+    await pool.query(
+      `INSERT INTO ai_usage(user_id, kind, provider, model, tokens_in, tokens_out, cost_cents) VALUES ($1,'llm',$2,$3,$4,$5,$6)`,
+      [userId, result.provider, result.model, result.usage.tokensIn, result.usage.tokensOut, result.costCents]);
+    res.json({ id, report_id: rep.id, source_text: b.data.source_text, proposal: result.proposal, warnings: result.warnings, provider: result.provider, model: result.model });
   }));
 
   return r;

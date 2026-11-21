@@ -14,7 +14,7 @@ const SCHEMA = readFileSync(new URL('../../db/schema.sql', import.meta.url), 'ut
 export interface TestEnv { pool: Pool; base: string; close: () => Promise<void>; cfg: Config }
 
 /** Base de données neuve (schéma complet) + serveur HTTP sur un port libre. */
-export async function setup(over: Partial<Config> = {}): Promise<TestEnv> {
+export async function setup(over: Partial<Config> = {}, appOpts: Parameters<typeof createApp>[2] = {}): Promise<TestEnv> {
   const name = `vc_test_${randomUUID().replace(/-/g, '')}`;
   const admin = new pg.Client({ connectionString: ADMIN_URL });
   await admin.connect();
@@ -24,7 +24,7 @@ export async function setup(over: Partial<Config> = {}): Promise<TestEnv> {
   const pool = createPool(url.toString());
   await pool.query(SCHEMA);
   const cfg = { ...defaultConfig, syncOverlap: 5, ...over };
-  const server: Server = createApp(pool, cfg).listen(0);
+  const server: Server = createApp(pool, cfg, appOpts).listen(0);
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   return {
     pool, base, cfg,

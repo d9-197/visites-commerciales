@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, BackHandler, Platform, Pressable, SafeAreaView, ScrollView, Switch, Text, TextInput, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { ApiClient, SyncEngine, uuidv4, type Row, type SyncReport } from '@visites/sync-core';
+import { ApiClient, ApiError, NetworkError, SyncEngine, uuidv4, type AiProposalResponse, type Row, type SyncReport } from '@visites/sync-core';
 import type { SqliteStore } from '@visites/sync-core';
 import { openStore } from './src/expoDb';
 import { clearSession, loadSession, saveSession, saveTokens, type Session, type ThemePref } from './src/session';
@@ -20,6 +20,15 @@ const DEFAULT_SERVER = Platform.OS === 'web' ? '/api/mobile/v1' : 'http://10.0.2
 const PLATFORM: 'ios' | 'android' | 'web' = Platform.OS === 'ios' ? 'ios' : Platform.OS === 'web' ? 'web' : 'android';
 
 const todayStr = () => dateToStr(new Date());
+
+const REPORT_FIELDS: [string, string][] = [['summary', 'Résumé'], ['needs', 'Besoins'], ['objections', 'Objections'], ['competitors', 'Concurrents'], ['decisions', 'Décisions'], ['next_step', 'Prochaine étape']];
+const pickFields = (r?: Row): Record<string, string> => Object.fromEntries(REPORT_FIELDS.map(([k]) => [k, (r?.[k] as string | null) ?? '']));
+const aiErrorMessage = (e: unknown): string => {
+  if (e instanceof NetworkError) return 'Hors-ligne : la synthèse par IA demande une connexion.';
+  const code = e instanceof ApiError ? e.code : '';
+  return ({ ai_unavailable: 'La synthèse par IA n\'est pas activée sur ce serveur.', quota_exceeded: 'Plafond mensuel d\'IA atteint.', rate_limited: 'Trop de demandes : réessayez dans une minute.',
+    ai_failed: 'Le service d\'IA n\'a pas pu répondre. Réessayez.', forbidden: 'Seul l\'auteur de la visite peut lancer la synthèse.' } as Record<string, string>)[code] ?? 'La synthèse a échoué. Réessayez.';
+};
 
 type Screen = { name: 'today' } | { name: 'visit'; id: string } | { name: 'clients' } | { name: 'actions' } | { name: 'action'; id?: string } | { name: 'settings' };
 interface Data { visits: Row[]; companies: Row[]; actions: Row[]; reports: Row[]; notes: Row[]; history: Row[]; pending: number }
@@ -203,7 +212,7 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
                 const id = await ctx.engine.create('visit', { company_id: c.id, status: 'planned', planned_start: ceilTo15(new Date()).toISOString(), ...(addr ? { location_text: addr } : {}) }); navigate({ name: 'visit', id }); })} />
           ))}
         </>}
-        {screen.name === 'visit' && <VisitScreen key={screen.id} visitId={screen.id} data={data} ctx={ctx} act={act} back={goBack} companyName={companyName} />}
+        {screen.name === 'visit' && <VisitScreen key={screen.id} visitId={screen.id} data={data} ctx={ctx} act={act} back={goBack} companyName={companyName} offline={status.offline} />}
         {screen.name === 'actions' && <>
           <View style={s.rowBetween}><Text style={s.h1}>Actions</Text><Btn small title="+ Nouvelle" onPress={() => navigate({ name: 'action' })} /></View>
           <View style={s.rowBetween}>
@@ -255,11 +264,14 @@ function VisitRow({ v, client, onPress }: { v: Row; client?: string; onPress: ()
     title={client ?? w.main} sub={client ? w.main : (w.sub ? `${w.sub}${v.objective ? ' · ' + v.objective : ''}` : v.objective ?? undefined)} />;
 }
 
-function VisitScreen({ visitId, data, ctx, act, back, companyName }: { visitId: string; data: Data; ctx: Ctx; act: Act; back: () => void; companyName: (id: string) => string }) {
+function VisitScreen({ visitId, data, ctx, act, back, companyName, offline }: { visitId: string; data: Data; ctx: Ctx; act: Act; back: () => void; companyName: (id: string) => string; offline: boolean }) {
   const { s, c } = useTheme();
   const v: Row | undefined = data.visits.find(x => x.id === visitId);
   const report: Row | undefined = data.reports.find(r => r.visit_id === visitId);
-  const [summary, setSummary] = useState<string>(report?.summary ?? '');
+  const [f, setF] = useState<Record<string, string>>(() => pickFields(report));
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiErr, setAiErr] = useState<string>();
+  const [ai, setAi] = useState<AiProposalResponse>();
   const [note, setNote] = useState('');
   const [sheet, setSheet] = useState<'none' | 'date' | 'address' | 'history' | 'nav'>('none');
   const company: Row | undefined = data.companies.find(co => co.id === v?.company_id);
@@ -272,11 +284,33 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName }: { visitId: 
   const canDate = canEditVisitDate(v.status, mine);
   const canAddress = canEditVisitAddress(v.status, ctx.role);
   const setStatus = (status: string, extra: Row = {}) => act(() => ctx.engine.update('visit', v.id, { status, ...extra }));
-  const saveReport = (validate: boolean) => act(async () => {
+  const saveReport = (validate: boolean, values: Record<string, string> = f) => act(async () => {
     const st = validate ? 'validated' : 'draft';
-    if (!report) await ctx.engine.create('report', { visit_id: visitId, language: 'fr', summary, status: st });
-    else await ctx.engine.update('report', report.id, { summary, ...(validate ? { status: st } : {}) });
+    if (!report) await ctx.engine.create('report', { visit_id: visitId, language: 'fr', ...values, status: st });
+    else await ctx.engine.update('report', report.id, { ...values, ...(validate ? { status: st } : {}) });
   });
+  const notesText = data.notes.filter(n => n.visit_id === visitId && n.body).map(n => n.body).join('\n');
+  // Synthèse par IA : le compte rendu doit exister sur le serveur ; on le crée en brouillon et on synchronise d'abord.
+  const synthesize = async () => {
+    setAiBusy(true); setAiErr(undefined);
+    try {
+      let rid = report?.id as string | undefined;
+      if (!rid) rid = await ctx.engine.create('report', { visit_id: visitId, language: 'fr', status: 'draft' });
+      const rep = await ctx.engine.sync();
+      if (rep.offline) throw new NetworkError();
+      setAi(await ctx.client.aiPropose(rid, notesText, dateToStr(new Date())));
+    } catch (e) { setAiErr(aiErrorMessage(e)); }
+    finally { setAiBusy(false); }
+  };
+  const applyAi = (fields: Record<string, string>, actions: { title: string; due_date: string | null }[]) => {
+    const merged = { ...f, ...Object.fromEntries(Object.entries(fields).filter(([, v]) => v.trim())) };   // un champ vide proposé n'efface rien
+    setF(merged); setAi(undefined);
+    void act(async () => {
+      if (report) await ctx.engine.update('report', report.id, merged);
+      else await ctx.engine.create('report', { visit_id: visitId, language: 'fr', ...merged, status: 'draft' });
+      for (const a of actions) await ctx.engine.create('action', { company_id: v!.company_id, visit_id: visitId, title: a.title, origin: 'ai', ...(a.due_date ? { due_date: a.due_date } : {}) });
+    });
+  };
   const Icon = ({ label, onPress }: { label: string; onPress: () => void }) => (
     <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={label} style={s.iconBtn}><Text style={s.iconText}>✎</Text></Pressable>);
   return <>
@@ -308,13 +342,24 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName }: { visitId: 
     {data.notes.filter(n => n.visit_id === visitId).map(n => <Text key={n.id} style={s.note}>{n.body}</Text>)}
     {mine && <><TextInput accessibilityLabel="Nouvelle note" placeholderTextColor={c.muted} style={s.input} value={note} onChangeText={setNote} placeholder="Nouvelle note" multiline />
       <Btn small title="Ajouter" disabled={!note.trim()} onPress={() => act(async () => { await ctx.engine.create('note', { visit_id: visitId, kind: 'text', body: note.trim() }); setNote(''); })} /></>}
+    {mine && <>
+      <Btn small title={aiBusy ? 'Synthèse en cours…' : 'Synthétiser les notes avec l\'IA'} disabled={aiBusy || !notesText.trim() || offline} onPress={synthesize} />
+      {offline && <Text style={s.muted}>Hors-ligne : la synthèse par IA demande une connexion.</Text>}
+      {!notesText.trim() && <Text style={s.muted}>Ajoutez des notes pour pouvoir les synthétiser.</Text>}
+      {aiErr && <Text style={s.err}>{aiErr}</Text>}
+    </>}
     <Label>Compte rendu {report?.status === 'validated' ? '(validé)' : ''}</Label>
-    <TextInput accessibilityLabel="Résumé du compte rendu" placeholderTextColor={c.muted} style={[s.input, { minHeight: 110 }]} value={summary} onChangeText={setSummary} multiline editable={mine} placeholder="Résumé de la visite" />
-    <Text style={s.muted}>Saisie manuelle. La dictée vocale et l'IA ne sont pas disponibles dans ce prototype.</Text>
+    {REPORT_FIELDS.map(([k, label]) => (
+      <View key={k} style={{ gap: 4 }}>
+        <Text style={s.muted}>{label}</Text>
+        <TextInput accessibilityLabel={k === 'summary' ? 'Résumé du compte rendu' : label} placeholderTextColor={c.muted} style={[s.input, { minHeight: k === 'summary' ? 90 : 60 }]}
+          value={f[k] ?? ''} onChangeText={t => setF(cur => ({ ...cur, [k]: t }))} multiline editable={mine} />
+      </View>))}
     {mine && <View style={s.rowBetween}>
       <Btn small title="Enregistrer" onPress={() => saveReport(false)} />
-      <Btn small title="Valider" disabled={!summary.trim() || report?.status === 'validated'} onPress={() => saveReport(true)} />
+      <Btn small title="Valider" disabled={!(f.summary ?? '').trim() || report?.status === 'validated'} onPress={() => saveReport(true)} />
     </View>}
+    <AiSheet result={ai} onClose={() => setAi(undefined)} onApply={applyAi} />
 
     <EditDateSheet visible={sheet === 'date'} initial={v.planned_start} onClose={() => setSheet('none')}
       onSave={d => { setSheet('none'); void act(() => ctx.engine.update('visit', v.id, { planned_start: d ? d.toISOString() : null })); }} />
@@ -366,6 +411,46 @@ function HistorySheet({ visible, entries, onClose }: { visible: boolean; entries
           <Text style={{ color: s.t.color }}>{val(e, e.old_value)}  →  {val(e, e.new_value)}</Text>
         </View>))}
       <Btn small title="Fermer" onPress={onClose} />
+    </Sheet>
+  );
+}
+
+/** Proposition de l'IA : à relire et corriger avant de l'appliquer. Rien n'est enregistré tant que l'utilisateur n'applique pas. */
+function AiSheet({ result, onClose, onApply }: { result?: AiProposalResponse; onClose: () => void; onApply: (fields: Record<string, string>, actions: { title: string; due_date: string | null }[]) => void }) {
+  const { s, c } = useTheme();
+  const [fields, setFields] = useState<Record<string, string>>({});
+  const [acts, setActs] = useState<{ title: string; due_date: string | null; due_date_certain: boolean; on: boolean }[]>([]);
+  const [showSource, setShowSource] = useState(false);
+  useEffect(() => {
+    if (!result) return;
+    setFields({ ...result.proposal.fields }); setActs(result.proposal.actions.map(a => ({ ...a, on: true }))); setShowSource(false);
+  }, [result]);
+  return (
+    <Sheet title="Proposition de l'IA" visible={!!result} onClose={onClose}>
+      <Text style={s.muted}>Proposé par l'IA : relisez et corrigez avant d'appliquer. Rien n'est enregistré tant que vous n'appliquez pas.</Text>
+      {result && result.warnings.length > 0 && (
+        <View style={[s.rowCard, { flexDirection: 'column', alignItems: 'stretch', gap: 4, borderLeftWidth: 6, borderLeftColor: c.stPlanned }]}>
+          <Text style={s.t}>À vérifier</Text>
+          {result.warnings.map((w, i) => <Text key={i} style={s.muted}>• {w}</Text>)}
+        </View>)}
+      {REPORT_FIELDS.map(([k, label]) => (
+        <View key={k} style={{ gap: 4 }}>
+          <Text style={s.muted}>{label}</Text>
+          <TextInput accessibilityLabel={`Proposition : ${label}`} placeholderTextColor={c.muted} style={[s.input, { minHeight: 48 }]} value={fields[k] ?? ''} onChangeText={t => setFields(cur => ({ ...cur, [k]: t }))} multiline />
+        </View>))}
+      {acts.length > 0 && <Label>Actions proposées</Label>}
+      {acts.map((a, i) => (
+        <View key={i} style={s.rowBetween}>
+          <Switch value={a.on} onValueChange={on => setActs(cur => cur.map((x, j) => j === i ? { ...x, on } : x))} accessibilityLabel={`Créer l'action : ${a.title}`} trackColor={{ true: c.accent, false: c.line }} />
+          <View style={{ flex: 1 }}>
+            <TextInput accessibilityLabel={`Action proposée ${i + 1}`} placeholderTextColor={c.muted} style={s.input} value={a.title} onChangeText={t => setActs(cur => cur.map((x, j) => j === i ? { ...x, title: t } : x))} />
+            <Text style={s.muted}>{a.due_date ? `${fmtDate(a.due_date)}${a.due_date_certain ? '' : ' (calculée : à vérifier)'}` : 'sans échéance'}</Text>
+          </View>
+        </View>))}
+      <Pressable onPress={() => setShowSource(x => !x)} accessibilityRole="button"><Text style={s.link}>{showSource ? 'Masquer' : 'Voir'} le texte source</Text></Pressable>
+      {showSource && <Text style={s.note}>{result?.source_text}</Text>}
+      <Btn title="Appliquer au compte rendu" onPress={() => onApply(fields, acts.filter(a => a.on && a.title.trim()).map(a => ({ title: a.title.trim(), due_date: a.due_date })))} />
+      <Btn small title="Ignorer" onPress={onClose} />
     </Sheet>
   );
 }

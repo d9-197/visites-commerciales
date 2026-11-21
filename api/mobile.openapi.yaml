@@ -265,10 +265,12 @@ paths:
   /reports/{report_id}/ai-proposals:
     post:
       tags: [IA et qualité]
-      summary: Demander (ou refaire) une proposition de l'IA
+      summary: Synthèse par IA des notes d'une visite (réponse immédiate)
       description: |
-        Cas d'usage : « compléter à la voix » ou relancer après une erreur. Traitement asynchrone : le résultat arrive par `sync/pull` (`ai_proposals`).
-        Refusé avec 402/`quota_exceeded` si le plafond mensuel est atteint.
+        Envoie le texte des notes au fournisseur d'IA (Mistral) et renvoie une proposition de compte rendu structuré, avec des avertissements issus de contrôles automatiques.
+        **Rien n'est enregistré dans le compte rendu** : l'application fait relire la proposition à l'utilisateur, qui l'applique ou non.
+        Le compte rendu doit exister sur le serveur (synchroniser d'abord). Réservé à l'auteur de la visite. Aucune donnée sur le client n'est transmise au fournisseur.
+        Version actuelle : entrée texte, réponse synchrone. Le traitement asynchrone à partir d'enregistrements audio (transcription) viendra plus tard.
       parameters:
         - name: report_id
           in: path
@@ -280,19 +282,29 @@ paths:
           application/json:
             schema:
               type: object
+              required: [source_text]
               properties:
-                recording_ids:
-                  type: array
-                  description: Enregistrements à prendre en compte. Par défaut, tous ceux du compte rendu.
-                  items: {$ref: 'common.yaml#/components/schemas/Uuid'}
+                source_text: {type: string, minLength: 1, maxLength: 20000, description: Texte des notes (dictées ou saisies).}
+                today: {type: string, format: date, description: "Date locale de l'appareil (AAAA-MM-JJ), pour résoudre les échéances relatives ; ignorée si elle s'écarte de plus de 2 jours de celle du serveur."}
       responses:
-        '202': {description: "Demande acceptée."}
+        '200':
+          description: Proposition.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AiProposalResponse'}
+        '400': {$ref: 'common.yaml#/components/responses/BadRequest'}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
         '402':
           description: Plafond mensuel atteint (quota_exceeded).
           content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}
+        '403': {$ref: 'common.yaml#/components/responses/Forbidden'}
         '404': {$ref: 'common.yaml#/components/responses/NotFound'}
-        '409':
-          description: Une demande est déjà en cours pour ce compte rendu (already_processing).
+        '429': {$ref: 'common.yaml#/components/responses/TooManyRequests'}
+        '502':
+          description: Le service d'IA a échoué ou sa réponse n'a pas le format attendu (ai_failed). Le message ne contient jamais le texte des notes.
+          content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}
+        '503':
+          description: Synthèse par IA non configurée sur ce serveur (ai_unavailable).
           content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}
   /reports/{report_id}/quality:
     put:
@@ -639,6 +651,41 @@ components:
               description: Contrôle automatique (un nombre ou un nom du résultat est absent de la dictée).
               items: {type: string}
         created_at: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+    AiProposalResponse:
+      type: object
+      required: [id, report_id, proposal, warnings]
+      properties:
+        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        report_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        source_text: {type: string}
+        provider: {type: string, examples: [mistral]}
+        model: {type: string}
+        warnings:
+          type: array
+          description: Contrôles automatiques (nombre ou nom absent des notes, échéance passée ou calculée). Ils signalent, ils ne prouvent rien.
+          items: {type: string}
+        proposal:
+          type: object
+          required: [fields, actions]
+          properties:
+            fields:
+              type: object
+              properties:
+                summary: {type: string}
+                needs: {type: string}
+                objections: {type: string}
+                competitors: {type: string}
+                decisions: {type: string}
+                next_step: {type: string}
+            actions:
+              type: array
+              items:
+                type: object
+                required: [title, due_date_certain]
+                properties:
+                  title: {type: string}
+                  due_date: {type: [string, 'null'], format: date}
+                  due_date_certain: {type: boolean, description: "false si l'échéance a été calculée à partir d'une date relative."}
     GlossaryTerm:
       type: object
       required: [id, scope, language, term, updated_at]

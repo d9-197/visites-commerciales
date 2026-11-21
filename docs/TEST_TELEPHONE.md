@@ -46,6 +46,8 @@ Chaque appareil/navigateur garde ses données dans le stockage du site : vider l
 
 **Adresses de démonstration** : Dupont SA et Atelier Roux ont une adresse ; Groupe Bernard n'en a pas (cas « aucune adresse », à saisir à la main).
 
+**Synthèse par IA (facultatif)** : si `MISTRAL_API_KEY` est renseignée dans `.env`, le bouton « Synthétiser les notes avec l'IA » de la visite envoie les notes à Mistral et affiche une proposition à relire. Sans clé, le bouton affiche « La synthèse par IA n'est pas activée sur ce serveur ». **Ne mettez pas de vraies notes de clients tant que le contrat de sous-traitance et le traitement dans l'UE ne sont pas confirmés** (voir `docs/IA_MISTRAL.md`).
+
 ## 3. Limites propres à la version web sur HTTP
 
 - Page servie en **HTTP simple** : pas d'installation sur l'écran d'accueil ni de fonctionnement après rechargement hors-ligne (cela exige HTTPS et un service worker, non faits). Le mode hors-ligne se teste **sans recharger la page** (mode avion après ouverture).
