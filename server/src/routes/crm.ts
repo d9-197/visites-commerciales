@@ -8,6 +8,7 @@ import { decodeCursor, encodeCursor } from '../sync/pull.js';
 // Lecture seule. S'appuie sur les vues crm_* : notes privées, audio, transcriptions et propositions IA n'y figurent pas.
 const RESOURCES: Record<string, { view: string; tsCol: string }> = {
   visits: { view: 'crm_visit', tsCol: 'updated_at' },
+  'visit-history': { view: 'crm_visit_history', tsCol: 'updated_at' },
   reports: { view: 'crm_report', tsCol: 'updated_at' },
   notes: { view: 'crm_note', tsCol: 'updated_at' },
   actions: { view: 'crm_action', tsCol: 'updated_at' },
@@ -30,7 +31,7 @@ export function crmRouter(pool: Pool, cfg: Config) {
         if (Number.isNaN(d.getTime())) throw new HttpError(400, 'validation_failed', 'updated_since invalide');
         params.push(d.toISOString()); where += ` AND updated_at >= $${params.length}`;
       }
-      if (!includeDeleted && path !== 'reports') where += ` AND deleted_at IS NULL`;
+      if (!includeDeleted && ['visits', 'notes', 'actions'].includes(path)) where += ` AND deleted_at IS NULL`;
       if (typeof req.query.status === 'string') { params.push(req.query.status); where += ` AND status = $${params.length}`; }
       const { rows } = await pool.query(`SELECT * FROM ${view} WHERE ${where} ORDER BY seq LIMIT $2`, params);
       const hasMore = rows.length > limit;

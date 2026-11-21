@@ -2,7 +2,8 @@ import { z } from 'zod';
 import type { Pool, Client } from '../db.js';
 import { tx } from '../db.js';
 import { HttpError } from '../errors.js';
-import { LONG_TEXT_FIELDS, VERSIONED } from '@visites/sync-core';
+import { LONG_TEXT_FIELDS, VERSIONED, VISIT_HISTORY_FIELDS, canEditVisitAddress, canEditVisitDate, canTransition } from '@visites/sync-core';
+import type { UserRole, VisitStatus } from '@visites/sync-core';
 import type { Operation, OperationResult, ConflictField, EntityName } from '@visites/sync-core';
 
 /** Refus d'une opération : n'arrête pas les suivantes (sauf celles qui en dépendent). */
@@ -16,7 +17,7 @@ const nstr = z.string().nullable();
 const VISIT_FIELDS = {
   visit_type: nstr, objective: nstr, planned_start: ts.nullable(), planned_end: ts.nullable(),
   started_at: ts.nullable(), ended_at: ts.nullable(), location_text: z.string().max(500).nullable(),
-  status: z.enum(['planned', 'in_progress', 'done', 'cancelled']),
+  status: z.enum(['planned', 'organized', 'in_progress', 'done', 'cancelled']),
 };
 const REPORT_FIELDS = {
   summary: nstr, needs: nstr, objections: nstr, competitors: nstr, decisions: nstr, next_step: nstr,
@@ -75,6 +76,7 @@ async function changedFieldsSince(c: Client, entity: string, id: string, baseVer
 async function updateVersioned(
   { c, userId, op }: Ctx, table: string, row: Record<string, any>, fields: Record<string, unknown>,
   derive?: (merged: Record<string, any>, toApply: Record<string, unknown>) => void,
+  after?: (applied: Record<string, unknown>) => Promise<void>,
 ): Promise<Applied> {
   if (typeof op.base_version !== 'number') throw new Reject('validation_failed', 'base_version requis');
   if (op.base_version > row.version) throw new Reject('validation_failed', 'base_version supérieure à la version du serveur');
@@ -101,6 +103,7 @@ async function updateVersioned(
     const sets = cols.map((k, i) => `${k} = $${i + 2}`).join(', ');
     const r = await c.query(`UPDATE ${table} SET ${sets}, version = version + 1 WHERE id = $1 RETURNING version`, [op.entity_id, ...cols.map(k => toApply[k])]);
     version = r.rows[0].version;
+    if (after) await after(toApply);
   }
   return { version, fields: cols, conflicts, serverVersion: row.version };
 }
@@ -143,9 +146,33 @@ async function handle(ctx: Ctx): Promise<Applied> {
         return { version: 1, fields: Object.keys(p) };
       }
       if (op.op === 'update') {
-        const row = await visitRow(c, userId, id, true);
+        const row = await visitRow(c, userId, id, false);             // lisible par l'appelant, sinon « inconnue »
         if (row.deleted_at) throw new Reject('locked_status', 'Visite supprimée');
-        return updateVersioned(ctx, 'visit', row, parse(S.visitUpdate, op.payload));
+        const fields = parse(S.visitUpdate, op.payload);
+        const keys = Object.keys(fields);
+        const isAuthor = row.author_id === userId;
+        const me = (await c.query(`SELECT role, display_name FROM app_user WHERE id = $1`, [userId])).rows[0];
+        // L'adresse peut être modifiée par d'autres que l'auteur, selon le statut et le rôle ; tout le reste : l'auteur seul.
+        if (!isAuthor && !(keys.length > 0 && keys.every(k => k === 'location_text'))) throw new Reject('forbidden', "Réservé à l'auteur de la visite");
+        if ('location_text' in fields && !canEditVisitAddress(row.status as VisitStatus, me.role as UserRole)) {
+          throw new Reject('locked_status', row.status === 'organized' ? "Une fois la visite organisée, l'adresse n'est modifiable que par un commercial" : "L'adresse n'est plus modifiable une fois la visite commencée");
+        }
+        if (('planned_start' in fields || 'planned_end' in fields) && !canEditVisitDate(row.status as VisitStatus, isAuthor)) {
+          throw new Reject('locked_status', 'La date prévue n\'est plus modifiable une fois la visite commencée');
+        }
+        if (fields.status && !canTransition(row.status as VisitStatus, fields.status as VisitStatus)) {
+          throw new Reject('locked_status', `Passage impossible de « ${row.status} » à « ${fields.status} »`);
+        }
+        return updateVersioned(ctx, 'visit', row, fields, undefined, async applied => {
+          for (const f of VISIT_HISTORY_FIELDS) {
+            if (!(f in applied)) continue;
+            const oldV = row[f] instanceof Date ? row[f].toISOString() : row[f] ?? null;
+            const newV = applied[f] ?? null;
+            if (String(oldV ?? '') === String(newV ?? '')) continue;
+            await c.query(`INSERT INTO visit_history(visit_id, field, old_value, new_value, changed_by, changed_by_name) VALUES ($1,$2,$3,$4,$5,$6)`,
+              [id, f, oldV, newV, userId, me.display_name]);
+          }
+        });
       }
       throw new Reject('validation_failed', 'Une visite ne se supprime pas : passer son statut à cancelled');
     }

@@ -1,12 +1,11 @@
 // Données de démonstration : schéma + utilisateurs + quelques clients. Usage : DATABASE_URL=... npm -w server run seed
-import { readFileSync } from 'node:fs';
 import { createPool } from '../src/db.js';
 import { hashPassword } from '../src/auth.js';
 import { importCrm } from '../src/crm-import.js';
+import { migrate } from '../src/migrate.js';
 
 const pool = createPool(process.env.DATABASE_URL ?? 'postgres://postgres@127.0.0.1:5432/visites');
-const exists = (await pool.query(`SELECT to_regclass('public.app_user') AS t`)).rows[0].t;
-if (!exists) await pool.query(readFileSync(new URL('../../db/schema.sql', import.meta.url), 'utf8'));
+await migrate(pool);
 
 if (process.env.NODE_ENV === 'production' && !process.env.SEED_PASSWORD) { console.error('SEED_PASSWORD est obligatoire en production.'); process.exit(1); }
 const pwd = process.env.SEED_PASSWORD ?? 'demo-mot-de-passe-12';

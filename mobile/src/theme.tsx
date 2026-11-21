@@ -5,9 +5,10 @@ import { loadTheme, saveTheme, type ThemePref } from './session';
 export interface Palette {
   bg: string; surface: string; text: string; muted: string; line: string; accent: string; accentInk: string; accentSoft: string;
   okBg: string; warnBg: string; ok: string; err: string;
+  stPlanned: string; stOrganized: string; stProgress: string; stDone: string; stCancelled: string; late: string;
 }
-const light: Palette = { bg: '#F4F6F5', surface: '#FFFFFF', text: '#14212B', muted: '#5B6A74', line: '#D9DEDC', accent: '#0E6A87', accentInk: '#FFFFFF', accentSoft: '#DCEDF3', okBg: '#DDEFE4', warnBg: '#F7EACB', ok: '#2B7A4B', err: '#B3261E' };
-const dark: Palette = { bg: '#0C1317', surface: '#152028', text: '#E7EDF0', muted: '#98A8B2', line: '#25333D', accent: '#4FB4D3', accentInk: '#06222C', accentSoft: '#12303B', okBg: '#173526', warnBg: '#3A2D10', ok: '#6CC58D', err: '#F2B8B5' };
+const light: Palette = { bg: '#F4F6F5', surface: '#FFFFFF', text: '#14212B', muted: '#5B6A74', line: '#D9DEDC', accent: '#0E6A87', accentInk: '#FFFFFF', accentSoft: '#DCEDF3', okBg: '#DDEFE4', warnBg: '#F7EACB', ok: '#2B7A4B', err: '#B3261E', stPlanned: '#A8680A', stOrganized: '#0E6A87', stProgress: '#2B7A4B', stDone: '#5B6A74', stCancelled: '#7C858B', late: '#C62828' };
+const dark: Palette = { bg: '#0C1317', surface: '#152028', text: '#E7EDF0', muted: '#98A8B2', line: '#25333D', accent: '#4FB4D3', accentInk: '#06222C', accentSoft: '#12303B', okBg: '#173526', warnBg: '#3A2D10', ok: '#6CC58D', err: '#F2B8B5', stPlanned: '#E3B04B', stOrganized: '#4FB4D3', stProgress: '#6CC58D', stDone: '#98A8B2', stCancelled: '#7E8A92', late: '#FF8A80' };
 
 function makeStyles(c: Palette) {
   return StyleSheet.create({
@@ -33,7 +34,14 @@ function makeStyles(c: Palette) {
     seg: { flexDirection: 'row', backgroundColor: c.line, borderRadius: 10, padding: 3, gap: 3 },
     segBtn: { flex: 1, paddingVertical: 9, borderRadius: 8, alignItems: 'center', minHeight: 40, justifyContent: 'center' },
     segOn: { backgroundColor: c.surface }, segText: { fontWeight: '600', fontSize: 13, color: c.muted }, segTextOn: { color: c.text },
-    fact: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
+    fact: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12, minHeight: 28 },
+    headerRow: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 44 },
+    backBtn: { width: 92, minHeight: 44, justifyContent: 'center' },
+    titleCenter: { flex: 1, textAlign: 'center', fontSize: 20, fontWeight: '700', color: c.text },
+    iconBtn: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' }, iconText: { fontSize: 20, color: c.accent },
+    sheet: { backgroundColor: c.surface, padding: 16, gap: 10, borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: '85%' },
+    pill: { borderRadius: 99, paddingHorizontal: 9, paddingVertical: 3, alignSelf: 'flex-start' }, pillText: { fontSize: 12, fontWeight: '700' },
+    hist: { borderTopWidth: 1, borderColor: c.line, paddingTop: 8, gap: 2 },
   });
 }
 export type Styles = ReturnType<typeof makeStyles>;
@@ -56,4 +64,9 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     if (Platform.OS === 'web') { document.documentElement.lang = 'fr'; document.body.style.backgroundColor = value.c.bg; document.documentElement.style.colorScheme = dk ? 'dark' : 'light'; }
   }, [value.c, dk]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+}
+
+/** Couleur associée à un statut de visite. */
+export function visitStatusColor(c: Palette, status: string): string {
+  return ({ planned: c.stPlanned, organized: c.stOrganized, in_progress: c.stProgress, done: c.stDone, cancelled: c.stCancelled } as Record<string, string>)[status] ?? c.muted;
 }

@@ -41,7 +41,8 @@ components:
       enum: [fr, en, es, it, de, nl]
     VisitStatus:
       type: string
-      enum: [planned, in_progress, done, cancelled]
+      enum: [planned, organized, in_progress, done, cancelled]
+      description: "planned = à organiser ; organized = organisée avec le client (rendez-vous confirmé)."
     ActionStatus:
       type: string
       enum: [todo, done, cancelled]

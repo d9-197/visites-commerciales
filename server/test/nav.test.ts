@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { companyAddress, detectEnv, navigationOptions } from '../../mobile/src/nav.js';
 import { dateToStr, fmtDate, strToDate } from '../../mobile/src/dates.js';
+import { isActionLate, isVisitLate, canEditVisitAddress, canEditVisitDate, canTransition } from '@visites/sync-core';
 
 test('adresse du client sur une ligne, champs manquants ignorés', () => {
   assert.equal(companyAddress({ address_line: '12 rue des Lilas', postal_code: '69003', city: 'Lyon', country: 'France' }), '12 rue des Lilas, 69003 Lyon, France');
@@ -36,4 +37,32 @@ test('dates seules : aucun décalage d\'un jour, affichage lisible', () => {
   assert.match(fmtDate('2026-11-26'), /26 nov\.? 2026/);
   assert.equal(fmtDate(null), '');
   assert.equal(strToDate('26/11/2026'), undefined);
+});
+
+test('retard : visite non commencée dont l\'heure est dépassée de plus d\'une heure ; action à faire dont l\'échéance est passée', () => {
+  const now = new Date('2026-11-21T12:00:00Z');
+  assert.equal(isVisitLate({ status: 'planned', planned_start: '2026-11-21T10:30:00Z' }, now), true);
+  assert.equal(isVisitLate({ status: 'organized', planned_start: '2026-11-20T09:00:00Z' }, now), true);
+  assert.equal(isVisitLate({ status: 'planned', planned_start: '2026-11-21T11:30:00Z' }, now), false, 'moins d\'une heure de retard : marge');
+  assert.equal(isVisitLate({ status: 'planned', planned_start: '2026-11-22T09:00:00Z' }, now), false, 'à venir');
+  assert.equal(isVisitLate({ status: 'in_progress', planned_start: '2026-11-01T09:00:00Z' }, now), false, 'commencée');
+  assert.equal(isVisitLate({ status: 'done', planned_start: '2026-11-01T09:00:00Z' }, now), false);
+  assert.equal(isVisitLate({ status: 'planned' }, now), false, 'sans date prévue');
+  assert.equal(isActionLate({ status: 'todo', due_date: '2026-11-20' }, '2026-11-21'), true);
+  assert.equal(isActionLate({ status: 'todo', due_date: '2026-11-21' }, '2026-11-21'), false, 'échéance aujourd\'hui : pas en retard');
+  assert.equal(isActionLate({ status: 'done', due_date: '2026-11-01' }, '2026-11-21'), false);
+  assert.equal(isActionLate({ status: 'cancelled', due_date: '2026-11-01' }, '2026-11-21'), false);
+  assert.equal(isActionLate({ status: 'todo', due_date: null }, '2026-11-21'), false);
+});
+
+test('règles partagées : adresse, date, transitions', () => {
+  assert.equal(canEditVisitAddress('planned', 'directeur'), true);
+  assert.equal(canEditVisitAddress('organized', 'manager'), false);
+  assert.equal(canEditVisitAddress('organized', 'commercial'), true);
+  assert.equal(canEditVisitAddress('in_progress', 'commercial'), false);
+  assert.equal(canEditVisitDate('planned', true), true);
+  assert.equal(canEditVisitDate('planned', false), false);
+  assert.equal(canEditVisitDate('in_progress', true), false);
+  assert.equal(canTransition('planned', 'organized'), true);
+  assert.equal(canTransition('done', 'planned'), false);
 });

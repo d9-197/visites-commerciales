@@ -2,7 +2,7 @@
 import type { Tokens } from '@visites/sync-core';
 
 const K = 'visites.session.v1';
-export interface Session { server: string; userId: string; tokens: Tokens }
+export interface Session { server: string; userId: string; role?: 'commercial' | 'manager' | 'directeur'; tokens: Tokens }
 
 export async function loadSession(): Promise<Session | undefined> {
   try { const raw = localStorage.getItem(K); return raw ? JSON.parse(raw) : undefined; } catch { return undefined; }

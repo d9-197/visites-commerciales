@@ -142,7 +142,7 @@ export class SyncEngine {
       for (const t of ['contacts', 'assignments'] as ChangeKey[]) for (const r of await this.store.list(t)) if (r.company_id === id) await this.store.remove(t, rowKey(t, r));
     } else if (entity === 'visit') {
       await this.store.remove('visits', id);
-      for (const t of ['reports', 'notes', 'private_notes', 'actions', 'visit_contacts'] as ChangeKey[])
+      for (const t of ['reports', 'notes', 'private_notes', 'actions', 'visit_contacts', 'visit_history'] as ChangeKey[])
         for (const r of await this.store.list(t)) if (r.visit_id === id && (t !== 'actions')) await this.store.remove(t, rowKey(t, r));
     } else if (entity === 'action') await this.store.remove('actions', id);
   }

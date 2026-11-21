@@ -194,7 +194,7 @@ CREATE TABLE visit (
   started_at    timestamptz,
   ended_at      timestamptz,
   location_text text,
-  status        text NOT NULL DEFAULT 'planned' CHECK (status IN ('planned','in_progress','done','cancelled')),
+  status        text NOT NULL DEFAULT 'planned' CONSTRAINT visit_status_check CHECK (status IN ('planned','organized','in_progress','done','cancelled')),
   version       int  NOT NULL DEFAULT 1,
   created_at    timestamptz NOT NULL DEFAULT now(),
   updated_at    timestamptz NOT NULL DEFAULT now(),
@@ -216,6 +216,24 @@ CREATE TABLE visit_contact (
   PRIMARY KEY (visit_id, contact_id)
 );
 CREATE TRIGGER visit_contact_seq BEFORE INSERT OR UPDATE ON visit_contact FOR EACH ROW EXECUTE FUNCTION bump_seq();
+
+-- Historique des modifications de date prévue et d'adresse (écrit par le back, jamais par l'appareil).
+CREATE TABLE visit_history (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  visit_id        uuid NOT NULL REFERENCES visit(id),
+  field           text NOT NULL CHECK (field IN ('planned_start','location_text')),
+  old_value       text,
+  new_value       text,
+  changed_by      uuid REFERENCES app_user(id),
+  changed_by_name text NOT NULL,                  -- copié au moment de la modification : l'historique ne dépend pas de la lecture de l'utilisateur
+  changed_at      timestamptz NOT NULL DEFAULT now(),
+  updated_at      timestamptz NOT NULL DEFAULT now(),
+  seq             bigint NOT NULL DEFAULT 0
+);
+CREATE TRIGGER visit_history_seq BEFORE INSERT OR UPDATE ON visit_history FOR EACH ROW EXECUTE FUNCTION bump_seq();
+CREATE INDEX visit_history_visit_idx ON visit_history(visit_id);
+CREATE INDEX visit_history_seq_idx ON visit_history(seq);
+
 
 -- Compte rendu : champs structurés de la version finale (validée par le commercial).
 CREATE TABLE visit_report (
@@ -575,3 +593,7 @@ CREATE VIEW crm_action AS
   SELECT x.id, x.company_id, c.crm_id AS company_crm_id, x.visit_id, x.title, x.due_date, x.status, x.origin,
          ow.email AS owner_email, x.completed_at, x.created_at, x.updated_at, x.seq, x.deleted_at
   FROM action_item x JOIN company c ON c.id = x.company_id JOIN app_user ow ON ow.id = x.owner_id;
+
+CREATE VIEW crm_visit_history AS
+  SELECT h.id, h.visit_id, h.field, h.old_value, h.new_value, h.changed_by_name, h.changed_at, h.updated_at, h.seq
+  FROM visit_history h;

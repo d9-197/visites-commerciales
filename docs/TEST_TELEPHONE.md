@@ -31,13 +31,17 @@ Sans Docker : `npm install && npm run pg:start`, puis `npm -w server run seed` e
 
 1. Ouvrir l'adresse dans le navigateur du téléphone, se connecter avec `commercial1@exemple.invalid`.
 2. **Clients** → toucher « Dupont SA » : une visite est créée. **Démarrer**, ajouter une note, écrire un compte rendu, **Valider**.
-3. Dans la visite : **toucher l'adresse** (soulignée) et choisir l'application d'itinéraire ; modifier l'adresse puis **Enregistrer l'adresse**, ou **Adresse du client** pour revenir à celle du CRM ; changer **Date et heure prévues** avec le sélecteur, **Enregistrer la date**, puis **Terminer** : la date réalisée apparaît. Dans **Visites**, essayer « Par client » et « Par date ». Dans **Réglages**, essayer le mode sombre.
+3. Dans la visite : le cartouche du haut montre le statut (en couleur), les dates et **l'adresse de la visite**. Toucher l'adresse (soulignée) ouvre le choix de l'application d'itinéraire. Le **crayon** à côté de « Prévue » modifie la date et l'heure ; le crayon à côté de « Adresse de la visite » modifie l'adresse ; « Historique des modifications » liste les changements. Boutons de statut : **Visite organisée avec le client**, **Démarrer la visite**, **Terminer la visite**. Une fois la visite démarrée, plus de crayons (ni adresse ni date).
+   Testez aussi le **bouton retour du téléphone** : il doit remonter l'application (fermer une fenêtre, revenir à l'écran précédent) sans la quitter.
+   Dans **Visites**, essayer « Par client » et « Par date » ; mettre une date prévue dans le passé pour voir « En retard » (rouge). Dans **Réglages**, essayer le mode sombre.
 4. **Actions** → « + Nouvelle » : créer « Envoyer le devis » avec une échéance choisie dans le sélecteur de date.
 5. **Hors-ligne** : activer le mode avion, créer une autre action. La barre du haut doit passer à « Hors-ligne · 1 en attente ». Réactiver le réseau, toucher **Synchroniser** : « Synchronisé ».
 6. Vérifier côté serveur (ou avec un second téléphone/compte) que les données sont arrivées. Avec `manager@exemple.invalid`, les visites de `commercial1` apparaissent aussi (règle de hiérarchie).
 7. **Réglages** → **Se déconnecter** : les données locales sont effacées.
 
 Chaque appareil/navigateur garde ses données dans le stockage du site : vider les données du site efface aussi la file d'attente non synchronisée.
+
+**Droits à tester** : avec `manager@exemple.invalid`, ouvrir une visite « À organiser » de commercial1 : seul le crayon de l'adresse est proposé (pas celui de la date) ; une fois la visite « Organisée », le manager n'a plus de crayon, mais commercial1 ou commercial2 (client partagé, visibilité en mode 1) en garde un.
 
 **Adresses de démonstration** : Dupont SA et Atelier Roux ont une adresse ; Groupe Bernard n'en a pas (cas « aucune adresse », à saisir à la main).
 

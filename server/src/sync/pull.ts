@@ -14,6 +14,7 @@ const SPECS: Spec[] = [
       OR EXISTS (SELECT 1 FROM user_hierarchy h WHERE h.ancestor_id = $1 AND h.descendant_id = t.id)
       OR EXISTS (SELECT 1 FROM visit v WHERE v.author_id = t.id AND can_read_visit($1, v.id)))` },
   { key: 'visits', sql: `SELECT id,company_id,author_id,visit_type,objective,planned_start,planned_end,started_at,ended_at,location_text,status,version,updated_at,deleted_at,seq FROM visit t WHERE t.seq > $2 AND can_read_visit($1, t.id)` },
+  { key: 'visit_history', sql: `SELECT id,visit_id,field,old_value,new_value,changed_by_name,changed_at,seq FROM visit_history t WHERE t.seq > $2 AND can_read_visit($1, t.visit_id)` },
   { key: 'visit_contacts', sql: `SELECT visit_id,contact_id,removed_at,seq FROM visit_contact t WHERE t.seq > $2 AND can_read_visit($1, t.visit_id)` },
   { key: 'reports', sql: `SELECT id,visit_id,language,summary,needs,objections,competitors,decisions,next_step,opportunity_temperature,status,validated_at,version,updated_at,seq FROM visit_report t WHERE t.seq > $2 AND can_read_visit($1, t.visit_id)` },
   { key: 'notes', sql: `SELECT id,visit_id,author_id,kind,body,recording_id,attachment_id,noted_at,updated_at,deleted_at,seq FROM visit_note t WHERE t.seq > $2 AND can_read_visit($1, t.visit_id)` },

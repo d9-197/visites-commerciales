@@ -34,6 +34,15 @@ données exploitable (comptes rendus structurés, actions, prochaines étapes).
 | Budget IA | 30 € maximum par mois et par utilisateur (transcription + IA) | Contrainte de coût à vérifier sur chaque fournisseur : volume mensuel d'audio estimé par commercial à définir, plafond/quotas par utilisateur à prévoir dans le back |
 | Données | Hébergement UE obligatoire | Fournisseurs transcription/IA limités à ceux qui traitent dans l'UE (ou auto-hébergement UE) ; contrat de sous-traitance (DPA) ; pas de transfert hors UE |
 
+### 1 ter. Visites : statuts, adresse, historique, retards (décisions du 21/11)
+
+- **Statuts** : à organiser → **organisée avec le client** → en cours → terminée ; annulée possible avant la fin. Chaque statut a une couleur ; le libellé reste affiché (la couleur n'est jamais seule).
+- **Adresse de la visite** : celle du client à la création, puis propre à la visite (elle ne suit pas le client). Modifiable par **toute personne qui voit la visite** tant qu'elle est « à organiser » ; par **un commercial seulement** une fois « organisée » ; **plus modifiable** dès que la visite est commencée. Modification par une icône (crayon), pas par un champ dans la vue. À étudier plus tard : aide à la saisie (dictée).
+- **Date prévue** : modifiable par l'auteur de la visite par une icône (crayon) dans le cartouche, tant que la visite n'est pas commencée. **L'historique des modifications** (date prévue et adresse : qui, quand, ancienne et nouvelle valeur) est consultable.
+- **Retards** (hypothèse à confirmer) : visite à organiser ou organisée dont l'heure prévue est dépassée de plus d'une heure ; action à faire dont l'échéance est passée. Signalées en rouge (liseré, pastille « En retard »).
+- **Bouton retour du téléphone** : remonte l'application comme le bouton « Retour » ; il ne quitte l'application qu'à l'écran d'accueil.
+- Interprétation à confirmer : « commerciaux » = utilisateurs de rôle commercial (pas manager ni directeur), qui voient la visite.
+
 ## 2. Utilisateurs et rôles [À VALIDER]
 
 | Rôle | Droits |

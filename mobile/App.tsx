@@ -1,12 +1,14 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, Platform, Pressable, SafeAreaView, ScrollView, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, AppState, BackHandler, Platform, Pressable, SafeAreaView, ScrollView, Text, TextInput, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { ApiClient, SyncEngine, uuidv4, type Row, type SyncReport } from '@visites/sync-core';
 import type { SqliteStore } from '@visites/sync-core';
 import { openStore } from './src/expoDb';
 import { clearSession, loadSession, saveSession, saveTokens, type Session, type ThemePref } from './src/session';
-import { ThemeProvider, useTheme } from './src/theme';
+import { ThemeProvider, useTheme, visitStatusColor } from './src/theme';
+import { canEditVisitAddress, canEditVisitDate, isActionLate, isVisitLate, type UserRole } from '@visites/sync-core';
 import { dateToStr, fmtDate, fmtDateTime, strToDate, visitWhen, VISIT_STATUS } from './src/dates';
+import { Sheet } from './src/Sheet';
 import { DateField } from './src/DateField';
 import { NavChooser } from './src/NavChooser';
 import { companyAddress } from './src/nav';
@@ -17,9 +19,11 @@ const APP_VERSION = '0.1.0';
 const DEFAULT_SERVER = Platform.OS === 'web' ? '/api/mobile/v1' : 'http://10.0.2.2:3000/api/mobile/v1';
 const PLATFORM: 'ios' | 'android' | 'web' = Platform.OS === 'ios' ? 'ios' : Platform.OS === 'web' ? 'web' : 'android';
 
+const todayStr = () => dateToStr(new Date());
+
 type Screen = { name: 'today' } | { name: 'visit'; id: string } | { name: 'clients' } | { name: 'actions' } | { name: 'action'; id?: string } | { name: 'settings' };
-interface Data { visits: Row[]; companies: Row[]; actions: Row[]; reports: Row[]; notes: Row[]; pending: number }
-interface Ctx { store: SqliteStore; engine: SyncEngine; client: ApiClient; userId: string }
+interface Data { visits: Row[]; companies: Row[]; actions: Row[]; reports: Row[]; notes: Row[]; history: Row[]; pending: number }
+interface Ctx { store: SqliteStore; engine: SyncEngine; client: ApiClient; userId: string; role: UserRole }
 type Act = (f: () => Promise<unknown>) => Promise<void>;
 
 export default function App() {
@@ -37,7 +41,9 @@ function Root() {
     const store = storeRef.current;
     const client = new ApiClient(sess.server, APP_VERSION, sess.tokens, t => { void saveTokens(t); onTokens(t); });
     const engine = new SyncEngine(store, client, { newId: uuidv4, userId: sess.userId });
-    setCtx({ store, engine, client, userId: sess.userId });
+    let role: UserRole = sess.role ?? 'commercial';
+    if (!sess.role) { try { role = (await client.me()).role; await saveSession({ ...sess, role }); } catch { /* hors-ligne : droits de commercial par défaut, corrigés à la prochaine connexion */ } }
+    setCtx({ store, engine, client, userId: sess.userId, role });
     setBoot('ready');
   }, []);
 
@@ -69,7 +75,7 @@ function Login({ onDone }: { onDone: (s: Session) => Promise<void> }) {
       const client = new ApiClient(server, APP_VERSION, undefined);
       const tokens = await client.login(email.trim(), password, PLATFORM);
       const me = await client.me();
-      await onDone({ server, userId: me.id, tokens });
+      await onDone({ server, userId: me.id, role: me.role, tokens });
     } catch (e: any) {
       setErr(e.code === 'invalid_credentials' ? 'Identifiants incorrects.' : e.code === 'account_locked' ? 'Compte verrouillé, réessayez plus tard.'
         : e.code === 'upgrade_required' ? 'Mettez l\'application à jour.' : 'Connexion impossible. Vérifiez le réseau et l\'adresse du serveur.');
@@ -88,10 +94,39 @@ function Login({ onDone }: { onDone: (s: Session) => Promise<void> }) {
 }
 
 function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
-  const { s, dark, pref, setPref } = useTheme();
-  const [screen, setScreen] = useState<Screen>({ name: 'today' });
+  const { s, c, dark, pref, setPref } = useTheme();
+  // Navigation : pile d'écrans. Le bouton retour du téléphone (Android) et celui du navigateur (version web) remontent
+  // cette pile comme le bouton « Retour » de l'application ; à la racine seulement, ils quittent l'application.
+  const [stack, setStack] = useState<Screen[]>([{ name: 'today' }]);
+  const stackRef = useRef<Screen[]>(stack);
+  const screen = stack[stack.length - 1]!;
+  const TAB_SCREENS = ['today', 'clients', 'actions', 'settings'];
+  const navigate = useCallback((next: Screen) => {
+    const cur = stackRef.current;
+    const isTab = TAB_SCREENS.includes(next.name);
+    if (isTab && cur[cur.length - 1]!.name === next.name) return;
+    const ns: Screen[] = isTab ? (next.name === 'today' ? [next] : [{ name: 'today' }, next]) : [...cur, next];
+    stackRef.current = ns; setStack(ns);
+    if (Platform.OS === 'web') history.pushState({ stack: ns }, '');
+  }, []);
+  const goBack = useCallback((): boolean => {
+    if (stackRef.current.length < 2) return false;                   // racine : le système quitte l'application
+    if (Platform.OS === 'web') history.back();                       // popstate remonte la pile
+    else { const ns = stackRef.current.slice(0, -1); stackRef.current = ns; setStack(ns); }
+    return true;
+  }, []);
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      history.replaceState({ stack: stackRef.current }, '');
+      const onPop = (e: PopStateEvent) => { const ns: Screen[] = (e.state?.stack as Screen[] | undefined) ?? [{ name: 'today' }]; stackRef.current = ns; setStack(ns); };
+      window.addEventListener('popstate', onPop);
+      return () => window.removeEventListener('popstate', onPop);
+    }
+    const sub = BackHandler.addEventListener('hardwareBackPress', goBack);
+    return () => sub.remove();
+  }, [goBack]);
   const [group, setGroup] = useState<'client' | 'date'>('client');
-  const [data, setData] = useState<Data>({ visits: [], companies: [], actions: [], reports: [], notes: [], pending: 0 });
+  const [data, setData] = useState<Data>({ visits: [], companies: [], actions: [], reports: [], notes: [], history: [], pending: 0 });
   const [status, setStatus] = useState<{ offline: boolean; msg?: string }>({ offline: false });
   const syncing = useRef(false);
 
@@ -99,7 +134,7 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
     const { store } = ctx;
     setData({
       visits: await store.list('visits'), companies: await store.list('companies'), actions: await store.list('actions'),
-      reports: await store.list('reports'), notes: await store.list('notes'), pending: await store.pendingCount(),
+      reports: await store.list('reports'), notes: await store.list('notes'), history: await store.list('visit_history'), pending: await store.pendingCount(),
     });
   }, [ctx]);
 
@@ -145,10 +180,10 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
           {group === 'client'
             ? groups.map(g => (
               <View key={g.id} style={{ gap: 8 }}>
-                <View style={s.group}><Text accessibilityRole="header" style={s.h2}>{g.name}</Text><Text style={s.muted}>{g.visits.length} visite{g.visits.length > 1 ? 's' : ''}</Text></View>
-                {g.visits.map(v => <VisitRow key={v.id} v={v} onPress={() => setScreen({ name: 'visit', id: v.id })} />)}
+                <View style={s.group}><Text accessibilityRole="header" style={s.h2}>{g.name}</Text><Text style={s.muted}>{g.visits.length} visite{g.visits.length > 1 ? 's' : ''}{g.visits.some(v => isVisitLate(v)) ? <Text style={{ color: c.late, fontWeight: '700' }}> · {g.visits.filter(v => isVisitLate(v)).length} en retard</Text> : null}</Text></View>
+                {g.visits.map(v => <VisitRow key={v.id} v={v} onPress={() => navigate({ name: 'visit', id: v.id })} />)}
               </View>))
-            : [...data.visits].sort(byDateDesc).map(v => <VisitRow key={v.id} v={v} client={companyName(v.company_id)} onPress={() => setScreen({ name: 'visit', id: v.id })} />)}
+            : [...data.visits].sort(byDateDesc).map(v => <VisitRow key={v.id} v={v} client={companyName(v.company_id)} onPress={() => navigate({ name: 'visit', id: v.id })} />)}
         </>}
         {screen.name === 'clients' && <>
           <Text style={s.h1}>Clients</Text>
@@ -156,23 +191,26 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
           {data.companies.filter(c => c.status === 'active').map(c => (
             <Row key={c.id} title={c.name} sub={[c.city, c.sector].filter(Boolean).join(' · ')}
               onPress={() => act(async () => { const addr = companyAddress(c);
-                const id = await ctx.engine.create('visit', { company_id: c.id, status: 'planned', planned_start: new Date().toISOString(), ...(addr ? { location_text: addr } : {}) }); setScreen({ name: 'visit', id }); })} />
+                const id = await ctx.engine.create('visit', { company_id: c.id, status: 'planned', planned_start: new Date().toISOString(), ...(addr ? { location_text: addr } : {}) }); navigate({ name: 'visit', id }); })} />
           ))}
         </>}
-        {screen.name === 'visit' && <VisitScreen key={screen.id} visitId={screen.id} data={data} ctx={ctx} act={act} back={() => setScreen({ name: 'today' })} companyName={companyName} />}
+        {screen.name === 'visit' && <VisitScreen key={screen.id} visitId={screen.id} data={data} ctx={ctx} act={act} back={goBack} companyName={companyName} />}
         {screen.name === 'actions' && <>
-          <View style={s.rowBetween}><Text style={s.h1}>Actions</Text><Btn small title="+ Nouvelle" onPress={() => setScreen({ name: 'action' })} /></View>
-          {[...data.actions].sort((a, b) => String(a.due_date ?? '9').localeCompare(String(b.due_date ?? '9'))).map(a => (
-            <View key={a.id} style={s.rowCard}>
-              <Pressable onPress={() => act(() => ctx.engine.update('action', a.id, { status: a.status === 'done' ? 'todo' : 'done' }))} accessibilityRole="checkbox" accessibilityState={{ checked: a.status === 'done' }} style={[s.box, a.status === 'done' && s.boxOn]} />
-              <Pressable style={{ flex: 1 }} onPress={() => setScreen({ name: 'action', id: a.id })}>
+          <View style={s.rowBetween}><Text style={s.h1}>Actions</Text><Btn small title="+ Nouvelle" onPress={() => navigate({ name: 'action' })} /></View>
+          {[...data.actions].sort((a, b) => String(a.due_date ?? '9').localeCompare(String(b.due_date ?? '9'))).map(a => {
+            const late = isActionLate(a, todayStr());
+            return (
+            <View key={a.id} style={[s.rowCard, late && { borderLeftWidth: 6, borderLeftColor: c.late }]}>
+              <Pressable onPress={() => act(() => ctx.engine.update('action', a.id, { status: a.status === 'done' ? 'todo' : 'done' }))} accessibilityRole="checkbox" accessibilityState={{ checked: a.status === 'done' }} style={[s.box, a.status === 'done' && s.boxOn, late && a.status === 'todo' && { borderColor: c.late }]} />
+              <Pressable style={{ flex: 1, gap: 2 }} onPress={() => navigate({ name: 'action', id: a.id })}>
                 <Text style={[s.t, a.status !== 'todo' && s.done]}>{a.title}</Text>
-                <Text style={s.muted}>{companyName(a.company_id)} · {a.due_date ? fmtDate(a.due_date) : 'sans échéance'}{a.status === 'cancelled' ? ' · annulée' : ''}</Text>
+                <Text style={[s.muted, late && { color: c.late, fontWeight: '600' }]}>{companyName(a.company_id)} · {a.due_date ? fmtDate(a.due_date) : 'sans échéance'}{a.status === 'cancelled' ? ' · annulée' : ''}</Text>
+                {late && <Pill text="En retard" color={c.late} />}
               </Pressable>
-            </View>
-          ))}
+            </View>);
+          })}
         </>}
-        {screen.name === 'action' && <ActionForm key={screen.id ?? 'new'} id={screen.id} data={data} ctx={ctx} act={act} back={() => setScreen({ name: 'actions' })} />}
+        {screen.name === 'action' && <ActionForm key={screen.id ?? 'new'} id={screen.id} data={data} ctx={ctx} act={act} back={goBack} />}
         {screen.name === 'settings' && <>
           <Text style={s.h1}>Réglages</Text>
           <Label>Affichage</Label>
@@ -184,7 +222,7 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
       </ScrollView>
       <View style={s.tabs}>
         {([['today', 'Visites'], ['clients', 'Clients'], ['actions', 'Actions'], ['settings', 'Réglages']] as const).map(([k, l]) => (
-          <Pressable key={k} style={s.tab} onPress={() => setScreen({ name: k } as Screen)} accessibilityRole="button"><Text style={[s.tabText, screen.name === k && s.tabOn]}>{l}</Text></Pressable>
+          <Pressable key={k} style={s.tab} onPress={() => navigate({ name: k } as Screen)} accessibilityRole="button"><Text style={[s.tabText, screen.name === k && s.tabOn]}>{l}</Text></Pressable>
         ))}
       </View>
     </SafeAreaView>
@@ -192,9 +230,14 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
 }
 
 function VisitRow({ v, client, onPress }: { v: Row; client?: string; onPress: () => void }) {
+  const { c } = useTheme();
   const w = visitWhen(v);
+  const late = isVisitLate(v);
+  const col = visitStatusColor(c, v.status);
+  const pills = [{ text: VISIT_STATUS[v.status] ?? v.status, color: col }, ...(late ? [{ text: 'En retard', color: c.late }] : [])];
   // Par client : la date est le titre. Par date : le client est le titre, la date en dessous.
-  return <Row onPress={onPress} title={client ?? w.main} sub={client ? `${w.main} · ${VISIT_STATUS[v.status] ?? v.status}` : (w.sub ? `${w.sub}${v.objective ? ' · ' + v.objective : ''}` : v.objective ?? undefined)} badge={client ? undefined : VISIT_STATUS[v.status]} />;
+  return <Row onPress={onPress} stripe={late ? c.late : col} pills={pills} tone={late ? 'late' : undefined}
+    title={client ?? w.main} sub={client ? w.main : (w.sub ? `${w.sub}${v.objective ? ' · ' + v.objective : ''}` : v.objective ?? undefined)} />;
 }
 
 function VisitScreen({ visitId, data, ctx, act, back, companyName }: { visitId: string; data: Data; ctx: Ctx; act: Act; back: () => void; companyName: (id: string) => string }) {
@@ -203,56 +246,49 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName }: { visitId: 
   const report: Row | undefined = data.reports.find(r => r.visit_id === visitId);
   const [summary, setSummary] = useState<string>(report?.summary ?? '');
   const [note, setNote] = useState('');
+  const [sheet, setSheet] = useState<'none' | 'date' | 'address' | 'history' | 'nav'>('none');
   const company: Row | undefined = data.companies.find(co => co.id === v?.company_id);
-  const clientAddr = companyAddress(company);
-  const shownAddr: string = (v?.location_text ?? '') || clientAddr;   // adresse de la visite, sinon celle du client
-  const [planned, setPlanned] = useState<Date | undefined>();
-  const [addr, setAddr] = useState('');
-  const [navOpen, setNavOpen] = useState(false);
-  // Les champs suivent la visite : à l'ouverture (la visite peut arriver après l'affichage) et si elle change ailleurs.
-  const plannedIso: string | undefined = v?.planned_start ?? undefined;
-  useEffect(() => { setPlanned(plannedIso ? new Date(plannedIso) : undefined); }, [plannedIso]);
-  useEffect(() => { setAddr(shownAddr); }, [shownAddr]);
+  // L'adresse appartient à la visite : copiée du client à la création, elle ne suit pas ensuite les changements du client.
+  // (Visites créées avant cette règle, sans adresse : on affiche celle du client en repli.)
+  const address: string = (v?.location_text ?? '') || companyAddress(company);
+  const entries = data.history.filter(h => h.visit_id === visitId).sort((a, b) => String(b.changed_at).localeCompare(String(a.changed_at)));
   if (!v) return <><Btn small title="‹ Retour" onPress={back} /><Text style={s.muted}>Visite introuvable (supprimée ou plus accessible).</Text></>;
   const mine = v.author_id === ctx.userId;
-  const plannedChanged = (planned?.toISOString() ?? null) !== (plannedIso ?? null);
+  const canDate = canEditVisitDate(v.status, mine);
+  const canAddress = canEditVisitAddress(v.status, ctx.role);
+  const setStatus = (status: string, extra: Row = {}) => act(() => ctx.engine.update('visit', v.id, { status, ...extra }));
   const saveReport = (validate: boolean) => act(async () => {
     const st = validate ? 'validated' : 'draft';
     if (!report) await ctx.engine.create('report', { visit_id: visitId, language: 'fr', summary, status: st });
     else await ctx.engine.update('report', report.id, { summary, ...(validate ? { status: st } : {}) });
   });
-  const Fact = ({ k, val }: { k: string; val: string }) => <View style={s.fact}><Text style={s.muted}>{k}</Text><Text style={[s.t, { flexShrink: 1, textAlign: 'right' }]}>{val}</Text></View>;
+  const Icon = ({ label, onPress }: { label: string; onPress: () => void }) => (
+    <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={label} style={s.iconBtn}><Text style={s.iconText}>✎</Text></Pressable>);
   return <>
-    <Btn small title="‹ Retour" onPress={back} />
-    <Text style={s.h1}>{companyName(v.company_id)}</Text>
-    <View style={[s.rowCard, { flexDirection: 'column', alignItems: 'stretch', gap: 6 }]}>
-      <Fact k="Statut" val={VISIT_STATUS[v.status] ?? v.status} />
-      <Fact k="Prévue" val={v.planned_start ? fmtDateTime(v.planned_start) : 'non planifiée'} />
-      <Fact k="Commencée" val={v.started_at ? fmtDateTime(v.started_at) : '—'} />
-      <Fact k="Terminée" val={v.ended_at ? fmtDateTime(v.ended_at) : '—'} />
+    <View style={s.headerRow}>
+      <Pressable onPress={back} accessibilityRole="button" style={s.backBtn}><Text style={s.link}>‹ Retour</Text></Pressable>
+      <Text style={s.titleCenter} numberOfLines={1} accessibilityRole="header">{companyName(v.company_id)}</Text>
+      <View style={s.backBtn} />
     </View>
-    <Label>Adresse</Label>
-    {shownAddr
-      ? <Pressable onPress={() => setNavOpen(true)} accessibilityRole="link" accessibilityLabel="Ouvrir l'itinéraire" style={[s.rowCard, { minHeight: 48 }]}>
-          <Text style={[s.t, { flex: 1, color: c.accent, textDecorationLine: 'underline' }]}>{shownAddr}</Text><Text style={s.muted}>Itinéraire ›</Text></Pressable>
-      : <Text style={s.muted}>Aucune adresse. Le client n'en a pas dans le CRM : saisissez-en une ci-dessous.</Text>}
-    {mine && v.status !== 'cancelled' && <>
-      <TextInput accessibilityLabel="Adresse de la visite" placeholderTextColor={c.muted} style={s.input} value={addr} onChangeText={setAddr} placeholder="Adresse de la visite" multiline />
-      <View style={s.rowBetween}>
-        <Btn small title="Enregistrer l'adresse" disabled={addr.trim() === shownAddr} onPress={() => act(() => ctx.engine.update('visit', v.id, { location_text: addr.trim() || null }))} />
-        {clientAddr && shownAddr !== clientAddr && <Btn small title="Adresse du client" onPress={() => act(async () => { await ctx.engine.update('visit', v.id, { location_text: clientAddr }); })} />}
-      </View>
-    </>}
-    <NavChooser address={shownAddr} visible={navOpen} onClose={() => setNavOpen(false)} />
-    {mine && v.status !== 'done' && v.status !== 'cancelled' && <>
-      <Label>Date et heure prévues</Label>
-      <DateField label="Date et heure prévues" mode="datetime" value={planned} onChange={setPlanned} clearable />
-      <Btn small title="Enregistrer la date" disabled={!plannedChanged} onPress={() => act(() => ctx.engine.update('visit', v.id, { planned_start: planned ? planned.toISOString() : null }))} />
-    </>}
-    {mine && <View style={s.rowBetween}>
-      {v.status === 'planned' && <Btn title="Démarrer" onPress={() => act(() => ctx.engine.update('visit', v.id, { status: 'in_progress', started_at: new Date().toISOString() }))} />}
-      {v.status === 'in_progress' && <Btn title="Terminer" onPress={() => act(() => ctx.engine.update('visit', v.id, { status: 'done', ended_at: new Date().toISOString() }))} />}
-    </View>}
+    <View style={[s.rowCard, { flexDirection: 'column', alignItems: 'stretch', gap: 4 }]}>
+      <View style={s.fact}><Text style={s.muted}>Statut</Text><View style={{ flexDirection: 'row', gap: 6 }}><Pill text={VISIT_STATUS[v.status] ?? v.status} color={visitStatusColor(c, v.status)} />{isVisitLate(v) && <Pill text="En retard" color={c.late} />}</View></View>
+      <View style={s.fact}><Text style={s.muted}>Prévue</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', flexShrink: 1 }}>
+          <Text style={[s.t, { flexShrink: 1, textAlign: 'right' }, isVisitLate(v) && { color: c.late }]}>{v.planned_start ? fmtDateTime(v.planned_start) : 'non planifiée'}</Text>
+          {canDate && <Icon label="Modifier la date prévue" onPress={() => setSheet('date')} />}
+        </View></View>
+      <View style={s.fact}><Text style={s.muted}>Commencée</Text><Text style={s.t}>{v.started_at ? fmtDateTime(v.started_at) : '—'}</Text></View>
+      <View style={s.fact}><Text style={s.muted}>Terminée</Text><Text style={s.t}>{v.ended_at ? fmtDateTime(v.ended_at) : '—'}</Text></View>
+      <View style={s.fact}><Text style={s.muted}>Adresse de la visite</Text>{canAddress && <Icon label="Modifier l'adresse de la visite" onPress={() => setSheet('address')} />}</View>
+      {address
+        ? <Pressable onPress={() => setSheet('nav')} accessibilityRole="link" accessibilityLabel="Ouvrir l'itinéraire"><Text style={[s.t, { color: c.accent, textDecorationLine: 'underline' }]}>{address}  ›</Text></Pressable>
+        : <Text style={s.muted}>Aucune adresse{canAddress ? ' : touchez le crayon pour en saisir une.' : '.'}</Text>}
+      <Pressable onPress={() => setSheet('history')} accessibilityRole="button" style={{ minHeight: 36, justifyContent: 'center' }}>
+        <Text style={s.link}>Historique des modifications ({entries.length})</Text></Pressable>
+    </View>
+    {mine && v.status === 'planned' && <Btn title="Visite organisée avec le client" onPress={() => setStatus('organized')} />}
+    {mine && (v.status === 'planned' || v.status === 'organized') && <Btn title="Démarrer la visite" onPress={() => setStatus('in_progress', { started_at: new Date().toISOString() })} />}
+    {mine && v.status === 'in_progress' && <Btn title="Terminer la visite" onPress={() => setStatus('done', { ended_at: new Date().toISOString() })} />}
     <Label>Notes</Label>
     {data.notes.filter(n => n.visit_id === visitId).map(n => <Text key={n.id} style={s.note}>{n.body}</Text>)}
     {mine && <><TextInput accessibilityLabel="Nouvelle note" placeholderTextColor={c.muted} style={s.input} value={note} onChangeText={setNote} placeholder="Nouvelle note" multiline />
@@ -264,7 +300,59 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName }: { visitId: 
       <Btn small title="Enregistrer" onPress={() => saveReport(false)} />
       <Btn small title="Valider" disabled={!summary.trim() || report?.status === 'validated'} onPress={() => saveReport(true)} />
     </View>}
+
+    <EditDateSheet visible={sheet === 'date'} initial={v.planned_start} onClose={() => setSheet('none')}
+      onSave={d => { setSheet('none'); void act(() => ctx.engine.update('visit', v.id, { planned_start: d ? d.toISOString() : null })); }} />
+    <EditAddressSheet visible={sheet === 'address'} initial={address} onClose={() => setSheet('none')}
+      onSave={t => { setSheet('none'); void act(() => ctx.engine.update('visit', v.id, { location_text: t.trim() || null })); }} />
+    <HistorySheet visible={sheet === 'history'} entries={entries} onClose={() => setSheet('none')} />
+    <NavChooser address={address} visible={sheet === 'nav'} onClose={() => setSheet('none')} />
   </>;
+}
+
+function EditDateSheet({ visible, initial, onClose, onSave }: { visible: boolean; initial?: string | null; onClose: () => void; onSave: (d?: Date) => void }) {
+  const [value, setValue] = useState<Date | undefined>();
+  useEffect(() => { if (visible) setValue(initial ? new Date(initial) : undefined); }, [visible, initial]);
+  const changed = (value?.toISOString() ?? null) !== (initial ?? null);
+  return (
+    <Sheet title="Modifier la date prévue" visible={visible} onClose={onClose}>
+      <DateField label="Date et heure prévues" mode="datetime" value={value} onChange={setValue} clearable />
+      <Text style={useTheme().s.muted}>L'ancienne date reste consultable dans l'historique.</Text>
+      <Btn title="Enregistrer" disabled={!changed} onPress={() => onSave(value)} />
+      <Btn small title="Annuler" onPress={onClose} />
+    </Sheet>
+  );
+}
+
+function EditAddressSheet({ visible, initial, onClose, onSave }: { visible: boolean; initial: string; onClose: () => void; onSave: (t: string) => void }) {
+  const { s, c } = useTheme();
+  const [text, setText] = useState(initial);
+  useEffect(() => { if (visible) setText(initial); }, [visible, initial]);
+  return (
+    <Sheet title="Adresse de la visite" visible={visible} onClose={onClose}>
+      <TextInput accessibilityLabel="Adresse de la visite" placeholderTextColor={c.muted} style={[s.input, { minHeight: 90 }]} value={text} onChangeText={setText} placeholder="Numéro, rue, code postal, ville" multiline />
+      <Text style={s.muted}>L'adresse du client n'est pas modifiée : elle ne concerne que cette visite.</Text>
+      <Btn title="Enregistrer" disabled={text.trim() === initial.trim()} onPress={() => onSave(text)} />
+      <Btn small title="Annuler" onPress={onClose} />
+    </Sheet>
+  );
+}
+
+function HistorySheet({ visible, entries, onClose }: { visible: boolean; entries: Row[]; onClose: () => void }) {
+  const { s } = useTheme();
+  const val = (e: Row, v?: string | null) => !v ? '—' : e.field === 'planned_start' ? fmtDateTime(v) : v;
+  return (
+    <Sheet title="Historique des modifications" visible={visible} onClose={onClose}>
+      {entries.length === 0 && <Text style={s.muted}>Aucune modification depuis la création de la visite.</Text>}
+      {entries.map(e => (
+        <View key={e.id} style={s.hist}>
+          <Text style={s.t}>{e.field === 'planned_start' ? 'Date prévue' : 'Adresse de la visite'}</Text>
+          <Text style={s.muted}>{fmtDateTime(e.changed_at)} · {e.changed_by_name}</Text>
+          <Text style={{ color: s.t.color }}>{val(e, e.old_value)}  →  {val(e, e.new_value)}</Text>
+        </View>))}
+      <Btn small title="Fermer" onPress={onClose} />
+    </Sheet>
+  );
 }
 
 function ActionForm({ id, data, ctx, act, back }: { id?: string; data: Data; ctx: Ctx; act: Act; back: () => void }) {
@@ -301,7 +389,20 @@ const Btn = ({ title, onPress, disabled, small }: { title: string; onPress: () =
   const { s } = useTheme();
   return <Pressable onPress={onPress} disabled={disabled} accessibilityRole="button" style={[s.btn, small && s.btnSmall, disabled && s.btnOff]}><Text style={s.btnText}>{title}</Text></Pressable>;
 };
-const Row = ({ title, sub, badge, onPress }: { title: string; sub?: string; badge?: string; onPress: () => void }) => {
+const Pill = ({ text, color }: { text: string; color: string }) => {
   const { s } = useTheme();
-  return <Pressable onPress={onPress} style={s.rowCard} accessibilityRole="button"><View style={{ flex: 1 }}><Text style={s.t}>{title}</Text>{sub ? <Text style={s.muted}>{sub}</Text> : null}</View>{badge ? <Text style={s.muted}>{badge}</Text> : null}<Text style={s.muted}>›</Text></Pressable>;
+  return <View style={[s.pill, { backgroundColor: color + '26', borderWidth: 1, borderColor: color }]}><Text style={[s.pillText, { color }]}>{text}</Text></View>;
+};
+const Row = ({ title, sub, pills, stripe, onPress, tone }: { title: string; sub?: string; pills?: { text: string; color: string }[]; stripe?: string; onPress: () => void; tone?: 'late' }) => {
+  const { s, c } = useTheme();
+  return (
+    <Pressable onPress={onPress} style={[s.rowCard, stripe ? { borderLeftWidth: 6, borderLeftColor: stripe } : null]} accessibilityRole="button">
+      <View style={{ flex: 1, gap: 2 }}>
+        <Text style={s.t}>{title}</Text>
+        {sub ? <Text style={[s.muted, tone === 'late' && { color: c.late, fontWeight: '600' }]}>{sub}</Text> : null}
+        {pills?.length ? <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap', marginTop: 2 }}>{pills.map(p => <Pill key={p.text} text={p.text} color={p.color} />)}</View> : null}
+      </View>
+      <Text style={s.muted}>›</Text>
+    </Pressable>
+  );
 };

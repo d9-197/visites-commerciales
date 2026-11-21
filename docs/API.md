@@ -68,7 +68,7 @@ sequenceDiagram
 
 | Entité | Création | Modification | Suppression | Fixé par le serveur |
 |--------|----------|--------------|-------------|---------------------|
-| `visit` | Sur un client que l'utilisateur peut lire | Auteur seul ; `base_version` requis | Non : statut `cancelled` | `author_id`, version |
+| `visit` | Sur un client que l'utilisateur peut lire | `location_text` (adresse) : voir ci-dessous ; tout le reste : auteur seul ; `base_version` requis ; `planned_start` seulement tant que la visite n'est pas commencée | Non : statut `cancelled` | `author_id`, version, historique |
 | `visit_contact` | Le contact doit appartenir au client de la visite | — | Oui (logique) | |
 | `report` | Un seul par visite, par l'auteur de la visite | Auteur seul ; `base_version` requis ; passage à `validated` : `summary` non vide **[à valider]** | Non | `validated_at`, `validated_by`, version |
 | `note` | Par l'auteur de la visite | Champ `body` seulement | Oui (logique) | `author_id` |
@@ -77,6 +77,8 @@ sequenceDiagram
 | `recording` | Métadonnées ; l'audio est envoyé séparément | — | Non | `status`, `purge_after` |
 | `attachment` | Métadonnées ; photo envoyée séparément | `caption` | Oui (logique) | |
 | `glossary_term` | Termes personnels seulement | Auteur seul | Oui (logique) | `scope` = user |
+
+**Visites : statuts et adresse.** Statuts : `planned` (à organiser), `organized` (organisée avec le client), `in_progress`, `done`, `cancelled`. Transitions : à organiser → organisée, en cours ou annulée ; organisée → à organiser, en cours ou annulée ; en cours → terminée ou annulée ; terminée et annulée sont définitives (refus `locked_status`). **Adresse de la visite** (`location_text`, copiée du client à la création, elle ne suit pas ensuite le client) : modifiable par toute personne qui voit la visite tant qu'elle est « à organiser » ; par un commercial seulement une fois « organisée » ; par personne dès qu'elle est commencée. Une opération qui mêle l'adresse et un champ réservé à l'auteur est refusée en bloc. **Historique** : chaque modification de la date prévue et de l'adresse est enregistrée par le serveur (ancienne et nouvelle valeur, auteur, date) et reçue par `pull` (`visit_history`, lecture seule) par ceux qui voient la visite ; le CRM la lit par `/visit-history`.
 
 `owner_id` n'est pas modifiable dans le MVP : l'assignation à un collègue viendra après le MVP.
 

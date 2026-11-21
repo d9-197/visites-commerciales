@@ -32,7 +32,7 @@ erDiagram
 | Référentiels et réglages | `language`, `visit_type`, `app_setting` |
 | Utilisateurs | `app_user`, `user_hierarchy`, `device`, `refresh_token` |
 | CRM (lecture seule dans l'appli) | `company`, `contact`, `company_assignment` |
-| Visites | `visit`, `visit_contact`, `visit_report`, `visit_note`, `private_note`, `attachment` |
+| Visites | `visit`, `visit_contact`, `visit_history`, `visit_report`, `visit_note`, `private_note`, `attachment` |
 | Voix et IA | `recording`, `transcription`, `ai_proposal`, `report_quality`, `error_report`, `ai_usage`, `glossary_term` |
 | Actions | `action_item` |
 | Synchro | `client_operation`, `access_revocation`, `text_conflict` |
@@ -49,6 +49,13 @@ erDiagram
 6. **Audio, transcriptions et propositions IA** : stockés dans des tables que les vues du CRM n'incluent pas.
 7. **Langues** : table `language` plutôt qu'une liste figée, avec un drapeau `enabled` pour l'ouverture langue par langue.
 8. **Réglages** : table `app_setting` en clé/valeur. `report_visibility_mode` (1 ou 2) est global pour l'instant ; il peut être affiné plus tard sans changer le schéma des données métier.
+
+## 2 bis. Visites : statuts, adresse, historique (migration 001)
+
+- Statuts : `planned` (à organiser), `organized` (organisée avec le client), `in_progress`, `done`, `cancelled`.
+- `visit.location_text` est l'**adresse de la visite**, copiée du client à la création : elle ne suit pas les changements du client.
+- `visit_history` : une ligne par modification de la date prévue ou de l'adresse (ancienne valeur, nouvelle valeur, nom de la personne copié au moment de la modification, date). Écrite par le serveur seulement ; lue par ceux qui voient la visite ; exposée au CRM par la vue `crm_visit_history`.
+- Les bases existantes sont mises à niveau par `db/migrations/001_visite_organisee_et_historique.sql`, appliquée automatiquement au démarrage (table `schema_migrations`).
 
 ## 3. Hiérarchie
 

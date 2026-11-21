@@ -42,7 +42,7 @@ export interface PullResponse {
 export type Row = Record<string, any>;
 
 export type ChangeKey = 'companies' | 'contacts' | 'assignments' | 'colleagues' | 'visits' | 'visit_contacts'
-  | 'reports' | 'notes' | 'private_notes' | 'attachments' | 'actions' | 'recordings' | 'ai_proposals' | 'glossary_terms';
+  | 'reports' | 'notes' | 'private_notes' | 'attachments' | 'actions' | 'recordings' | 'ai_proposals' | 'glossary_terms' | 'visit_history';
 
 /** Entité de l'API -> clé du tableau renvoyé par pull. */
 export const CHANGE_KEY: Partial<Record<EntityName, ChangeKey>> = {

@@ -35,7 +35,7 @@ test('scénario 1 : deux appareils, champs différents appliqués ; même champ 
   const ra = await a.push([op('visit', 'update', v, { location_text: 'Lyon 3e' }, 1)]);
   assert.equal(ra.body.results[0].result, 'applied');
   assert.equal(ra.body.results[0].version, 2);
-  const rb = await b.push([op('visit', 'update', v, { status: 'in_progress' }, 1)]);     // champ différent
+  const rb = await b.push([op('visit', 'update', v, { status: 'organized' }, 1)]);     // champ différent
   assert.equal(rb.body.results[0].result, 'applied');
   assert.equal(rb.body.results[0].version, 3);
   const rc = await b.push([op('visit', 'update', v, { location_text: 'Villeurbanne' }, 1)]); // même champ que A
@@ -46,7 +46,7 @@ test('scénario 1 : deux appareils, champs différents appliqués ; même champ 
   const { changes } = await b.pullAll();
   const row = changes.visits!.find(x => x.id === v)!;
   assert.equal(row.location_text, 'Lyon 3e');
-  assert.equal(row.status, 'in_progress');
+  assert.equal(row.status, 'organized');
 });
 
 test('scénario 2 : texte long modifié des deux côtés : les deux versions sont conservées', async () => {

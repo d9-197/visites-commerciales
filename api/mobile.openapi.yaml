@@ -418,6 +418,7 @@ components:
               items: {$ref: '#/components/schemas/UserRef'}
             visits: {type: array, items: {$ref: '#/components/schemas/Visit'}}
             visit_contacts: {type: array, items: {$ref: '#/components/schemas/VisitContact'}}
+            visit_history: {type: array, items: {$ref: '#/components/schemas/VisitHistory'}}
             reports: {type: array, items: {$ref: '#/components/schemas/Report'}}
             notes: {type: array, items: {$ref: '#/components/schemas/Note'}}
             private_notes: {type: array, items: {$ref: '#/components/schemas/PrivateNote'}}
@@ -493,6 +494,18 @@ components:
         version: {type: integer}
         updated_at: {$ref: 'common.yaml#/components/schemas/Timestamp'}
         deleted_at: {oneOf: [{$ref: 'common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]}
+    VisitHistory:
+      description: Modification de la date prévue ou de l'adresse d'une visite. Écrite par le serveur ; lecture seule pour l'application.
+      type: object
+      required: [id, visit_id, field, changed_by_name, changed_at]
+      properties:
+        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        visit_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        field: {type: string, enum: [planned_start, location_text]}
+        old_value: {type: [string, 'null']}
+        new_value: {type: [string, 'null']}
+        changed_by_name: {type: string}
+        changed_at: {$ref: 'common.yaml#/components/schemas/Timestamp'}
     VisitContact:
       type: object
       required: [visit_id, contact_id]
@@ -681,6 +694,10 @@ components:
             - {$ref: '#/components/schemas/AttachmentWrite'}
             - {$ref: '#/components/schemas/GlossaryWrite'}
     VisitWrite:
+      description: |
+        Droits à la modification (voir docs/API.md) : `location_text` (adresse de la visite) par toute personne qui voit la visite tant qu'elle est à organiser,
+        par un commercial une fois organisée, par personne dès qu'elle est commencée ; tous les autres champs par l'auteur seul.
+        `planned_start` n'est modifiable que tant que la visite n'est pas commencée. Transitions de statut limitées (refus : `locked_status`).
       type: object
       properties:
         company_id: {$ref: 'common.yaml#/components/schemas/Uuid'}

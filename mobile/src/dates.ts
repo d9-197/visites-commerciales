@@ -1,6 +1,6 @@
 import type { Row } from '@visites/sync-core';
 
-export const VISIT_STATUS: Record<string, string> = { planned: 'Planifiée', in_progress: 'En cours', done: 'Terminée', cancelled: 'Annulée' };
+export const VISIT_STATUS: Record<string, string> = { planned: 'À organiser', organized: 'Organisée', in_progress: 'En cours', done: 'Terminée', cancelled: 'Annulée' };
 
 /** « ven. 20 nov. 2026, 10:30 » dans la langue du téléphone ; repli simple si Intl est indisponible. */
 export function fmtDateTime(iso: string): string {

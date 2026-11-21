@@ -41,6 +41,19 @@ paths:
         '400': {$ref: 'common.yaml#/components/responses/BadRequest'}
         '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
         '429': {$ref: 'common.yaml#/components/responses/TooManyRequests'}
+  /visit-history:
+    get:
+      tags: [Lecture]
+      summary: Historique des modifications de date prévue et d'adresse des visites
+      parameters:
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/UpdatedSince'}
+        - {$ref: '#/components/parameters/Limit'}
+      responses:
+        '200':
+          description: Page d'historique.
+          content: {application/json: {schema: {$ref: '#/components/schemas/VisitHistoryPage'}}}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
   /visits/{id}:
     get:
       tags: [Lecture]
@@ -214,6 +227,25 @@ components:
         updated_at: {$ref: 'common.yaml#/components/schemas/Timestamp'}
         seq: {type: integer, format: int64}
         deleted_at: {oneOf: [{$ref: 'common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]}
+    VisitHistory:
+      type: object
+      required: [id, visit_id, field, changed_by_name, changed_at, seq]
+      properties:
+        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        visit_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        field: {type: string, enum: [planned_start, location_text]}
+        old_value: {type: [string, 'null']}
+        new_value: {type: [string, 'null']}
+        changed_by_name: {type: string}
+        changed_at: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+        seq: {type: integer, format: int64}
+    VisitHistoryPage:
+      allOf:
+        - {$ref: '#/components/schemas/PageInfo'}
+        - type: object
+          required: [items]
+          properties:
+            items: {type: array, items: {$ref: '#/components/schemas/VisitHistory'}}
     VisitPage:
       allOf:
         - {$ref: '#/components/schemas/PageInfo'}
