@@ -65,7 +65,7 @@ données exploitable (comptes rendus structurés, actions, prochaines étapes).
 
 **Suppression** : pas de suppression ; une action est « annulée » pour garder l'historique (et la rendre récupérable par l'API).
 
-**Responsable** : l'auteur, non modifiable. L'assignation à un collègue est exclue (décision du 21/11, pas seulement reportée).
+**Responsable** : l'auteur, non modifiable dans le MVP. L'assignation à un collègue est prévue après le MVP (décision du 21/11).
 
 **Droits** : le responsable modifie ses actions ; un manager voit celles de son équipe (lecture).
 
@@ -74,7 +74,7 @@ données exploitable (comptes rendus structurés, actions, prochaines étapes).
 **Rappels** : notification locale sur l'appareil à l'heure choisie (fonctionne hors-ligne).
 
 ### V2 (hors MVP)
-Tournée optimisée et itinéraire, géolocalisation/check-in automatique, rappel de
+Assignation d'une action à un collègue (le modèle de données conserve dès le MVP un responsable distinct de l'auteur), Tournée optimisée et itinéraire, géolocalisation/check-in automatique, rappel de
 visite à faire (clients non vus depuis N jours), objectifs et tableaux de bord
 manager, opportunités/pipeline, documents partagés, intégration CRM/agenda, export PDF du CR.
 
