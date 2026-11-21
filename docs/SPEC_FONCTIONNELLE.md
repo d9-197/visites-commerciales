@@ -21,7 +21,7 @@ données exploitable (comptes rendus structurés, actions, prochaines étapes).
 | Client supprimé ou fusionné dans le CRM | Visites conservées, client marqué inactif | La synchro marque le client inactif au lieu de le supprimer ; en cas de fusion, rattachement des visites au client absorbant à définir (reprise des identifiants) ; plus de nouvelle visite sur un client inactif |
 | Clients | Partagés entre plusieurs commerciaux | Table d'affectation client-commerciaux ; historique visible par tous les intervenants ; droits par client ; gestion des modifications concurrentes |
 | Langue de dictée | Une langue par commercial, fixée dans le profil | Pas de détection automatique en v1 ; une langue de dictée passée au moteur ; la langue du CR peut différer de celle de l'interface |
-| Visibilité des CR | **Paramétrable** (décision du 21/11) entre deux modes : (1) CR visible par tous les commerciaux rattachés au client, plus leur hiérarchie ; (2) CR visible par son auteur et sa hiérarchie seulement. La note privée reste réservée à l'auteur dans les deux modes et n'est pas exposée à l'API du CRM | Réglage dans la console d'administration ; portée du réglage (global, par équipe ou par client) à préciser ; le changement de mode s'applique à l'historique existant, ce qui doit être explicite pour l'administrateur |
+| Visibilité des CR | **Paramétrable** (décision du 21/11) entre deux modes : (1) CR visible par tous les commerciaux rattachés au client, plus leur hiérarchie ; (2) CR visible par son auteur et sa hiérarchie seulement. La note privée reste réservée à l'auteur dans les deux modes et n'est pas exposée à l'API du CRM | Réglage dans la console d'administration ; portée du réglage : **globale** pour l'instant, affinage (équipe, client) prévu plus tard, donc ne pas figer le modèle de données sur un réglage unique ; le changement de mode s'applique à l'historique existant, ce qui doit être explicite pour l'administrateur |
 | Fournisseur transcription/IA | Non choisi, à comparer | Comparatif à produire (traitement UE, langues, coût, DPA) à partir de sources vérifiées |
 | MDM | NinjaOne | Distribution et politiques de l'appli via NinjaOne ; à vérifier : plateformes mobiles gérées (iOS/Android), mode de déploiement d'une appli privée, configuration à distance (AppConfig), effacement à distance |
 | CRM (précisions du 20/11) | CRM interne, non nommé ; clients en lecture seule dans l'appli (pas de création) ; le CRM vient **récupérer** visites et CR par API | Le back expose une API REST dédiée au CRM (authentification par clé/jeton de service, pagination, filtre « modifié depuis », identifiants stables, suppression logique) ; le back lit les clients du CRM de son côté ; pas d'écriture dans le CRM |
@@ -152,7 +152,6 @@ Garde-fous :
 ## 11. Questions ouvertes
 
 1. Versions minimales d'iOS et d'Android du parc : à vérifier avec l'IT. Hypothèse de travail : iOS 17+ et Android 13+ **[À VALIDER]**.
-2. Portée du réglage de visibilité des CR : global, par équipe ou par client ?
-3. Documentation de l'API du CRM : authentification, champs client/contact, quotas, identifiant de référence ?
-4. Format et contenu attendus par le CRM pour récupérer visites et CR (champs, fréquence d'appel, historique initial) ?
-5. Fusion de clients dans le CRM : le CRM fournit-il l'identifiant du client absorbant ?
+2. Documentation de l'API du CRM : authentification, champs client/contact, quotas, identifiant de référence ?
+3. Format et contenu attendus par le CRM pour récupérer visites et CR (champs, fréquence d'appel, historique initial) ?
+4. Fusion de clients dans le CRM : le CRM fournit-il l'identifiant du client absorbant ?
