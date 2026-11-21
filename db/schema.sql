@@ -436,7 +436,7 @@ CREATE TABLE client_operation (
   device_id   uuid REFERENCES device(id),
   entity      text NOT NULL,
   entity_id   uuid NOT NULL,
-  op          text NOT NULL CHECK (op IN ('create','update','cancel')),
+  op          text NOT NULL CHECK (op IN ('create','update','delete')),
   payload     jsonb NOT NULL,
   applied_at  timestamptz NOT NULL DEFAULT now(),
   result      text NOT NULL CHECK (result IN ('applied','conflict','rejected')),

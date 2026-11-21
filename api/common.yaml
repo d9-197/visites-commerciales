@@ -1,0 +1,79 @@
+# Composants communs aux trois API (mobile, CRM, administration).
+openapi: 3.1.0
+info:
+  title: Composants communs
+  version: 0.1.0
+paths: {}
+components:
+  schemas:
+    Problem:
+      description: Erreur au format RFC 9457 (application/problem+json). `code` est stable et destiné au programme ; `detail` est destiné à un humain.
+      type: object
+      required: [type, title, status, code]
+      properties:
+        type: {type: string, description: "Adresse de documentation de l'erreur, ou about:blank."}
+        title: {type: string}
+        status: {type: integer}
+        code:
+          type: string
+          description: Code applicatif stable (voir docs/API.md, section Erreurs).
+          examples: [validation_failed]
+        detail: {type: string}
+        instance: {type: string, description: "Identifiant de la requête, à fournir au support."}
+        errors:
+          type: array
+          description: Détail par champ pour validation_failed.
+          items:
+            type: object
+            required: [field, message]
+            properties:
+              field: {type: string}
+              message: {type: string}
+    Uuid:
+      type: string
+      format: uuid
+    Timestamp:
+      type: string
+      format: date-time
+      description: RFC 3339, toujours en UTC.
+    LanguageCode:
+      type: string
+      enum: [fr, en, es, it, de, nl]
+    VisitStatus:
+      type: string
+      enum: [planned, in_progress, done, cancelled]
+    ActionStatus:
+      type: string
+      enum: [todo, done, cancelled]
+    Reminder:
+      type: string
+      enum: [none, same_day_9h, eve_17h]
+    ActionOrigin:
+      type: string
+      enum: [manual, dictated, ai]
+    Temperature:
+      type: string
+      enum: [cold, warm, hot]
+  responses:
+    BadRequest:
+      description: Requête invalide (validation_failed, payload_too_large).
+      content: &problem
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    Unauthorized:
+      description: Jeton ou clé absent, invalide ou expiré (token_expired, invalid_credentials).
+      content: *problem
+    Forbidden:
+      description: Droits insuffisants (forbidden).
+      content: *problem
+    NotFound:
+      description: Ressource inconnue ou non visible par l'appelant (not_found). Une ressource non visible renvoie 404, pas 403, pour ne pas révéler son existence.
+      content: *problem
+    TooManyRequests:
+      description: Limite de débit dépassée (rate_limited).
+      headers:
+        Retry-After: {schema: {type: integer}, description: Secondes avant de réessayer.}
+      content: *problem
+    UpgradeRequired:
+      description: Version de l'application inférieure au minimum exigé (upgrade_required).
+      content: *problem

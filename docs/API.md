@@ -1,0 +1,163 @@
+# Contrat des API — v0.1
+
+Trois API distinctes, décrites en OpenAPI 3.1 dans le dossier [`api/`](../api) :
+
+| API | Fichier | Utilisateur | Authentification |
+|-----|---------|-------------|------------------|
+| Mobile | [`mobile.openapi.yaml`](../api/mobile.openapi.yaml) | Application iOS / Android | Jeton d'accès court + jeton de renouvellement |
+| CRM | [`crm.openapi.yaml`](../api/crm.openapi.yaml) | Le CRM interne | Clé d'API (compte de service) |
+| Administration | [`admin.openapi.yaml`](../api/admin.openapi.yaml) | Console d'administration (IT) | Jeton d'accès, droit administrateur |
+
+Composants communs (erreurs, identifiants, énumérations) : [`common.yaml`](../api/common.yaml).
+
+**Vérifié** : les quatre fichiers sont valides au sens de la spécification OpenAPI 3.1 (contrôle par un validateur automatique). **Non vérifié** : aucun serveur n'implémente ce contrat ; il n'a pas été confronté à un client réel. C'est un brouillon pour discussion, et le contrat CRM est une **proposition à soumettre à l'équipe CRM**, dont le format attendu est inconnu.
+
+## 1. Conventions
+
+- Base : `https://<hôte>/api/{mobile|crm|admin}/v1`. La version majeure est dans l'adresse ; on ne casse pas une version publiée, on en ouvre une nouvelle.
+- Formats : JSON, UTF-8. Horodatages RFC 3339 en UTC. Dates seules (`due_date`) au format `AAAA-MM-JJ`. Identifiants en UUID.
+- **Erreurs** : `application/problem+json` (RFC 9457) avec un champ `code` stable (voir §6).
+- **Pagination** : curseur opaque (`cursor`, `next_cursor`, `has_more`) ; jamais de numéro de page.
+- **Version de l'application** : en-tête `X-App-Version` sur toutes les requêtes mobiles. En dessous du minimum exigé, réponse **426** avec le code `upgrade_required`.
+- **Visibilité** : une ressource que l'appelant n'a pas le droit de voir répond **404**, jamais 403, pour ne pas révéler son existence.
+- **Limites de débit** : réponse **429** avec `Retry-After`. Valeurs à définir au dimensionnement ; propositions de départ : connexion 10 par minute et par adresse, synchro 60 par minute et par utilisateur.
+- **Transport** : HTTPS uniquement.
+
+## 2. Authentification (API mobile)
+
+```mermaid
+sequenceDiagram
+  participant A as Application
+  participant S as Back
+  A->>S: POST /auth/login (e-mail, mot de passe, appareil)
+  alt double authentification activée
+    S-->>A: mfa_required + mfa_token
+    A->>S: POST /auth/mfa (mfa_token, code à 6 chiffres)
+  end
+  S-->>A: access_token (court), refresh_token, device_id
+  Note over A,S: Plus tard, access_token expiré
+  A->>S: POST /auth/refresh (refresh_token)
+  S-->>A: nouveaux jetons (l'ancien refresh_token est invalidé)
+```
+
+- Le jeton de renouvellement est **à usage unique** et tourne à chaque appel. Si un ancien jeton est présenté, la session de l'appareil est révoquée (indice de vol).
+- Verrouillage du compte après échecs répétés (423, `account_locked`). Seuils à définir.
+- Une désactivation de compte ou une révocation par l'administrateur coupe les sessions ; l'appareil efface ses données locales à la prochaine tentative.
+
+## 3. Protocole de synchronisation (API mobile)
+
+### 3.1 Lecture : `GET /sync/pull`
+
+1. **Synchronisation initiale** : appel sans `cursor`. Le serveur renvoie la fenêtre hors-ligne de l'utilisateur (ses clients, ses visites des prochains jours, l'historique récent), en plusieurs lots tant que `has_more` vaut true.
+2. **Synchronisation courante** : appel avec le dernier `next_cursor`.
+3. Chaque ligne est appliquée par **remplacement sur l'identifiant** (idempotent). Une ligne avec `deleted_at` renseigné est supprimée localement.
+4. **Recouvrement** : le curseur renvoyé relit volontairement un peu en arrière. La raison est technique : deux transactions simultanées peuvent valider dans un ordre différent de leur numéro de changement (voir `SCHEMA_DONNEES.md` §5). Appliquer deux fois la même ligne ne change rien. Ce mécanisme reste à éprouver avec le prototype de synchro.
+5. **Retraits d'accès** : le tableau `revocations` liste les données que l'utilisateur ne voit plus (affectation retirée, changement de visibilité ou de hiérarchie). L'appareil les supprime.
+6. **Curseur périmé** : 410 `cursor_expired` → refaire une synchronisation initiale.
+
+**Point à valider** : pour un manager ou un directeur, la fenêtre « tout ce qui est en dessous » peut être très large. Il faudra probablement une fenêtre plus étroite pour eux (par exemple les visites récentes de leur équipe) ou un chargement à la demande.
+
+### 3.2 Écriture : `POST /sync/push`
+
+- Lots de 200 opérations au plus, traitées **dans l'ordre**.
+- Chaque opération porte un `id` généré sur l'appareil. Rejouer une opération déjà traitée renvoie son résultat d'origine sans rien changer (idempotence : pas de doublon si la réponse s'est perdue).
+- Résultat par opération : `applied`, `conflict` ou `rejected` (avec un `code`). Une opération rejetée n'arrête pas les suivantes, sauf celles qui en dépendent (`dependency_failed`).
+- Ordre à respecter par l'appareil : visite avant compte rendu, note, enregistrement et pièce jointe ; enregistrement avant la note vocale qui le référence.
+
+**Règles par entité**
+
+| Entité | Création | Modification | Suppression | Fixé par le serveur |
+|--------|----------|--------------|-------------|---------------------|
+| `visit` | Sur un client que l'utilisateur peut lire | Auteur seul ; `base_version` requis | Non : statut `cancelled` | `author_id`, version |
+| `visit_contact` | Le contact doit appartenir au client de la visite | — | Oui (logique) | |
+| `report` | Un seul par visite, par l'auteur de la visite | Auteur seul ; `base_version` requis ; passage à `validated` : `summary` non vide **[à valider]** | Non | `validated_at`, `validated_by`, version |
+| `note` | Par l'auteur de la visite | Champ `body` seulement | Oui (logique) | `author_id` |
+| `private_note` | Une par visite et par auteur | Auteur seul ; `base_version` requis | Oui (logique) | `author_id` |
+| `action` | Sur un client que l'utilisateur peut lire | `title`, `due_date`, `reminder`, `status` ; `base_version` requis | Non : statut `cancelled` | `author_id`, `owner_id` (= auteur dans le MVP), `completed_at`, version |
+| `recording` | Métadonnées ; l'audio est envoyé séparément | — | Non | `status`, `purge_after` |
+| `attachment` | Métadonnées ; photo envoyée séparément | `caption` | Oui (logique) | |
+| `glossary_term` | Termes personnels seulement | Auteur seul | Oui (logique) | `scope` = user |
+
+`owner_id` n'est pas modifiable dans le MVP : l'assignation à un collègue viendra après le MVP.
+
+### 3.3 Conflits
+
+- Si `base_version` ne correspond plus à la version serveur, le serveur compare les **champs modifiés** des deux côtés. Pas de chevauchement : l'opération s'applique. Chevauchement sur un champ court : la valeur du serveur l'emporte (`server_wins`), signalée dans `conflict.fields`. Chevauchement sur un texte long (compte rendu, note) : les deux versions sont conservées (`both_kept`), l'utilisateur est alerté et choisit.
+- **Mise en œuvre à valider** : savoir quels champs ont changé côté serveur depuis `base_version` suppose un historique des modifications par champ (le journal des opérations, complété par les changements issus du CRM ou de l'administration). C'est à éprouver dans le prototype.
+
+### 3.4 Fichiers
+
+- **Audio** : `PUT /recordings/{id}/content` par morceaux avec `Content-Range` ; `HEAD` donne l'octet de reprise (`Upload-Offset`). Un morceau rejoué est sans effet. À la réception du dernier octet, le serveur lance la transcription. La ligne `recording` doit exister (créée par `push`).
+- **Photos** : `PUT /attachments/{id}/content` (JPEG ou PNG) ; téléchargement soumis à la visibilité de la visite.
+- Les tailles maximales sont à fixer ; au-delà : 413 `payload_too_large`.
+
+### 3.5 Voix et IA
+
+```mermaid
+sequenceDiagram
+  participant A as Application
+  participant S as Back
+  A->>S: push : recording (métadonnées) et report (brouillon)
+  A->>S: PUT audio par morceaux
+  S->>S: transcription puis proposition IA
+  A->>S: GET /sync/pull
+  S-->>A: recordings (transcript), ai_proposals
+  A->>A: relecture, corrections
+  A->>S: push : report (validated), actions
+  A->>S: PUT /reports/{id}/quality (mesures)
+```
+
+- La proposition arrive par `pull` (`ai_proposals`) avec le texte source, les passages modifiés et les avertissements du contrôle automatique (nombre ou nom absent de la dictée).
+- `POST /reports/{id}/ai-proposals` relance ou complète le traitement ; réponse 402 `quota_exceeded` si le plafond mensuel est atteint ; `GET /usage` donne le budget et la consommation.
+- **L'IA ne crée rien directement** : les actions proposées ne deviennent des actions qu'après validation par l'utilisateur, via `push`.
+- `PUT /reports/{id}/quality` n'envoie que des mesures (jamais de contenu). `POST /error-reports` reçoit les signalements des utilisateurs.
+
+## 4. API CRM
+
+- **Lecture seule** : `visits`, `reports` (validés seulement), `notes`, `actions`.
+- **Exclus** : notes privées, audio, transcriptions, propositions de l'IA, photos.
+- **Aucune règle de visibilité hiérarchique** : le CRM lit tout ce qui est exposé.
+- Les clients sont identifiés par leur **identifiant CRM** (`company_crm_id`) ; les auteurs et responsables par leur e-mail.
+- **Lecture incrémentale recommandée**
+  1. Première fois : `updated_since` à la date de départ souhaitée (ou rien pour tout lire), puis suivre `next_cursor`.
+  2. Ensuite : rappeler avec le dernier `next_cursor`, à la fréquence voulue.
+  3. Garder `include_deleted=true` (par défaut) pour apprendre qu'une ligne a été supprimée ou annulée.
+  4. **Traiter chaque ligne en « insérer ou remplacer » sur `id`** : un recouvrement peut renvoyer une ligne déjà vue ; comparer `seq` ou `updated_at` pour ignorer une version plus ancienne.
+- Clés d'API : transmises en `Authorization: Bearer`. Deux clés peuvent être valides à la fois pour un renouvellement sans interruption. Les clés sont stockées hachées côté back et renvoyées en clair une seule fois à la création.
+
+## 5. API d'administration
+
+- Utilisateurs (création avec lien d'activation à usage unique, modification, réinitialisation du mot de passe et du deuxième facteur, révocation des sessions).
+- Affectations client-commerciaux (corrections de source `admin`) et rattachement manuel d'un client fusionné.
+- Réglages, dont `report_visibility_mode`. **Garde-fou** : modifier le mode refuse l'appel (409 `impact_confirmation_required`) tant que l'administrateur n'a pas confirmé, en lui donnant le nombre de visites qui deviendront visibles ou invisibles. Les retraits d'accès sont calculés ensuite par une tâche.
+- Comptes de service et clés, historique des synchronisations CRM → back et lancement manuel.
+- Journal d'audit (jamais de contenu de compte rendu).
+- Les administrateurs **n'ont pas accès au contenu des visites** par ce seul rôle (à confirmer).
+
+## 6. Codes d'erreur
+
+| HTTP | `code` | Cas |
+|------|--------|-----|
+| 400 | `validation_failed` | Champ invalide ou manquant (détail dans `errors`) |
+| 401 | `invalid_credentials`, `token_expired` | Identifiants incorrects ; jeton expiré ou invalide |
+| 402 | `quota_exceeded` | Plafond mensuel d'IA atteint |
+| 403 | `forbidden` | Droits insuffisants |
+| 404 | `not_found` | Inconnu **ou non visible** |
+| 409 | `already_processing`, `already_running`, `email_taken`, `hierarchy_cycle`, `impact_confirmation_required` | Conflit d'état |
+| 410 | `cursor_expired` | Curseur périmé |
+| 413 | `payload_too_large` | Fichier trop volumineux |
+| 423 | `account_locked` | Compte verrouillé |
+| 426 | `upgrade_required` | Application trop ancienne |
+| 429 | `rate_limited` | Trop de requêtes |
+
+Pour `push`, les codes d'une opération rejetée (`validation_failed`, `forbidden`, `not_found`, `dependency_failed`, `quota_exceeded`, `locked_status`) sont renvoyés dans le résultat de l'opération, pas dans le statut HTTP de la requête.
+
+## 7. Points à valider
+
+1. **Format CRM** : champs, fréquence, historique initial, authentification : à confronter à l'équipe CRM. Le contrat actuel est une proposition.
+2. **Comptes rendus validés modifiables** après validation ? Hypothèse : oui, par l'auteur, avec nouvelle version visible du CRM.
+3. **Condition de validation** d'un compte rendu : résumé non vide ; autres champs obligatoires éventuels.
+4. **Portée de synchro des managers et directeurs** (fenêtre plus étroite ou chargement à la demande).
+5. **Seuils** : limites de débit, verrouillage de compte, tailles maximales des fichiers, durée de vie des jetons.
+6. **Détection de conflit par champ** : mise en œuvre à éprouver (§3.3).
+7. **Notifications** : aucune notification push dans ce contrat ; l'appareil récupère les résultats de l'IA par `pull`. Si une notification est souhaitée pour signaler qu'une proposition est prête, il faudra l'ajouter (et choisir un service compatible avec l'hébergement UE).

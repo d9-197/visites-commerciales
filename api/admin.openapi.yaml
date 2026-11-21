@@ -1,0 +1,403 @@
+openapi: 3.1.0
+info:
+  title: API d'administration — Visites commerciales
+  version: 0.1.0
+  description: |
+    API de la console d'administration (IT). Réservée aux utilisateurs `is_admin`. Authentification identique à l'API mobile (jeton d'accès), avec en plus le droit administrateur.
+    Un administrateur **ne lit pas le contenu des visites** par ce seul rôle. Brouillon.
+servers:
+  - url: https://{host}/api/admin/v1
+    variables:
+      host: {default: visites.example.invalid}
+security:
+  - bearer: []
+tags:
+  - name: Utilisateurs
+  - name: Réglages
+  - name: Intégration CRM
+  - name: Audit
+paths:
+  /users:
+    get:
+      tags: [Utilisateurs]
+      summary: Lister les utilisateurs
+      parameters:
+        - {name: q, in: query, schema: {type: string}, description: Recherche sur le nom ou l'e-mail.}
+        - {name: status, in: query, schema: {type: string, enum: [active, disabled]}}
+        - {name: cursor, in: query, schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer, maximum: 200, default: 50}}
+      responses:
+        '200':
+          description: Page d'utilisateurs.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, has_more]
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/User'}}
+                  next_cursor: {type: string}
+                  has_more: {type: boolean}
+        '403': {$ref: 'common.yaml#/components/responses/Forbidden'}
+    post:
+      tags: [Utilisateurs]
+      summary: Créer un utilisateur
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UserCreate'}
+      responses:
+        '201':
+          description: Utilisateur créé. Un lien d'activation à usage unique est renvoyé une seule fois ; le mot de passe est choisi par l'utilisateur.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user, activation_token]
+                properties:
+                  user: {$ref: '#/components/schemas/User'}
+                  activation_token: {type: string}
+        '400': {$ref: 'common.yaml#/components/responses/BadRequest'}
+        '409':
+          description: E-mail déjà utilisé (email_taken).
+          content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}
+  /users/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {$ref: 'common.yaml#/components/schemas/Uuid'}}
+    patch:
+      tags: [Utilisateurs]
+      summary: Modifier un utilisateur (rôle, supérieur, langues, statut)
+      description: Un changement de supérieur reconstruit la hiérarchie et peut retirer des données visibles à certains appareils (révocations d'accès).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UserUpdate'}
+      responses:
+        '200':
+          description: Utilisateur modifié.
+          content: {application/json: {schema: {$ref: '#/components/schemas/User'}}}
+        '400': {$ref: 'common.yaml#/components/responses/BadRequest'}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+        '409':
+          description: Cycle dans la hiérarchie (hierarchy_cycle).
+          content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}
+  /users/{id}/reset-password:
+    post:
+      tags: [Utilisateurs]
+      summary: Lancer une réinitialisation de mot de passe
+      parameters:
+        - {name: id, in: path, required: true, schema: {$ref: 'common.yaml#/components/schemas/Uuid'}}
+      responses:
+        '200':
+          description: Lien de réinitialisation à usage unique, renvoyé une seule fois. Les sessions de l'utilisateur sont révoquées.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [reset_token]
+                properties:
+                  reset_token: {type: string}
+  /users/{id}/reset-mfa:
+    post:
+      tags: [Utilisateurs]
+      summary: Réinitialiser le deuxième facteur
+      parameters:
+        - {name: id, in: path, required: true, schema: {$ref: 'common.yaml#/components/schemas/Uuid'}}
+      responses:
+        '204': {description: "Deuxième facteur réinitialisé ; l'utilisateur doit le reconfigurer."}
+  /users/{id}/sessions:
+    delete:
+      tags: [Utilisateurs]
+      summary: Révoquer toutes les sessions d'un utilisateur
+      parameters:
+        - {name: id, in: path, required: true, schema: {$ref: 'common.yaml#/components/schemas/Uuid'}}
+      responses:
+        '204': {description: "Sessions révoquées ; les appareils effacent leurs données locales à la prochaine connexion."}
+  /companies/{id}/assignments:
+    parameters:
+      - {name: id, in: path, required: true, schema: {$ref: 'common.yaml#/components/schemas/Uuid'}}
+    get:
+      tags: [Utilisateurs]
+      summary: Commerciaux affectés à un client
+      responses:
+        '200':
+          description: Affectations (source `crm` ou `admin`).
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/AssignmentAdmin'}
+    put:
+      tags: [Utilisateurs]
+      summary: Corriger les affectations d'un client
+      description: Pose des affectations de source `admin`. Elles survivent à la synchro CRM tant qu'elles ne sont pas retirées.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_ids]
+              properties:
+                user_ids:
+                  type: array
+                  items: {$ref: 'common.yaml#/components/schemas/Uuid'}
+      responses:
+        '200':
+          description: Affectations après modification.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/AssignmentAdmin'}
+  /companies/{id}/merge:
+    post:
+      tags: [Intégration CRM]
+      summary: Rattacher un client inactif à son absorbant
+      description: Tant que le CRM ne fournit pas l'identifiant du client absorbant, l'administrateur rattache à la main. Les visites sont déplacées vers le client absorbant.
+      parameters:
+        - {name: id, in: path, required: true, schema: {$ref: 'common.yaml#/components/schemas/Uuid'}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [into_company_id]
+              properties:
+                into_company_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+      responses:
+        '200': {description: "Visites rattachées ; client source marqué fusionné."}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+  /settings:
+    get:
+      tags: [Réglages]
+      summary: Réglages de l'application
+      responses:
+        '200':
+          description: Réglages courants.
+          content: {application/json: {schema: {$ref: '#/components/schemas/Settings'}}}
+    put:
+      tags: [Réglages]
+      summary: Modifier les réglages
+      description: |
+        Changer `report_visibility_mode` modifie ce que les utilisateurs voient, y compris dans l'historique. Sans `confirm_impact: true`, l'appel est refusé avec l'estimation du nombre de visites qui deviendront visibles ou invisibles (impact_confirmation_required).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - {$ref: '#/components/schemas/Settings'}
+                - type: object
+                  properties:
+                    confirm_impact: {type: boolean}
+      responses:
+        '200':
+          description: Réglages enregistrés ; les retraits d'accès sont calculés par une tâche en arrière-plan.
+          content: {application/json: {schema: {$ref: '#/components/schemas/Settings'}}}
+        '409':
+          description: Confirmation requise (impact_confirmation_required).
+          content:
+            application/problem+json:
+              schema:
+                allOf:
+                  - {$ref: 'common.yaml#/components/schemas/Problem'}
+                  - type: object
+                    properties:
+                      visits_becoming_visible: {type: integer}
+                      visits_becoming_hidden: {type: integer}
+  /service-accounts:
+    get:
+      tags: [Intégration CRM]
+      summary: Comptes de service et clés
+      responses:
+        '200':
+          description: Liste, sans jamais renvoyer les clés.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/ServiceAccount'}
+    post:
+      tags: [Intégration CRM]
+      summary: Créer une clé d'API (ou en émettre une seconde pour un renouvellement)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string}
+                expires_at: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+      responses:
+        '201':
+          description: Clé créée. **La clé en clair n'est renvoyée qu'une fois.**
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [account, api_key]
+                properties:
+                  account: {$ref: '#/components/schemas/ServiceAccount'}
+                  api_key: {type: string}
+  /service-accounts/{id}:
+    delete:
+      tags: [Intégration CRM]
+      summary: Révoquer une clé
+      parameters:
+        - {name: id, in: path, required: true, schema: {$ref: 'common.yaml#/components/schemas/Uuid'}}
+      responses:
+        '204': {description: "Clé révoquée."}
+  /crm-sync/runs:
+    get:
+      tags: [Intégration CRM]
+      summary: Historique des synchronisations CRM → back
+      parameters:
+        - {name: limit, in: query, schema: {type: integer, maximum: 200, default: 50}}
+      responses:
+        '200':
+          description: Exécutions, de la plus récente à la plus ancienne.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/CrmSyncRun'}
+    post:
+      tags: [Intégration CRM]
+      summary: Lancer une synchronisation maintenant
+      responses:
+        '202': {description: "Exécution lancée."}
+        '409':
+          description: Une exécution est déjà en cours (already_running).
+          content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}
+  /audit-log:
+    get:
+      tags: [Audit]
+      summary: Journal d'audit
+      description: Contient les actions de sécurité et d'administration, jamais de contenu de compte rendu.
+      parameters:
+        - {name: from, in: query, schema: {$ref: 'common.yaml#/components/schemas/Timestamp'}}
+        - {name: to, in: query, schema: {$ref: 'common.yaml#/components/schemas/Timestamp'}}
+        - {name: action, in: query, schema: {type: string}}
+        - {name: actor, in: query, schema: {$ref: 'common.yaml#/components/schemas/Uuid'}}
+        - {name: cursor, in: query, schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer, maximum: 500, default: 100}}
+      responses:
+        '200':
+          description: Page d'événements.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, has_more]
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/AuditEvent'}}
+                  next_cursor: {type: string}
+                  has_more: {type: boolean}
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+  schemas:
+    User:
+      type: object
+      required: [id, email, display_name, role, status]
+      properties:
+        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        email: {type: string, format: email}
+        display_name: {type: string}
+        role: {type: string, enum: [commercial, manager, directeur]}
+        is_admin: {type: boolean}
+        manager_id: {oneOf: [{$ref: 'common.yaml#/components/schemas/Uuid'}, {type: 'null'}]}
+        ui_language: {$ref: 'common.yaml#/components/schemas/LanguageCode'}
+        dictation_language: {$ref: 'common.yaml#/components/schemas/LanguageCode'}
+        status: {type: string, enum: [active, disabled]}
+        mfa_enabled: {type: boolean}
+        ai_budget_cents: {type: [integer, 'null']}
+        last_login_at: {oneOf: [{$ref: 'common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]}
+    UserCreate:
+      type: object
+      required: [email, display_name, role]
+      properties:
+        email: {type: string, format: email}
+        display_name: {type: string}
+        role: {type: string, enum: [commercial, manager, directeur]}
+        is_admin: {type: boolean, default: false}
+        manager_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        ui_language: {$ref: 'common.yaml#/components/schemas/LanguageCode'}
+        dictation_language: {$ref: 'common.yaml#/components/schemas/LanguageCode'}
+    UserUpdate:
+      type: object
+      properties:
+        display_name: {type: string}
+        role: {type: string, enum: [commercial, manager, directeur]}
+        is_admin: {type: boolean}
+        manager_id: {oneOf: [{$ref: 'common.yaml#/components/schemas/Uuid'}, {type: 'null'}]}
+        ui_language: {$ref: 'common.yaml#/components/schemas/LanguageCode'}
+        dictation_language: {$ref: 'common.yaml#/components/schemas/LanguageCode'}
+        status: {type: string, enum: [active, disabled]}
+        ai_budget_cents: {type: [integer, 'null']}
+    AssignmentAdmin:
+      type: object
+      required: [user_id, source]
+      properties:
+        user_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        display_name: {type: string}
+        source: {type: string, enum: [crm, admin]}
+        since: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+    Settings:
+      type: object
+      properties:
+        report_visibility_mode:
+          type: integer
+          enum: [1, 2]
+          description: "1 = commerciaux du client + hiérarchie ; 2 = auteur + hiérarchie."
+        audio_retention_days: {type: integer, minimum: 0}
+        offline_window_days: {type: integer, minimum: 1}
+        ai_monthly_budget_cents: {type: integer, minimum: 0}
+        enabled_languages:
+          type: array
+          items: {$ref: 'common.yaml#/components/schemas/LanguageCode'}
+    ServiceAccount:
+      type: object
+      required: [id, name, key_prefix, created_at]
+      properties:
+        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        name: {type: string}
+        key_prefix: {type: string, description: Début de la clé, pour l'identifier.}
+        created_at: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+        expires_at: {oneOf: [{$ref: 'common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]}
+        revoked_at: {oneOf: [{$ref: 'common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]}
+        last_used_at: {oneOf: [{$ref: 'common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]}
+    CrmSyncRun:
+      type: object
+      required: [id, started_at, status]
+      properties:
+        id: {type: integer}
+        started_at: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+        finished_at: {oneOf: [{$ref: 'common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]}
+        status: {type: string, enum: [running, ok, partial, failed]}
+        companies_upserted: {type: integer}
+        contacts_upserted: {type: integer}
+        assignments_changed: {type: integer}
+        companies_deactivated: {type: integer}
+        errors: {type: array, items: {type: object}}
+    AuditEvent:
+      type: object
+      required: [id, at, action]
+      properties:
+        id: {type: integer}
+        at: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+        actor_user_id: {oneOf: [{$ref: 'common.yaml#/components/schemas/Uuid'}, {type: 'null'}]}
+        actor_service_id: {oneOf: [{$ref: 'common.yaml#/components/schemas/Uuid'}, {type: 'null'}]}
+        action: {type: string}
+        entity: {type: [string, 'null']}
+        entity_id: {type: [string, 'null']}
+        detail: {type: object}
+        ip: {type: [string, 'null']}

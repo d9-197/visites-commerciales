@@ -1,0 +1,244 @@
+openapi: 3.1.0
+info:
+  title: API CRM — Visites commerciales
+  version: 0.1.0
+  description: |
+    API en **lecture seule** destinée au CRM. Séparée de l'API mobile (version, authentification et limites propres).
+    **Proposition à soumettre à l'équipe CRM** : leur format attendu n'est pas connu ; ce contrat est une base de discussion.
+    Exclus : notes privées, enregistrements audio, transcriptions, propositions de l'IA, photos. Comptes rendus : versions validées seulement.
+    Le CRM n'est soumis à aucune règle de visibilité hiérarchique : il lit tout ce que cette API expose.
+servers:
+  - url: https://{host}/api/crm/v1
+    variables:
+      host: {default: visites.example.invalid}
+security:
+  - apiKey: []
+tags:
+  - name: Lecture
+  - name: Supervision
+paths:
+  /visits:
+    get:
+      tags: [Lecture]
+      summary: Visites
+      parameters:
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/UpdatedSince'}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/IncludeDeleted'}
+        - name: status
+          in: query
+          schema: {$ref: 'common.yaml#/components/schemas/VisitStatus'}
+        - name: company_crm_id
+          in: query
+          schema: {type: string}
+      responses:
+        '200':
+          description: Page de visites.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/VisitPage'}
+        '400': {$ref: 'common.yaml#/components/responses/BadRequest'}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '429': {$ref: 'common.yaml#/components/responses/TooManyRequests'}
+  /visits/{id}:
+    get:
+      tags: [Lecture]
+      summary: Une visite
+      parameters:
+        - {$ref: '#/components/parameters/Id'}
+      responses:
+        '200':
+          description: La visite.
+          content: {application/json: {schema: {$ref: '#/components/schemas/Visit'}}}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+  /reports:
+    get:
+      tags: [Lecture]
+      summary: Comptes rendus validés
+      parameters:
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/UpdatedSince'}
+        - {$ref: '#/components/parameters/Limit'}
+      responses:
+        '200':
+          description: Page de comptes rendus.
+          content: {application/json: {schema: {$ref: '#/components/schemas/ReportPage'}}}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+  /notes:
+    get:
+      tags: [Lecture]
+      summary: Notes de visite (publiques)
+      parameters:
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/UpdatedSince'}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/IncludeDeleted'}
+      responses:
+        '200':
+          description: Page de notes.
+          content: {application/json: {schema: {$ref: '#/components/schemas/NotePage'}}}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+  /actions:
+    get:
+      tags: [Lecture]
+      summary: Actions de suivi (y compris annulées)
+      parameters:
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/UpdatedSince'}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/IncludeDeleted'}
+        - name: status
+          in: query
+          schema: {$ref: 'common.yaml#/components/schemas/ActionStatus'}
+      responses:
+        '200':
+          description: Page d'actions.
+          content: {application/json: {schema: {$ref: '#/components/schemas/ActionPage'}}}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+  /health:
+    get:
+      tags: [Supervision]
+      summary: État du service
+      security: []
+      responses:
+        '200':
+          description: Service disponible.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: {type: string, const: ok}
+components:
+  securitySchemes:
+    apiKey:
+      type: http
+      scheme: bearer
+      bearerFormat: Clé d'API du compte de service (en-tête Authorization). Deux clés peuvent être valides en même temps pendant un renouvellement.
+  parameters:
+    Cursor:
+      name: cursor
+      in: query
+      schema: {type: string}
+      description: Curseur opaque renvoyé par l'appel précédent (`next_cursor`). Prioritaire sur `updated_since`.
+    UpdatedSince:
+      name: updated_since
+      in: query
+      schema: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+      description: Première lecture à partir d'une date (utile pour l'historique initial).
+    Limit:
+      name: limit
+      in: query
+      schema: {type: integer, minimum: 1, maximum: 1000, default: 200}
+    IncludeDeleted:
+      name: include_deleted
+      in: query
+      schema: {type: boolean, default: true}
+      description: Inclure les suppressions logiques (`deleted_at` renseigné). Laisser à true pour une lecture incrémentale, sinon le CRM ne saura pas qu'une ligne a disparu.
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: {$ref: 'common.yaml#/components/schemas/Uuid'}
+  schemas:
+    PageInfo:
+      type: object
+      required: [next_cursor, has_more]
+      properties:
+        next_cursor: {type: string, description: À renvoyer pour obtenir la suite, ou lors de la lecture suivante.}
+        has_more: {type: boolean}
+    Visit:
+      type: object
+      required: [id, company_crm_id, author_email, status, updated_at, seq]
+      properties:
+        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        company_crm_id: {type: string, description: Identifiant du client dans le CRM.}
+        author_email: {type: string, format: email}
+        visit_type: {type: [string, 'null']}
+        objective: {type: [string, 'null']}
+        planned_start: {oneOf: [{$ref: 'common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]}
+        planned_end: {oneOf: [{$ref: 'common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]}
+        started_at: {oneOf: [{$ref: 'common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]}
+        ended_at: {oneOf: [{$ref: 'common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]}
+        location_text: {type: [string, 'null']}
+        status: {$ref: 'common.yaml#/components/schemas/VisitStatus'}
+        created_at: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+        updated_at: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+        seq: {type: integer, format: int64}
+        deleted_at: {oneOf: [{$ref: 'common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]}
+    Report:
+      type: object
+      required: [id, visit_id, language, validated_at, updated_at, seq]
+      properties:
+        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        visit_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        language: {$ref: 'common.yaml#/components/schemas/LanguageCode'}
+        summary: {type: [string, 'null']}
+        needs: {type: [string, 'null']}
+        objections: {type: [string, 'null']}
+        competitors: {type: [string, 'null']}
+        decisions: {type: [string, 'null']}
+        next_step: {type: [string, 'null']}
+        opportunity_temperature: {oneOf: [{$ref: 'common.yaml#/components/schemas/Temperature'}, {type: 'null'}]}
+        validated_at: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+        updated_at: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+        seq: {type: integer, format: int64}
+    Note:
+      type: object
+      required: [id, visit_id, kind, noted_at, updated_at, seq]
+      properties:
+        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        visit_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        kind: {type: string, enum: [text, voice, photo]}
+        body: {type: [string, 'null']}
+        noted_at: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+        updated_at: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+        seq: {type: integer, format: int64}
+        deleted_at: {oneOf: [{$ref: 'common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]}
+    Action:
+      type: object
+      required: [id, company_crm_id, owner_email, title, status, updated_at, seq]
+      properties:
+        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        company_crm_id: {type: string}
+        visit_id: {oneOf: [{$ref: 'common.yaml#/components/schemas/Uuid'}, {type: 'null'}]}
+        owner_email: {type: string, format: email}
+        title: {type: string}
+        due_date: {type: [string, 'null'], format: date}
+        status: {$ref: 'common.yaml#/components/schemas/ActionStatus'}
+        origin: {$ref: 'common.yaml#/components/schemas/ActionOrigin'}
+        completed_at: {oneOf: [{$ref: 'common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]}
+        created_at: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+        updated_at: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+        seq: {type: integer, format: int64}
+        deleted_at: {oneOf: [{$ref: 'common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]}
+    VisitPage:
+      allOf:
+        - {$ref: '#/components/schemas/PageInfo'}
+        - type: object
+          required: [items]
+          properties:
+            items: {type: array, items: {$ref: '#/components/schemas/Visit'}}
+    ReportPage:
+      allOf:
+        - {$ref: '#/components/schemas/PageInfo'}
+        - type: object
+          required: [items]
+          properties:
+            items: {type: array, items: {$ref: '#/components/schemas/Report'}}
+    NotePage:
+      allOf:
+        - {$ref: '#/components/schemas/PageInfo'}
+        - type: object
+          required: [items]
+          properties:
+            items: {type: array, items: {$ref: '#/components/schemas/Note'}}
+    ActionPage:
+      allOf:
+        - {$ref: '#/components/schemas/PageInfo'}
+        - type: object
+          required: [items]
+          properties:
+            items: {type: array, items: {$ref: '#/components/schemas/Action'}}

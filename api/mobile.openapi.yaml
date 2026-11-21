@@ -1,0 +1,807 @@
+openapi: 3.1.0
+info:
+  title: API mobile — Visites commerciales
+  version: 0.1.0
+  description: |
+    API utilisée par l'application mobile (iOS, Android). Brouillon : à confirmer par le prototype de synchro.
+    Principes : l'appareil lit et écrit dans sa base locale ; la synchronisation passe par `POST /sync/push` et `GET /sync/pull`.
+    Voir docs/API.md pour le protocole complet, les codes d'erreur et les règles.
+servers:
+  - url: https://{host}/api/mobile/v1
+    variables:
+      host: {default: visites.example.invalid, description: "Adresse du back, saisie à la première connexion."}
+security:
+  - bearer: []
+tags:
+  - name: Authentification
+  - name: Profil
+  - name: Synchronisation
+  - name: Fichiers
+  - name: IA et qualité
+paths:
+  /auth/login:
+    post:
+      tags: [Authentification]
+      summary: Ouvrir une session (première étape)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/LoginRequest'}
+      responses:
+        '200':
+          description: Session ouverte, ou deuxième facteur requis.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - {$ref: '#/components/schemas/TokenPair'}
+                  - {$ref: '#/components/schemas/MfaChallenge'}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '423':
+          description: Compte verrouillé après échecs répétés (account_locked).
+          content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}
+        '426': {$ref: 'common.yaml#/components/responses/UpgradeRequired'}
+        '429': {$ref: 'common.yaml#/components/responses/TooManyRequests'}
+  /auth/mfa:
+    post:
+      tags: [Authentification]
+      summary: Ouvrir une session (deuxième facteur)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mfa_token, code]
+              properties:
+                mfa_token: {type: string}
+                code: {type: string, pattern: '^[0-9]{6}$'}
+      responses:
+        '200':
+          description: Session ouverte.
+          content: {application/json: {schema: {$ref: '#/components/schemas/TokenPair'}}}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '429': {$ref: 'common.yaml#/components/responses/TooManyRequests'}
+  /auth/refresh:
+    post:
+      tags: [Authentification]
+      summary: Renouveler le jeton d'accès
+      description: Le jeton de renouvellement est à usage unique et tourne à chaque appel. Réutiliser un ancien jeton révoque la session de l'appareil.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: {type: string}
+      responses:
+        '200':
+          description: Nouveaux jetons.
+          content: {application/json: {schema: {$ref: '#/components/schemas/TokenPair'}}}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+  /auth/logout:
+    post:
+      tags: [Authentification]
+      summary: Fermer la session de cet appareil
+      responses:
+        '204': {description: "Session fermée, jetons révoqués."}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+  /auth/password:
+    put:
+      tags: [Authentification]
+      summary: Changer son mot de passe
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password: {type: string, format: password}
+                new_password: {type: string, format: password, minLength: 12}
+      responses:
+        '204': {description: "Mot de passe changé ; les autres sessions sont révoquées."}
+        '400': {$ref: 'common.yaml#/components/responses/BadRequest'}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+  /me:
+    get:
+      tags: [Profil]
+      summary: Profil et paramètres de l'utilisateur
+      parameters:
+        - {$ref: '#/components/parameters/AppVersion'}
+      responses:
+        '200':
+          description: Profil.
+          content: {application/json: {schema: {$ref: '#/components/schemas/Me'}}}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '426': {$ref: 'common.yaml#/components/responses/UpgradeRequired'}
+  /usage:
+    get:
+      tags: [IA et qualité]
+      summary: Consommation IA du mois
+      responses:
+        '200':
+          description: Budget et consommation, en centimes d'euro.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [period, budget_cents, used_cents]
+                properties:
+                  period: {type: string, description: "Mois, format AAAA-MM.", examples: ['2026-11']}
+                  budget_cents: {type: integer}
+                  used_cents: {type: integer}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+  /sync/pull:
+    get:
+      tags: [Synchronisation]
+      summary: Récupérer les changements depuis le dernier curseur
+      description: |
+        Sans `cursor` : synchronisation initiale, limitée à la fenêtre hors-ligne (clients de l'utilisateur, visites des prochains jours et historique récent).
+        Avec `cursor` : changements depuis ce curseur. Le serveur relit volontairement un peu en arrière (recouvrement) : l'appareil applique chaque ligne de façon idempotente (remplacement par `id`).
+        Poursuivre tant que `has_more` vaut true.
+      parameters:
+        - name: cursor
+          in: query
+          schema: {type: string}
+          description: Curseur opaque renvoyé par l'appel précédent.
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 500, default: 200}
+      responses:
+        '200':
+          description: Lot de changements.
+          content: {application/json: {schema: {$ref: '#/components/schemas/PullResponse'}}}
+        '400': {$ref: 'common.yaml#/components/responses/BadRequest'}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '410':
+          description: Curseur trop ancien ou invalide (cursor_expired). L'appareil refait une synchronisation initiale.
+          content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}
+        '429': {$ref: 'common.yaml#/components/responses/TooManyRequests'}
+  /sync/push:
+    post:
+      tags: [Synchronisation]
+      summary: Envoyer les opérations en attente
+      description: |
+        Chaque opération a un identifiant unique généré sur l'appareil ; rejouer une opération déjà traitée renvoie son résultat précédent sans rien changer.
+        Les opérations sont traitées dans l'ordre. Un résultat `rejected` n'arrête pas les suivantes sauf si elles en dépendent (alors `rejected` avec `code: dependency_failed`).
+        Règles par entité : voir docs/API.md.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PushRequest'}
+      responses:
+        '200':
+          description: Un résultat par opération, dans le même ordre.
+          content: {application/json: {schema: {$ref: '#/components/schemas/PushResponse'}}}
+        '400': {$ref: 'common.yaml#/components/responses/BadRequest'}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '429': {$ref: 'common.yaml#/components/responses/TooManyRequests'}
+  /recordings/{recording_id}/content:
+    parameters:
+      - {$ref: '#/components/parameters/RecordingId'}
+    head:
+      tags: [Fichiers]
+      summary: Connaître l'avancement de l'envoi d'un audio
+      description: L'en-tête `Upload-Offset` indique le nombre d'octets déjà reçus, pour reprendre après une coupure.
+      responses:
+        '200':
+          description: Avancement.
+          headers:
+            Upload-Offset: {schema: {type: integer}}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+    put:
+      tags: [Fichiers]
+      summary: Envoyer (ou reprendre l'envoi) d'un enregistrement audio
+      description: |
+        Envoi par morceaux avec `Content-Range`. Rejouer un morceau déjà reçu est sans effet. L'enregistrement doit d'abord avoir été créé par une opération `sync/push` (entité `recording`).
+        Quand le dernier octet est reçu, le serveur lance la transcription.
+      parameters:
+        - name: Content-Range
+          in: header
+          required: true
+          schema: {type: string, examples: ['bytes 0-1048575/5242880']}
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: {type: string, format: binary}
+      responses:
+        '200':
+          description: Morceau reçu.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [received_bytes, complete]
+                properties:
+                  received_bytes: {type: integer}
+                  complete: {type: boolean}
+        '400': {$ref: 'common.yaml#/components/responses/BadRequest'}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+        '413':
+          description: Fichier trop volumineux (payload_too_large).
+          content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}
+  /attachments/{attachment_id}/content:
+    parameters:
+      - name: attachment_id
+        in: path
+        required: true
+        schema: {$ref: 'common.yaml#/components/schemas/Uuid'}
+    put:
+      tags: [Fichiers]
+      summary: Envoyer une photo
+      requestBody:
+        required: true
+        content:
+          image/jpeg: {schema: {type: string, format: binary}}
+          image/png: {schema: {type: string, format: binary}}
+      responses:
+        '204': {description: "Photo reçue."}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+        '413':
+          description: Fichier trop volumineux.
+          content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}
+    get:
+      tags: [Fichiers]
+      summary: Télécharger une photo
+      description: Soumis à la règle de visibilité de la visite.
+      responses:
+        '200':
+          description: Contenu.
+          content:
+            image/jpeg: {schema: {type: string, format: binary}}
+            image/png: {schema: {type: string, format: binary}}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+  /reports/{report_id}/ai-proposals:
+    post:
+      tags: [IA et qualité]
+      summary: Demander (ou refaire) une proposition de l'IA
+      description: |
+        Cas d'usage : « compléter à la voix » ou relancer après une erreur. Traitement asynchrone : le résultat arrive par `sync/pull` (`ai_proposals`).
+        Refusé avec 402/`quota_exceeded` si le plafond mensuel est atteint.
+      parameters:
+        - name: report_id
+          in: path
+          required: true
+          schema: {$ref: 'common.yaml#/components/schemas/Uuid'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                recording_ids:
+                  type: array
+                  description: Enregistrements à prendre en compte. Par défaut, tous ceux du compte rendu.
+                  items: {$ref: 'common.yaml#/components/schemas/Uuid'}
+      responses:
+        '202': {description: "Demande acceptée."}
+        '402':
+          description: Plafond mensuel atteint (quota_exceeded).
+          content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+        '409':
+          description: Une demande est déjà en cours pour ce compte rendu (already_processing).
+          content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}
+  /reports/{report_id}/quality:
+    put:
+      tags: [IA et qualité]
+      summary: Enregistrer les mesures de qualité à la validation
+      description: "Mesures uniquement, jamais de contenu. Idempotent : un nouvel appel remplace le précédent."
+      parameters:
+        - name: report_id
+          in: path
+          required: true
+          schema: {$ref: 'common.yaml#/components/schemas/Uuid'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ReportQuality'}
+      responses:
+        '204': {description: "Enregistré."}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+  /error-reports:
+    post:
+      tags: [IA et qualité]
+      summary: Signaler une erreur de transcription ou d'IA
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [category]
+              properties:
+                id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+                report_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+                category: {type: string, enum: [misheard, wrong_number, invented, missed_action, other]}
+                comment: {type: string, maxLength: 1000}
+      responses:
+        '201': {description: "Signalement enregistré."}
+        '400': {$ref: 'common.yaml#/components/responses/BadRequest'}
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      bearerFormat: Jeton d'accès (durée courte)
+  parameters:
+    AppVersion:
+      name: X-App-Version
+      in: header
+      required: true
+      schema: {type: string, examples: ['1.4.2']}
+      description: Version de l'application. Envoyée sur toutes les requêtes ; en dessous du minimum, le serveur répond 426.
+    RecordingId:
+      name: recording_id
+      in: path
+      required: true
+      schema: {$ref: 'common.yaml#/components/schemas/Uuid'}
+  schemas:
+    LoginRequest:
+      type: object
+      required: [email, password, device]
+      properties:
+        email: {type: string, format: email}
+        password: {type: string, format: password}
+        device:
+          type: object
+          required: [platform, app_version]
+          properties:
+            device_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+            platform: {type: string, enum: [ios, android]}
+            os_version: {type: string}
+            app_version: {type: string}
+    TokenPair:
+      type: object
+      required: [access_token, expires_in, refresh_token, device_id]
+      properties:
+        access_token: {type: string}
+        expires_in: {type: integer, description: Secondes.}
+        refresh_token: {type: string}
+        device_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+    MfaChallenge:
+      type: object
+      required: [mfa_required, mfa_token]
+      properties:
+        mfa_required: {type: boolean, const: true}
+        mfa_token: {type: string, description: Jeton court à renvoyer avec le code.}
+    Me:
+      type: object
+      required: [id, display_name, role, ui_language, dictation_language, settings, min_app_version, server_time]
+      properties:
+        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        display_name: {type: string}
+        email: {type: string, format: email}
+        role: {type: string, enum: [commercial, manager, directeur]}
+        ui_language: {$ref: 'common.yaml#/components/schemas/LanguageCode'}
+        dictation_language: {$ref: 'common.yaml#/components/schemas/LanguageCode'}
+        enabled_languages:
+          type: array
+          items: {$ref: 'common.yaml#/components/schemas/LanguageCode'}
+        settings:
+          type: object
+          properties:
+            offline_window_days: {type: integer}
+            audio_retention_days: {type: integer}
+        min_app_version: {type: string}
+        server_time: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+    PullResponse:
+      type: object
+      required: [next_cursor, has_more, server_time, changes, revocations]
+      properties:
+        next_cursor: {type: string}
+        has_more: {type: boolean}
+        server_time: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+        changes:
+          type: object
+          description: Lignes créées, modifiées ou supprimées logiquement (`deleted_at` renseigné). Chaque tableau peut être absent.
+          properties:
+            companies: {type: array, items: {$ref: '#/components/schemas/Company'}}
+            contacts: {type: array, items: {$ref: '#/components/schemas/Contact'}}
+            assignments: {type: array, items: {$ref: '#/components/schemas/Assignment'}}
+            colleagues:
+              type: array
+              description: Noms des utilisateurs visibles (auteurs), pour l'affichage.
+              items: {$ref: '#/components/schemas/UserRef'}
+            visits: {type: array, items: {$ref: '#/components/schemas/Visit'}}
+            visit_contacts: {type: array, items: {$ref: '#/components/schemas/VisitContact'}}
+            reports: {type: array, items: {$ref: '#/components/schemas/Report'}}
+            notes: {type: array, items: {$ref: '#/components/schemas/Note'}}
+            private_notes: {type: array, items: {$ref: '#/components/schemas/PrivateNote'}}
+            attachments: {type: array, items: {$ref: '#/components/schemas/Attachment'}}
+            actions: {type: array, items: {$ref: '#/components/schemas/Action'}}
+            recordings: {type: array, items: {$ref: '#/components/schemas/Recording'}}
+            ai_proposals: {type: array, items: {$ref: '#/components/schemas/AiProposal'}}
+            glossary_terms: {type: array, items: {$ref: '#/components/schemas/GlossaryTerm'}}
+        revocations:
+          type: array
+          description: Données que l'utilisateur ne peut plus voir. L'appareil les supprime de sa base locale.
+          items:
+            type: object
+            required: [entity, entity_id]
+            properties:
+              entity: {type: string}
+              entity_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+    Company:
+      type: object
+      required: [id, name, status, updated_at]
+      properties:
+        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        name: {type: string}
+        address_line: {type: [string, 'null']}
+        postal_code: {type: [string, 'null']}
+        city: {type: [string, 'null']}
+        country: {type: [string, 'null']}
+        sector: {type: [string, 'null']}
+        status: {type: string, enum: [active, inactive]}
+        updated_at: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+        deleted_at: {oneOf: [{$ref: 'common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]}
+    Contact:
+      type: object
+      required: [id, company_id, full_name, updated_at]
+      properties:
+        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        company_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        full_name: {type: string}
+        job_title: {type: [string, 'null']}
+        phone: {type: [string, 'null']}
+        email: {type: [string, 'null']}
+        active: {type: boolean}
+        updated_at: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+        deleted_at: {oneOf: [{$ref: 'common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]}
+    Assignment:
+      type: object
+      required: [company_id, user_id]
+      properties:
+        company_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        user_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        removed_at: {oneOf: [{$ref: 'common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]}
+    UserRef:
+      type: object
+      required: [id, display_name]
+      properties:
+        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        display_name: {type: string}
+    Visit:
+      type: object
+      required: [id, company_id, author_id, status, version, updated_at]
+      properties:
+        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        company_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        author_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        visit_type: {type: [string, 'null']}
+        objective: {type: [string, 'null']}
+        planned_start: {oneOf: [{$ref: 'common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]}
+        planned_end: {oneOf: [{$ref: 'common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]}
+        started_at: {oneOf: [{$ref: 'common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]}
+        ended_at: {oneOf: [{$ref: 'common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]}
+        location_text: {type: [string, 'null']}
+        status: {$ref: 'common.yaml#/components/schemas/VisitStatus'}
+        version: {type: integer}
+        updated_at: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+        deleted_at: {oneOf: [{$ref: 'common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]}
+    VisitContact:
+      type: object
+      required: [visit_id, contact_id]
+      properties:
+        visit_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        contact_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        removed_at: {oneOf: [{$ref: 'common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]}
+    Report:
+      type: object
+      required: [id, visit_id, language, status, version, updated_at]
+      properties:
+        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        visit_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        language: {$ref: 'common.yaml#/components/schemas/LanguageCode'}
+        summary: {type: [string, 'null']}
+        needs: {type: [string, 'null']}
+        objections: {type: [string, 'null']}
+        competitors: {type: [string, 'null']}
+        decisions: {type: [string, 'null']}
+        next_step: {type: [string, 'null']}
+        opportunity_temperature: {oneOf: [{$ref: 'common.yaml#/components/schemas/Temperature'}, {type: 'null'}]}
+        status: {type: string, enum: [draft, validated]}
+        validated_at: {oneOf: [{$ref: 'common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]}
+        version: {type: integer}
+        updated_at: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+    Note:
+      type: object
+      required: [id, visit_id, author_id, kind, noted_at, updated_at]
+      properties:
+        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        visit_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        author_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        kind: {type: string, enum: [text, voice, photo]}
+        body: {type: [string, 'null']}
+        recording_id: {oneOf: [{$ref: 'common.yaml#/components/schemas/Uuid'}, {type: 'null'}]}
+        attachment_id: {oneOf: [{$ref: 'common.yaml#/components/schemas/Uuid'}, {type: 'null'}]}
+        noted_at: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+        updated_at: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+        deleted_at: {oneOf: [{$ref: 'common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]}
+    PrivateNote:
+      description: Réservée à son auteur. Jamais renvoyée à un autre utilisateur ni au CRM.
+      type: object
+      required: [id, visit_id, body, version, updated_at]
+      properties:
+        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        visit_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        body: {type: string}
+        version: {type: integer}
+        updated_at: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+        deleted_at: {oneOf: [{$ref: 'common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]}
+    Attachment:
+      type: object
+      required: [id, visit_id, mime_type, size_bytes, updated_at]
+      properties:
+        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        visit_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        mime_type: {type: string}
+        size_bytes: {type: integer}
+        caption: {type: [string, 'null']}
+        updated_at: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+        deleted_at: {oneOf: [{$ref: 'common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]}
+    Action:
+      type: object
+      required: [id, company_id, author_id, owner_id, title, status, reminder, version, updated_at]
+      properties:
+        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        company_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        visit_id: {oneOf: [{$ref: 'common.yaml#/components/schemas/Uuid'}, {type: 'null'}]}
+        author_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        owner_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        title: {type: string}
+        due_date: {type: [string, 'null'], format: date}
+        reminder: {$ref: 'common.yaml#/components/schemas/Reminder'}
+        status: {$ref: 'common.yaml#/components/schemas/ActionStatus'}
+        origin: {$ref: 'common.yaml#/components/schemas/ActionOrigin'}
+        version: {type: integer}
+        updated_at: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+    Recording:
+      type: object
+      required: [id, visit_id, purpose, language, status, updated_at]
+      properties:
+        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        visit_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        purpose: {type: string, enum: [report, note, action]}
+        language: {$ref: 'common.yaml#/components/schemas/LanguageCode'}
+        duration_s: {type: [number, 'null']}
+        status: {type: string, enum: [pending_upload, uploaded, transcribing, transcribed, failed]}
+        transcript: {type: [string, 'null'], description: Texte transcrit, renvoyé à l'auteur seul.}
+        updated_at: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+    AiProposal:
+      type: object
+      required: [id, report_id, proposal, created_at]
+      properties:
+        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        report_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        source_text: {type: string, description: Texte dicté fourni à l'IA, pour l'affichage « original ».}
+        proposal:
+          type: object
+          required: [fields, actions]
+          properties:
+            fields:
+              type: object
+              description: Champs du compte rendu proposés.
+              properties:
+                summary: {type: string}
+                needs: {type: string}
+                objections: {type: string}
+                competitors: {type: string}
+                decisions: {type: string}
+                next_step: {type: string}
+            actions:
+              type: array
+              items:
+                type: object
+                required: [title]
+                properties:
+                  title: {type: string}
+                  due_date: {type: [string, 'null'], format: date}
+                  due_date_certain: {type: boolean, description: "false si l'échéance est déduite d'une date relative ; l'appli la marque « à préciser »."}
+            changes:
+              type: array
+              description: Passages modifiés par l'IA, pour l'affichage surligné.
+              items:
+                type: object
+                properties:
+                  field: {type: string}
+                  start: {type: integer}
+                  end: {type: integer}
+            warnings:
+              type: array
+              description: Contrôle automatique (un nombre ou un nom du résultat est absent de la dictée).
+              items: {type: string}
+        created_at: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+    GlossaryTerm:
+      type: object
+      required: [id, scope, language, term, updated_at]
+      properties:
+        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        scope: {type: string, enum: [global, user]}
+        language: {$ref: 'common.yaml#/components/schemas/LanguageCode'}
+        term: {type: string}
+        variants:
+          type: array
+          items: {type: string}
+        category: {type: [string, 'null']}
+        updated_at: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+        deleted_at: {oneOf: [{$ref: 'common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]}
+    PushRequest:
+      type: object
+      required: [device_id, operations]
+      properties:
+        device_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        operations:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items: {$ref: '#/components/schemas/Operation'}
+    Operation:
+      type: object
+      required: [id, entity, entity_id, op, payload]
+      properties:
+        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        entity:
+          type: string
+          enum: [visit, visit_contact, report, note, private_note, action, recording, attachment, glossary_term]
+        entity_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        op:
+          type: string
+          enum: [create, update, delete]
+          description: |
+            `delete` est une suppression logique, autorisée seulement pour `note`, `private_note`, `attachment`, `glossary_term` et `visit_contact`.
+            Visites et actions ne se suppriment pas : on passe leur statut à `cancelled`.
+        base_version:
+          type: integer
+          description: Version de l'entité sur laquelle la modification a été faite. Requis pour `update` des entités versionnées (visit, report, private_note, action).
+        payload:
+          description: Champs écrits (complets pour `create`, partiels pour `update`). Le serveur fixe `author_id`, `owner_id` (= auteur dans le MVP) et les horodatages de version.
+          oneOf:
+            - {$ref: '#/components/schemas/VisitWrite'}
+            - {$ref: '#/components/schemas/VisitContactWrite'}
+            - {$ref: '#/components/schemas/ReportWrite'}
+            - {$ref: '#/components/schemas/NoteWrite'}
+            - {$ref: '#/components/schemas/PrivateNoteWrite'}
+            - {$ref: '#/components/schemas/ActionWrite'}
+            - {$ref: '#/components/schemas/RecordingWrite'}
+            - {$ref: '#/components/schemas/AttachmentWrite'}
+            - {$ref: '#/components/schemas/GlossaryWrite'}
+    VisitWrite:
+      type: object
+      properties:
+        company_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        visit_type: {type: string}
+        objective: {type: string}
+        planned_start: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+        planned_end: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+        started_at: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+        ended_at: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+        location_text: {type: string}
+        status: {$ref: 'common.yaml#/components/schemas/VisitStatus'}
+    VisitContactWrite:
+      type: object
+      required: [visit_id, contact_id]
+      properties:
+        visit_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        contact_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+    ReportWrite:
+      type: object
+      properties:
+        visit_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        language: {$ref: 'common.yaml#/components/schemas/LanguageCode'}
+        summary: {type: string}
+        needs: {type: string}
+        objections: {type: string}
+        competitors: {type: string}
+        decisions: {type: string}
+        next_step: {type: string}
+        opportunity_temperature: {$ref: 'common.yaml#/components/schemas/Temperature'}
+        status: {type: string, enum: [draft, validated]}
+    NoteWrite:
+      type: object
+      properties:
+        visit_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        kind: {type: string, enum: [text, voice, photo]}
+        body: {type: string}
+        recording_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        attachment_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        noted_at: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+    PrivateNoteWrite:
+      type: object
+      properties:
+        visit_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        body: {type: string}
+    ActionWrite:
+      type: object
+      properties:
+        company_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        visit_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        title: {type: string, minLength: 1}
+        due_date: {type: string, format: date}
+        reminder: {$ref: 'common.yaml#/components/schemas/Reminder'}
+        status: {$ref: 'common.yaml#/components/schemas/ActionStatus'}
+        origin: {$ref: 'common.yaml#/components/schemas/ActionOrigin'}
+    RecordingWrite:
+      type: object
+      properties:
+        visit_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        purpose: {type: string, enum: [report, note, action]}
+        language: {$ref: 'common.yaml#/components/schemas/LanguageCode'}
+        mime_type: {type: string}
+        duration_s: {type: number}
+        size_bytes: {type: integer}
+    AttachmentWrite:
+      type: object
+      properties:
+        visit_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        mime_type: {type: string, enum: [image/jpeg, image/png]}
+        size_bytes: {type: integer}
+        caption: {type: string}
+    GlossaryWrite:
+      type: object
+      description: Termes personnels seulement (`scope` = user). Les termes globaux sont gérés par l'administration.
+      properties:
+        language: {$ref: 'common.yaml#/components/schemas/LanguageCode'}
+        term: {type: string}
+        variants: {type: array, items: {type: string}}
+        category: {type: string}
+    PushResponse:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items: {$ref: '#/components/schemas/OperationResult'}
+    OperationResult:
+      type: object
+      required: [id, result]
+      properties:
+        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        result: {type: string, enum: [applied, conflict, rejected]}
+        version: {type: integer, description: Version de l'entité après application.}
+        code:
+          type: string
+          description: "Pour `rejected` : validation_failed, forbidden, not_found, dependency_failed, quota_exceeded, locked_status."
+        message: {type: string}
+        conflict:
+          type: object
+          description: Pour `conflict` seulement.
+          properties:
+            server_version: {type: integer}
+            fields:
+              type: array
+              description: Champs modifiés des deux côtés.
+              items:
+                type: object
+                properties:
+                  field: {type: string}
+                  server_value: {}
+                  resolution:
+                    type: string
+                    enum: [server_wins, both_kept]
+                    description: "`both_kept` pour les textes longs : les deux versions sont conservées et l'utilisateur est alerté."
+    ReportQuality:
+      type: object
+      required: [accepted_unchanged]
+      properties:
+        ai_proposal_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        accepted_unchanged: {type: boolean}
+        edit_ratio: {type: number, minimum: 0, maximum: 1}
+        numbers_changed: {type: integer, minimum: 0}
+        names_changed: {type: integer, minimum: 0}
+        review_seconds: {type: integer, minimum: 0}
+        abandoned_to_manual: {type: boolean}
