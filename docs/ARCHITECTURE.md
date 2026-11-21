@@ -119,12 +119,14 @@ Alternative écartée à ce stade : une base répliquée clé en main. Elle réd
 - Table de correspondance identifiant CRM ↔ identifiant interne ; clients en **lecture seule** dans l'application.
 - Client absent ou supprimé du CRM : **marqué inactif**, visites conservées. Fusion : rattachement au client absorbant si le CRM fournit son identifiant.
 - Reprise sur erreur, nouvelle tentative avec délai croissant, respect des quotas du CRM, journal de chaque exécution.
-- À confirmer avec l'équipe CRM : authentification, champs, quotas, gestion des suppressions.
+- Champs reçus du CRM : société, adresse, secteur, contacts (nom, fonction, téléphone, e-mail), commercial(s) responsable(s). Ces derniers alimentent l'affectation client-commerciaux : si le CRM change un responsable, la visibilité des visites change à la synchro suivante.
+- Authentification du back auprès du CRM : clé d'API ou jeton fixe.
+- À confirmer avec l'équipe CRM : quotas, gestion des suppressions, identifiant du client absorbant lors d'une fusion (défaut : rattachement manuel par l'administrateur).
 
 ## 9. API pour le CRM (back → CRM)
 
 - API REST dédiée, **séparée de l'API mobile** (version, authentification, limites propres).
-- Authentification par compte de service avec clé ou jeton à durée limitée, restreinte par adresse réseau si possible.
+- Authentification par clé d'API ou jeton fixe (décision du 21/11), propre à ce compte de service, stockée hors du dépôt, renouvelable sans interruption (deux clés valides pendant la transition), journalisation de chaque appel.
 - Ressources : visites, comptes rendus (version validée), notes publiques, actions, participants, rattachements ; chacune avec `updated_at`, identifiant stable, statut et suppression logique.
 - Lecture incrémentale : `updated_since` + curseur de pagination ; réponses idempotentes.
 - **Exclus** : notes privées, audio brut.

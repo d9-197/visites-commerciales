@@ -27,6 +27,7 @@ données exploitable (comptes rendus structurés, actions, prochaines étapes).
 | CRM (précisions du 20/11) | CRM interne, non nommé ; clients en lecture seule dans l'appli (pas de création) ; le CRM vient **récupérer** visites et CR par API | Le back expose une API REST dédiée au CRM (authentification par clé/jeton de service, pagination, filtre « modifié depuis », identifiants stables, suppression logique) ; le back lit les clients du CRM de son côté ; pas d'écriture dans le CRM |
 | API pour le CRM : périmètre | « Tout récupérer potentiellement », actions comprises | L'API couvre toutes les entités : visites, comptes rendus, notes, actions, contacts liés, participants, rattachements, avec statut et historique de modification, y compris annulations et suppressions logiques. Exclus de l'API (décision du 21/11) : notes privées et audio brut |
 | Administration des comptes | L'IT, via une console d'administration | Console web (création, réinitialisation, désactivation, rôles, rattachement hiérarchique, affectation client-commerciaux) ; pas d'inscription libre-service |
+| Échanges avec le CRM | Authentification par clé d'API ou jeton fixe dans les deux sens. Le CRM envoie : société, adresse, secteur, contacts (nom, fonction, téléphone, e-mail), commercial(s) responsable(s) | Clés à renouveler régulièrement et à stocker hors du dépôt ; les commerciaux responsables du CRM alimentent l'affectation client-commerciaux (donc la visibilité) ; pas de statut ni d'opportunités en v1 |
 | Volume de dictée | ~10 h d'audio par commercial et par mois | Base de calcul du budget : 10 h/mois/utilisateur, à comparer au plafond de 30 € |
 | Parc | Mixte iOS + Android, géré par NinjaOne | Appli multiplateforme, tests sur les deux systèmes ; dictée native différente selon l'OS |
 | Authentification | Pas de SSO, comptes propres | Gestion des comptes dans le back : mots de passe (hachage), réinitialisation, authentification à deux facteurs, verrouillage, désactivation à distance ; à prévoir dans le périmètre et le budget |
@@ -153,7 +154,7 @@ Détail dans `ARCHITECTURE.md`. Infrastructure : serveur Docker interne en UE (d
 
 ## 11. Questions ouvertes
 
-1. Versions minimales d'iOS et d'Android du parc : à vérifier avec l'IT. Hypothèse de travail : iOS 17+ et Android 13+ **[À VALIDER]**.
-2. Documentation de l'API du CRM : authentification, champs client/contact, quotas, identifiant de référence ?
+1. Versions minimales d'iOS et d'Android : inconnues. Hypothèse de travail : iOS 17+ et Android 13+ **[À VALIDER]**.
+2. Fusion de clients dans le CRM : le CRM fournit-il l'identifiant du client absorbant ? Inconnu. Par défaut : les visites restent sur l'ancien client (inactif) et un administrateur les rattache à la main.
 3. Format et contenu attendus par le CRM pour récupérer visites et CR (champs, fréquence d'appel, historique initial) ?
-4. Fusion de clients dans le CRM : le CRM fournit-il l'identifiant du client absorbant ?
+4. Documentation complète de l'API du CRM : quotas, identifiant de référence, gestion des suppressions.
