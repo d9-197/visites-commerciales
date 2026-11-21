@@ -289,6 +289,11 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName, offline }: { 
   const [aiBusy, setAiBusy] = useState(false);
   const [aiErr, setAiErr] = useState<string>();
   const [ai, setAi] = useState<AiProposalResponse>();
+  const [dictating, setDictating] = useState<string | null>(null);          // dictée en cours : une seule à la fois
+  const [dictErr, setDictErr] = useState<{ id: string; msg: string }>();
+  const [noteOpen, setNoteOpen] = useState(false);
+  const setDictError = (id: string, msg?: string) => setDictErr(msg ? { id, msg } : undefined);
+  const appendTo = (k: string, text: string) => setF(cur => ({ ...cur, [k]: cur[k] && cur[k]!.trim() ? `${cur[k]!.trimEnd()} ${text}` : text }));
   const [note, setNote] = useState('');
   const [sheet, setSheet] = useState<'none' | 'date' | 'address' | 'history' | 'nav'>('none');
   const company: Row | undefined = data.companies.find(co => co.id === v?.company_id);
@@ -355,21 +360,30 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName, offline }: { 
     {mine && v.status === 'planned' && <Btn title="Visite organisée avec le client" onPress={() => setStatus('organized')} />}
     {mine && (v.status === 'planned' || v.status === 'organized') && <Btn title="Démarrer la visite" onPress={() => setStatus('in_progress', { started_at: new Date().toISOString() })} />}
     {mine && v.status === 'in_progress' && <Btn title="Terminer la visite" onPress={() => setStatus('done', { ended_at: new Date().toISOString() })} />}
-    <Label>Notes</Label>
+    <Label>Notes durant visite</Label>
     {data.notes.filter(n => n.visit_id === visitId).map(n => <Text key={n.id} style={s.note}>{n.body}</Text>)}
-    {mine && <Dictation ctx={ctx} visitId={visitId} offline={offline} onNote={text => act(() => ctx.engine.create('note', { visit_id: visitId, kind: 'voice', body: text }))} />}
-    {mine && <><TextInput accessibilityLabel="Nouvelle note" placeholderTextColor={c.muted} style={s.input} value={note} onChangeText={setNote} placeholder="Nouvelle note" multiline />
-      <Btn small title="Ajouter" disabled={!note.trim()} onPress={() => act(async () => { await ctx.engine.create('note', { visit_id: visitId, kind: 'text', body: note.trim() }); setNote(''); })} /></>}
+    {mine && <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+      <DictationControl id="notes" label="Notes durant visite" review active={dictating} setActive={setDictating} ctx={ctx} visitId={visitId} offline={offline}
+        onText={text => act(() => ctx.engine.create('note', { visit_id: visitId, kind: 'voice', body: text }))} onError={setDictError} />
+      {dictating !== 'notes' && <Btn small title="+ Ajouter une note" onPress={() => setNoteOpen(true)} />}
+    </View>}
+    {dictErr?.id === 'notes' && <Text style={s.err}>{dictErr.msg}</Text>}
     {mine && <>
-      <Btn small title={aiBusy ? 'Synthèse en cours…' : 'Synthétiser les notes avec l\'IA'} disabled={aiBusy || !notesText.trim() || offline} onPress={synthesize} />
+      <Btn small title={aiBusy ? 'Synthèse en cours…' : 'Synthétiser avec l\'IA'} disabled={aiBusy || !notesText.trim() || offline} onPress={synthesize} />
+      <Text style={s.muted}>À partir des notes durant visite.</Text>
       {offline && <Text style={s.muted}>Hors-ligne : la synthèse par IA demande une connexion.</Text>}
-      {!notesText.trim() && <Text style={s.muted}>Ajoutez des notes pour pouvoir les synthétiser.</Text>}
+      {!notesText.trim() && <Text style={s.muted}>Ajoutez des notes durant visite pour pouvoir les synthétiser.</Text>}
       {aiErr && <Text style={s.err}>{aiErr}</Text>}
     </>}
     <Label>Compte rendu {report?.status === 'validated' ? '(validé)' : ''}</Label>
     {REPORT_FIELDS.map(([k, label]) => (
       <View key={k} style={{ gap: 4 }}>
-        <Text style={s.muted}>{label}</Text>
+        <View style={s.rowBetween}>
+          <Text style={s.muted}>{label}</Text>
+          {mine && <DictationControl compact id={`field:${k}`} label={label} active={dictating} setActive={setDictating} ctx={ctx} visitId={visitId} offline={offline}
+            onText={text => appendTo(k, text)} onError={setDictError} />}
+        </View>
+        {dictErr?.id === `field:${k}` && <Text style={s.err}>{dictErr.msg}</Text>}
         <TextInput accessibilityLabel={k === 'summary' ? 'Résumé du compte rendu' : label} placeholderTextColor={c.muted} style={[s.input, { minHeight: k === 'summary' ? 90 : 60 }]}
           value={f[k] ?? ''} onChangeText={t => setF(cur => ({ ...cur, [k]: t }))} multiline editable={mine} />
       </View>))}
@@ -377,6 +391,7 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName, offline }: { 
       <Btn small title="Enregistrer" onPress={() => saveReport(false)} />
       <Btn small title="Valider" disabled={!(f.summary ?? '').trim() || report?.status === 'validated'} onPress={() => saveReport(true)} />
     </View>}
+    <AddNoteSheet visible={noteOpen} onClose={() => setNoteOpen(false)} onAdd={text => { setNoteOpen(false); void act(() => ctx.engine.create('note', { visit_id: visitId, kind: 'text', body: text })); }} />
     <AiSheet result={ai} onClose={() => setAi(undefined)} onApply={applyAi} />
 
     <EditDateSheet visible={sheet === 'date'} initial={v.planned_start} onClose={() => setSheet('none')}
@@ -386,6 +401,20 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName, offline }: { 
     <HistorySheet visible={sheet === 'history'} entries={entries} onClose={() => setSheet('none')} />
     <NavChooser address={address} visible={sheet === 'nav'} onClose={() => setSheet('none')} />
   </>;
+}
+
+function AddNoteSheet({ visible, onClose, onAdd }: { visible: boolean; onClose: () => void; onAdd: (text: string) => void }) {
+  const { s, c } = useTheme();
+  const [text, setText] = useState('');
+  useEffect(() => { if (visible) setText(''); }, [visible]);
+  return (
+    <Sheet title="Note durant la visite" visible={visible} onClose={onClose}>
+      <TextInput accessibilityLabel="Nouvelle note" placeholderTextColor={c.muted} style={[s.input, { minHeight: 110 }]} value={text} onChangeText={setText} placeholder="Ce qui se dit pendant la visite" multiline />
+      <Text style={s.muted}>Ces notes servent à rédiger le compte rendu (synthèse par IA comprise).</Text>
+      <Btn title="Ajouter" disabled={!text.trim()} onPress={() => onAdd(text.trim())} />
+      <Btn small title="Annuler" onPress={onClose} />
+    </Sheet>
+  );
 }
 
 function EditDateSheet({ visible, initial, onClose, onSave }: { visible: boolean; initial?: string | null; onClose: () => void; onSave: (d?: Date) => void }) {
@@ -434,61 +463,71 @@ function HistorySheet({ visible, entries, onClose }: { visible: boolean; entries
 }
 
 /**
- * Dictée : enregistre, envoie l'audio au back pour transcription (Voxtral), puis affiche le texte à relire. La note n'est créée
- * qu'après relecture. En ligne seulement : l'audio n'est pas conservé sur l'appareil en attendant le réseau.
+ * Dictée : enregistre, envoie l'audio au back pour transcription (Voxtral). Deux usages :
+ *  - `review` (notes durant visite) : le texte est affiché à relire, la note n'est créée qu'ensuite ;
+ *  - direct (champs du compte rendu) : le texte est ajouté à la fin du champ, que l'utilisateur corrige sur place.
+ * Un seul enregistrement à la fois (`active`). En ligne seulement : l'audio n'est pas conservé en attendant le réseau.
  */
-function Dictation({ ctx, visitId, offline, onNote }: { ctx: Ctx; visitId: string; offline: boolean; onNote: (text: string) => void }) {
+function DictationControl({ id, label, active, setActive, ctx, visitId, offline, review, compact, onText, onError }: {
+  id: string; label: string; active: string | null; setActive: (id: string | null) => void; ctx: Ctx; visitId: string; offline: boolean;
+  review?: boolean; compact?: boolean; onText: (text: string) => void; onError: (id: string, msg?: string) => void;
+}) {
   const { s, c } = useTheme();
   const rec = useRef<Recorder>();
   rec.current ??= createRecorder();
   const [state, setState] = useState<'idle' | 'recording' | 'sending' | 'review'>('idle');
   const [secs, setSecs] = useState(0);
   const [text, setText] = useState('');
-  const [err, setErr] = useState<string>();
   const timer = useRef<ReturnType<typeof setInterval>>();
   useEffect(() => () => { clearInterval(timer.current); void rec.current?.cancel(); }, []);
+  const busyElsewhere = active !== null && active !== id;
 
+  const done = () => { setState('idle'); setActive(null); };
   const send = async (audio: RecordedAudio) => {
-    setState('sending'); setErr(undefined);
-    try { const r = await ctx.client.transcribe(visitId, audio.body, audio.mime, ctx.lang, audio.durationS); setText(r.text); setState('review'); }
-    catch (e) { setErr(voiceErrorMessage(e)); setState('idle'); }
+    setActive(id); setState('sending'); onError(id, undefined);
+    try {
+      const r = await ctx.client.transcribe(visitId, audio.body, audio.mime, ctx.lang, audio.durationS);
+      if (review) { setText(r.text); setState('review'); } else { onText(r.text.trim()); done(); }
+    } catch (e) { onError(id, voiceErrorMessage(e)); done(); }
   };
   const start = async () => {
-    setErr(undefined);
-    try { await rec.current!.start(); setSecs(0); setState('recording'); timer.current = setInterval(() => setSecs(x => x + 1), 1000); }
-    catch (e) { setErr(voiceErrorMessage(e)); }
+    onError(id, undefined);
+    try { await rec.current!.start(); setActive(id); setSecs(0); setState('recording'); timer.current = setInterval(() => setSecs(x => x + 1), 1000); }
+    catch (e) { onError(id, voiceErrorMessage(e)); }
   };
   const stop = async () => {
     clearInterval(timer.current);
-    try { await send(await rec.current!.stop()); } catch (e) { setErr(voiceErrorMessage(e)); setState('idle'); }
+    try { await send(await rec.current!.stop()); } catch (e) { onError(id, voiceErrorMessage(e)); done(); }
   };
   useEffect(() => { if (state === 'recording' && secs >= MAX_DICTATION_S) void stop(); }, [secs, state]);
 
   if (state === 'review') return (
-    <View style={{ gap: 8 }}>
+    <View style={{ gap: 8, flexBasis: '100%' }}>
       <Label>Note dictée : relisez et corrigez</Label>
       <TextInput accessibilityLabel="Texte dicté" placeholderTextColor={c.muted} style={[s.input, { minHeight: 90 }]} value={text} onChangeText={setText} multiline />
       <Text style={s.muted}>Texte transcrit automatiquement : des erreurs sont possibles (noms, nombres).</Text>
       <View style={s.rowBetween}>
-        <Btn small title="Ajouter la note" disabled={!text.trim()} onPress={() => { onNote(text.trim()); setText(''); setState('idle'); }} />
-        <Btn small title="Annuler" onPress={() => { setText(''); setState('idle'); }} />
+        <Btn small title="Ajouter la note" disabled={!text.trim()} onPress={() => { onText(text.trim()); setText(''); done(); }} />
+        <Btn small title="Annuler" onPress={() => { setText(''); done(); }} />
       </View>
     </View>);
+
   const mm = String(Math.floor(secs / 60)).padStart(2, '0') + ':' + String(secs % 60).padStart(2, '0');
-  return (
-    <View style={{ gap: 6 }}>
-      {state === 'recording'
-        ? <Btn title={`Arrêter la dictée · ${mm}`} onPress={stop} />
-        : rec.current.available
-          ? <Btn small title={state === 'sending' ? 'Transcription en cours…' : 'Dicter une note'} disabled={state === 'sending' || offline} onPress={start} />
-          : <>
-              <AudioFilePicker disabled={state === 'sending' || offline} onFile={send} />
-              <Text style={s.muted}>Le micro du navigateur demande une connexion sécurisée (HTTPS). En attendant, enregistrez avec le téléphone puis choisissez le fichier.</Text>
-            </>}
-      {offline && <Text style={s.muted}>Hors-ligne : la dictée demande une connexion.</Text>}
-      {err && <Text style={s.err}>{err}</Text>}
-    </View>
-  );
+  if (state === 'recording') return compact
+    ? <Pressable onPress={stop} accessibilityRole="button" accessibilityLabel="Arrêter la dictée" style={[s.btn, s.btnSmall, { minHeight: 36, paddingVertical: 4, backgroundColor: c.late }]}><Text style={s.btnText}>■ {mm}</Text></Pressable>
+    : <Btn small title={`■ Arrêter la dictée · ${mm}`} onPress={stop} />;
+  const disabled = state === 'sending' || offline || busyElsewhere;
+  if (!rec.current.available) return compact
+    ? <AudioFilePicker compact label={label} disabled={disabled} onFile={send} />
+    : (
+      <View style={{ gap: 4, flexBasis: '100%' }}>
+        <AudioFilePicker disabled={disabled} onFile={send} />
+        <Text style={s.muted}>Le micro du navigateur demande une connexion sécurisée (HTTPS). En attendant, enregistrez avec le téléphone puis choisissez le fichier.</Text>
+      </View>);
+  if (compact) return (
+    <Pressable onPress={start} disabled={disabled} accessibilityRole="button" accessibilityLabel={`Dicter : ${label}`} style={[s.iconBtn, disabled && s.btnOff]}>
+      <Text style={s.iconText}>{state === 'sending' ? '…' : '🎤'}</Text></Pressable>);
+  return <Btn small title={state === 'sending' ? 'Transcription en cours…' : '🎤 Dicter une note'} disabled={disabled} onPress={start} />;
 }
 
 /** Proposition de l'IA : à relire et corriger avant de l'appliquer. Rien n'est enregistré tant que l'utilisateur n'applique pas. */

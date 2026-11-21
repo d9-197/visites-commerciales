@@ -111,8 +111,13 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await page.getByText('En cours', { exact: true }).first().waitFor();
   assert.equal(await page.getByRole('button', { name: 'Modifier l\'adresse de la visite' }).count(), 0, 'adresse non modifiable une fois la visite commencée');
   assert.equal(await page.getByRole('button', { name: 'Modifier la date prévue' }).count(), 0, 'date prévue non modifiable une fois la visite commencée');
+  assert.equal(await page.getByLabel('Nouvelle note').count(), 0, 'plus de champ de note permanent : écran allégé');
+  assert.ok(await page.getByText('Notes durant visite', { exact: true }).first().isVisible(), 'libellé « Notes durant visite »');
+  assert.ok(await page.getByRole('button', { name: /🎤 Dicter une note/ }).isVisible(), 'icône micro sur le bouton dicter');
+  await page.getByRole('button', { name: '+ Ajouter une note' }).click();
   await page.getByLabel('Nouvelle note').fill('M. Martin intéressé par l\'offre B');
-  await page.getByRole('button', { name: 'Ajouter' }).click();
+  await page.getByRole('button', { name: 'Ajouter', exact: true }).click();
+  await page.getByText('M. Martin intéressé par l\'offre B').first().waitFor();
 
   // 2 sexies ter. Dictée vocale (faux Voxtral) : enregistrement réel avec le faux micro, transcription à relire, note créée après relecture
   await page.getByRole('button', { name: 'Dicter une note' }).click();
@@ -133,7 +138,7 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await shot(page, '3h-dictee');
 
   // 2 sexies bis. Synthèse par IA (faux Mistral) : proposition à relire, avertissements, application, action créée
-  await page.getByRole('button', { name: 'Synthétiser les notes avec l\'IA' }).click();
+  await page.getByRole('button', { name: 'Synthétiser avec l\'IA' }).click();
   await page.getByText('Proposition de l\'IA').waitFor();
   assert.ok(await page.getByText('Nombre absent des notes : 50000', { exact: false }).first().isVisible(), 'nombre qui ne figure pas dans les notes : signalé');
   assert.ok(await page.getByText(/Échéance calculée à partir d'une date relative/).first().isVisible(), 'échéance relative signalée');
@@ -144,12 +149,23 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await page.getByRole('button', { name: 'Appliquer au compte rendu' }).click();
   await page.getByText('Proposition de l\'IA').waitFor({ state: 'detached' });
   assert.match(await page.getByLabel('Résumé du compte rendu').inputValue(), /offre B \(réponse simulée\)/, 'résumé appliqué');
-  assert.match(await page.getByLabel('Besoins').inputValue(), /atelier/, 'champs détaillés appliqués');
+  assert.match(await page.getByRole('textbox', { name: 'Besoins', exact: true }).inputValue(), /atelier/, 'champs détaillés appliqués');
   const sent = await (await fetch('http://127.0.0.1:4010/__requests')).json();
   assert.equal(sent.length, 1); assert.equal(sent[0].auth, 'Bearer cle-de-test');
   assert.ok(sent[0].body.messages[1].content.includes('M. Martin intéressé par l\'offre B'), 'les notes sont envoyées');
   assert.ok(sent[0].body.messages[1].content.includes('Dictée relue'), 'la note dictée (relue) est incluse dans la synthèse');
   assert.ok(!JSON.stringify(sent[0].body).includes('Dupont'), 'le nom du client n\'est pas envoyé');
+  // Dictée directement dans un champ du compte rendu (micro à côté du libellé) : le texte est ajouté à la fin du champ
+  const besoinsAvant = await page.getByLabel('Besoins', { exact: true }).inputValue();
+  await page.getByRole('button', { name: 'Dicter : Besoins', exact: true }).click();
+  await page.getByRole('button', { name: 'Arrêter la dictée' }).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Dicter : Décisions', exact: true }).isDisabled(), true, 'un seul enregistrement à la fois');
+  await page.waitForTimeout(1200);
+  await page.getByRole('button', { name: 'Arrêter la dictée' }).click();
+  await page.waitForFunction(() => /Dictée simulée/.test(document.querySelector('[aria-label="Besoins"]').value));
+  const besoinsApres = await page.getByLabel('Besoins', { exact: true }).inputValue();
+  assert.equal(besoinsApres, `${besoinsAvant} Dictée simulée : le client confirme un budget de 40 000 euros.`, 'texte ajouté à la suite du champ, sans écraser');
+  await page.getByLabel('Besoins', { exact: true }).fill(besoinsAvant);
   await page.getByLabel('Résumé du compte rendu').fill('Intéressé par l\'offre B, budget à confirmer.');
   await page.getByRole('button', { name: 'Valider' }).click();
   await page.getByRole('button', { name: 'Terminer la visite' }).click();
@@ -284,11 +300,14 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await np.getByText('Atelier Roux').first().click();
   await np.getByText(/Le micro du navigateur demande une connexion sécurisée/).waitFor();
   assert.equal(await np.getByRole('button', { name: 'Dicter une note' }).count(), 0, 'pas de bouton micro sans contexte sécurisé');
-  await np.getByLabel('Fichier audio').setInputFiles({ name: 'dictee.webm', mimeType: 'audio/webm', buffer: Buffer.alloc(3000, 5) });
+  await np.getByLabel('Fichier audio', { exact: true }).setInputFiles({ name: 'dictee.webm', mimeType: 'audio/webm', buffer: Buffer.alloc(3000, 5) });
   await np.getByLabel('Texte dicté').waitFor();
   assert.match(await np.getByLabel('Texte dicté').inputValue(), /Dictée simulée/);
-  assert.equal((await (await fetch('http://127.0.0.1:4010/__transcriptions')).json()).length, 2, 'le fichier choisi est transcrit');
+  assert.equal((await (await fetch('http://127.0.0.1:4010/__transcriptions')).json()).length, 3, 'le fichier choisi est transcrit');
   await np.getByRole('button', { name: 'Annuler' }).click();
+  // même repli pour un champ du compte rendu : icône micro qui ouvre le choix du fichier, texte ajouté au champ
+  await np.getByLabel('Fichier audio : Objections', { exact: true }).setInputFiles({ name: 'dictee.webm', mimeType: 'audio/webm', buffer: Buffer.alloc(3000, 5) });
+  await np.waitForFunction(() => /Dictée simulée/.test(document.querySelector('[aria-label="Objections"]').value));
   await nctx.close();
 
   // 8. Mode sombre : suit le réglage du système par défaut, réglable, conservé après rechargement et déconnexion

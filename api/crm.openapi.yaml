@@ -81,7 +81,7 @@ paths:
   /notes:
     get:
       tags: [Lecture]
-      summary: Notes de visite (publiques)
+      summary: Notes durant visite (hors notes internes et notes privées)
       parameters:
         - {$ref: '#/components/parameters/Cursor'}
         - {$ref: '#/components/parameters/UpdatedSince'}
