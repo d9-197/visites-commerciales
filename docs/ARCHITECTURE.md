@@ -45,7 +45,10 @@ flowchart LR
 
 **Choix [DÉCISION]** : application multiplateforme (un code pour iOS et Android, tablette comprise) plutôt que deux applications natives ou une PWA.
 - La PWA est écartée : accès micro, enregistrement en arrière-plan, base locale chiffrée et biométrie y sont moins fiables, surtout sur iOS (à confirmer par un essai).
-- **React Native + TypeScript** ou **Flutter** : les deux conviennent techniquement. Le critère décisif est la compétence de l'équipe. Si l'équipe connaît React (c'est le cas du dépôt PMA), React Native réduit le coût d'entrée et permet de partager des types avec le back TypeScript.
+- **React Native + TypeScript** ou **Flutter** : les deux conviennent techniquement, et l'équipe maîtrise les deux (ainsi que Node), donc la compétence ne départage pas.
+- **Choix provisoire : React Native + TypeScript**, pour une seule raison concrète : partager avec le back TypeScript les types, les schémas de validation et la logique de synchro (règles de conflit, formats d'opérations). Cela réduit le risque d'écart entre client et serveur, qui est le point délicat de ce projet.
+- **Ce que Flutter apporterait** : rendu identique sur les deux systèmes et chaîne d'outils unique ; mais le langage diffère du back, donc pas de code partagé.
+- **Ce qui reste à vérifier avant de confirmer** (phase 0, sur de vrais appareils iOS et Android) : enregistrement audio fiable en arrière-plan et après interruption, SQLite chiffré performant avec le volume prévu, notifications locales, lecture de la configuration poussée par NinjaOne. Si l'un de ces points échoue avec React Native, on bascule sur Flutter.
 
 Briques nécessaires :
 | Besoin | Approche |
