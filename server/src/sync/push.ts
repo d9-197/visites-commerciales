@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { Pool, Client } from '../db.js';
 import { tx } from '../db.js';
 import { HttpError } from '../errors.js';
-import { LONG_TEXT_FIELDS, VERSIONED, VISIT_HISTORY_FIELDS, canEditVisitAddress, canEditVisitDate, canDeleteVisit, canEditVisitNotes, canTransition, canValidateReport } from '@visites/sync-core';
+import { LONG_TEXT_FIELDS, VERSIONED, VISIT_HISTORY_FIELDS, canEditVisitAddress, canEditVisitDate, canDeleteVisit, canEditInternalNote, canEditVisitNotes, isDueBeforeVisit, needsNoActionAck, canTransition, canValidateReport } from '@visites/sync-core';
 import type { UserRole, VisitStatus } from '@visites/sync-core';
 import type { Operation, OperationResult, ConflictField, EntityName } from '@visites/sync-core';
 
@@ -22,6 +22,7 @@ const VISIT_FIELDS = {
 const DRAFT_ACTION = z.object({ id: uuid, title: z.string().trim().min(1).max(200), due_date: date.nullable(), origin: z.enum(['ai', 'manual']) });
 const REPORT_FIELDS = {
   draft_actions: z.array(DRAFT_ACTION).max(30),
+  no_action: z.boolean(),
   summary: nstr, needs: nstr, objections: nstr, competitors: nstr, decisions: nstr, next_step: nstr,
   opportunity_temperature: z.enum(['cold', 'warm', 'hot']).nullable(), status: z.enum(['draft', 'validated']),
 };
@@ -128,6 +129,22 @@ async function autoValidate(c: Client, visitId: string) {
      WHERE v.id = $1 AND v.status = 'done' AND EXISTS (SELECT 1 FROM visit_report r WHERE r.visit_id = v.id AND r.status = 'validated')`, [visitId]);
 }
 
+/** Événement ajouté à l'historique de la visite (compte rendu validé, remis en brouillon, visite supprimée). */
+async function logEvent(c: Client, visitId: string, field: string, userId: string) {
+  const name = (await c.query(`SELECT display_name FROM app_user WHERE id = $1`, [userId])).rows[0].display_name;
+  await c.query(`INSERT INTO visit_history(visit_id, field, changed_by, changed_by_name) VALUES ($1,$2,$3,$4)`, [visitId, field, userId, name]);
+}
+
+/** Validation d'un compte rendu : « aucune action à prévoir » obligatoire s'il n'y a aucune action ; échéances cohérentes avec la visite. */
+async function checkValidation(c: Client, visit: Record<string, any>, drafts: any[], noAction: boolean) {
+  const existing = (await c.query(`SELECT count(*)::int AS n FROM action_item WHERE visit_id = $1`, [visit.id])).rows[0].n;
+  if (needsNoActionAck(drafts.length, existing, noAction)) throw new Reject('validation_failed', 'Ajoutez une action ou cochez « aucune action à prévoir » avant de valider');
+  checkDueDates(visit, drafts);
+}
+function checkDueDates(visit: Record<string, any>, drafts: { due_date?: string | null }[]) {
+  if (drafts.some(a => isDueBeforeVisit(a.due_date, visit))) throw new Reject('validation_failed', "L'échéance d'une action est antérieure à la date de la visite");
+}
+
 async function companyReadable(c: Client, userId: string, id: string) {
   const ok = (await c.query(`SELECT can_read_company($1,$2) AS ok`, [userId, id])).rows[0].ok;
   if (!ok) throw new Reject('forbidden', 'Client non accessible');
@@ -179,6 +196,10 @@ async function handle(ctx: Ctx): Promise<Applied> {
         // L'adresse peut être modifiée par d'autres que l'auteur, selon le statut et le rôle ; tout le reste : l'auteur seul.
         const onlyDelete = keys.length === 1 && fields.status === 'deleted';
         if (!isAuthor && !(keys.length > 0 && keys.every(k => k === 'location_text')) && !(onlyDelete && me.role === 'directeur')) throw new Reject('forbidden', "Réservé à l'auteur de la visite");
+        if (fields.status === 'cancelled' && row.status !== 'cancelled') {
+          const open = (await c.query(`SELECT count(*)::int AS n FROM action_item WHERE visit_id = $1 AND status = 'todo'`, [id])).rows[0].n;
+          if (open > 0) throw new Reject('locked_status', 'Des actions restent à faire : terminez-les ou annulez-les avant d\'annuler la visite');
+        }
         if (fields.status === 'deleted' && row.status !== 'deleted') {
           if (!canDeleteVisit(me.role as UserRole, isAuthor)) throw new Reject('forbidden', 'Seul le commercial auteur de la visite ou un directeur peut la supprimer');
           const open = (await c.query(`SELECT count(*)::int AS n FROM action_item WHERE visit_id = $1 AND status = 'todo'`, [id])).rows[0].n;
@@ -195,6 +216,7 @@ async function handle(ctx: Ctx): Promise<Applied> {
           throw new Reject('locked_status', `Passage impossible de « ${row.status} » à « ${fields.status} »`);
         }
         return updateVersioned(ctx, 'visit', row, fields, undefined, async applied => {
+          if (applied.status === 'deleted') await logEvent(c, id, 'visit_deleted', userId);
           if (applied.status === 'done') await autoValidate(c, id);   // compte rendu déjà validé : la visite est validée aussitôt
           for (const f of VISIT_HISTORY_FIELDS) {
             if (!(f in applied)) continue;
@@ -227,13 +249,15 @@ async function handle(ctx: Ctx): Promise<Applied> {
         if (vr.status === 'deleted') throw new Reject('locked_status', 'Visite supprimée');
         if (p.status === 'validated' && !canValidateReport(vr.status)) throw new Reject('locked_status', 'La visite doit être terminée pour valider le compte rendu');
         if (p.status === 'validated' && !(p.summary ?? '').trim()) throw new Reject('validation_failed', 'summary requis pour valider');
+        if (p.status === 'validated') await checkValidation(c, vr, p.draft_actions ?? [], p.no_action ?? false);
+        else checkDueDates(vr, p.draft_actions ?? []);
         const extra = p.status === 'validated' ? { validated_at: new Date().toISOString(), validated_by: userId } : {};
         await insert(c, 'visit_report', { id, ...p, ...extra });
-        if (p.status === 'validated') { await createActionsFromDraft(c, { visit_id: p.visit_id, company_id: vr.company_id, author_id: userId }, p.draft_actions ?? []); await c.query(`UPDATE visit_report SET draft_actions = '[]' WHERE id = $1`, [id]); await autoValidate(c, p.visit_id); }
+        if (p.status === 'validated') { await createActionsFromDraft(c, { visit_id: p.visit_id, company_id: vr.company_id, author_id: userId }, p.draft_actions ?? []); await c.query(`UPDATE visit_report SET draft_actions = '[]' WHERE id = $1`, [id]); await autoValidate(c, p.visit_id); await logEvent(c, p.visit_id, 'report_validated', userId); }
         return { version: 1, fields: Object.keys(p) };
       }
       if (op.op === 'update') {
-        const { rows } = await c.query(`SELECT r.*, v.author_id, v.status AS visit_status, v.company_id FROM visit_report r JOIN visit v ON v.id = r.visit_id WHERE r.id = $1 FOR UPDATE OF r`, [id]);
+        const { rows } = await c.query(`SELECT r.*, v.author_id, v.status AS visit_status, v.company_id, v.started_at, v.planned_start FROM visit_report r JOIN visit v ON v.id = r.visit_id WHERE r.id = $1 FOR UPDATE OF r`, [id]);
         const row = rows[0];
         if (!row || !(await c.query(`SELECT can_read_visit($1,$2) AS ok`, [userId, row.visit_id])).rows[0].ok) throw new Reject('not_found', 'Compte rendu inconnu');
         if (row.author_id !== userId) throw new Reject('forbidden', "Réservé à l'auteur");
@@ -245,19 +269,25 @@ async function handle(ctx: Ctx): Promise<Applied> {
           throw new Reject('locked_status', 'Compte rendu validé : remettez-le en brouillon pour le modifier');
         }
         let pending: any[] = [];
+        if (row.status === 'validated' && row.sent_to_client_at) throw new Reject('locked_status', 'Compte rendu transmis au client : il ne peut plus être remis en brouillon');
+        if (fields.draft_actions) checkDueDates({ started_at: row.started_at, planned_start: row.planned_start }, fields.draft_actions);
+        const existingActions = row.status !== 'validated' && fields.status === 'validated' ? (await c.query(`SELECT count(*)::int AS n FROM action_item WHERE visit_id = $1`, [row.visit_id])).rows[0].n : 0;
         return updateVersioned(ctx, 'visit_report', row, fields, (merged, toApply) => {
           if (row.status === 'validated' && merged.status === 'draft') { toApply.validated_at = null; toApply.validated_by = null; return; }
           if (row.status !== 'validated' && merged.status === 'validated') {
             if (!canValidateReport(row.visit_status)) throw new Reject('locked_status', 'La visite doit être terminée pour valider le compte rendu');
             if (!String(merged.summary ?? '').trim()) throw new Reject('validation_failed', 'summary requis pour valider');
+            const nDrafts = Array.isArray(merged.draft_actions) ? merged.draft_actions.length : 0;
+            if (needsNoActionAck(nDrafts, existingActions, !!merged.no_action)) throw new Reject('validation_failed', 'Ajoutez une action ou cochez « aucune action à prévoir » avant de valider');
             toApply.validated_at = new Date().toISOString(); toApply.validated_by = userId;
             pending = Array.isArray(merged.draft_actions) ? merged.draft_actions : [];
             toApply.draft_actions = [];                      // les actions prévues deviennent de vraies actions (ci-dessous)
           }
         }, async applied => {
-          if (applied.status === 'validated') { await createActionsFromDraft(c, row, pending); await autoValidate(c, row.visit_id); }
+          if (applied.status === 'validated') { await createActionsFromDraft(c, row, pending); await autoValidate(c, row.visit_id); await logEvent(c, row.visit_id, 'report_validated', userId); }
           if (applied.status === 'draft' && row.status === 'validated') {   // remise en brouillon : la visite redevient « terminée »
             await c.query(`UPDATE visit SET status = 'done', version = version + 1 WHERE id = $1 AND status = 'validated'`, [row.visit_id]);
+            await logEvent(c, row.visit_id, 'report_reopened', userId);
           }
         });
       }
@@ -298,6 +328,8 @@ async function handle(ctx: Ctx): Promise<Applied> {
       const n = (await c.query(`SELECT * FROM internal_note WHERE id = $1 FOR UPDATE`, [id])).rows[0];
       if (!n || !(await c.query(`SELECT can_read_internal_note($1,$2) AS ok`, [userId, id])).rows[0].ok) throw new Reject('not_found', 'Note interne inconnue');
       if (n.author_id !== userId) throw new Reject('forbidden', "Réservé à l'auteur de la note");
+      const vs = (await c.query(`SELECT status FROM visit WHERE id = $1`, [n.visit_id])).rows[0].status;
+      if (!canEditInternalNote(vs)) throw new Reject('locked_status', 'Compte rendu validé : les notes internes existantes ne se modifient plus (vous pouvez en ajouter)');
       if (op.op === 'update') { const p = parse(S.internalUpdate, op.payload); await c.query(`UPDATE internal_note SET body = $2 WHERE id = $1`, [id, p.body]); return { fields: ['body'] }; }
       await c.query(`UPDATE internal_note SET deleted_at = now() WHERE id = $1`, [id]);
       return { fields: ['deleted_at'] };
@@ -324,6 +356,7 @@ async function handle(ctx: Ctx): Promise<Applied> {
         if (!p.visit_id) throw new Reject('validation_failed', 'Une action est créée depuis une visite (visit_id requis)');
         const va = await visitRow(c, userId, p.visit_id, true);
         if (va.status === 'deleted') throw new Reject('locked_status', 'Visite supprimée');
+        if (isDueBeforeVisit(p.due_date, va)) throw new Reject('validation_failed', "L'échéance est antérieure à la date de la visite");
         if (va.company_id !== p.company_id) throw new Reject('validation_failed', 'Le client ne correspond pas à la visite');
         const validated = (await c.query(`SELECT 1 FROM visit_report WHERE visit_id = $1 AND status = 'validated'`, [p.visit_id])).rows[0];
         if (!validated) throw new Reject('locked_status', 'Les actions ne sont créées qu\'une fois le compte rendu validé');
@@ -334,7 +367,12 @@ async function handle(ctx: Ctx): Promise<Applied> {
         const row = (await c.query(`SELECT * FROM action_item WHERE id = $1 FOR UPDATE`, [id])).rows[0];
         if (!row || !(await c.query(`SELECT can_read_action($1,$2) AS ok`, [userId, id])).rows[0].ok) throw new Reject('not_found', 'Action inconnue');
         if (row.owner_id !== userId) throw new Reject('forbidden', 'Réservé au responsable');
-        return updateVersioned(ctx, 'action_item', row, parse(S.actionUpdate, op.payload), (merged, toApply) => {
+        const upd = parse(S.actionUpdate, op.payload);
+        if (upd.due_date && row.visit_id) {
+          const av = (await c.query(`SELECT started_at, planned_start FROM visit WHERE id = $1`, [row.visit_id])).rows[0];
+          if (av && isDueBeforeVisit(upd.due_date, av)) throw new Reject('validation_failed', "L'échéance est antérieure à la date de la visite");
+        }
+        return updateVersioned(ctx, 'action_item', row, upd, (merged, toApply) => {
           if (merged.status !== row.status) toApply.completed_at = merged.status === 'done' ? new Date().toISOString() : null;
         });
       }

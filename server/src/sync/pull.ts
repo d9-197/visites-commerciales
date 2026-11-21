@@ -16,7 +16,7 @@ const SPECS: Spec[] = [
   { key: 'visits', sql: `SELECT id,company_id,author_id,visit_type,objective,planned_start,planned_end,started_at,ended_at,location_text,status,version,updated_at,deleted_at,seq FROM visit t WHERE t.seq > $2 AND can_read_visit($1, t.id)` },
   { key: 'visit_history', sql: `SELECT id,visit_id,field,old_value,new_value,changed_by_name,changed_at,seq FROM visit_history t WHERE t.seq > $2 AND can_read_visit($1, t.visit_id)` },
   { key: 'visit_contacts', sql: `SELECT visit_id,contact_id,removed_at,seq FROM visit_contact t WHERE t.seq > $2 AND can_read_visit($1, t.visit_id)` },
-  { key: 'reports', sql: `SELECT id,visit_id,language,summary,needs,objections,competitors,decisions,next_step,opportunity_temperature,draft_actions,status,validated_at,version,updated_at,seq FROM visit_report t WHERE t.seq > $2 AND can_read_visit($1, t.visit_id)` },
+  { key: 'reports', sql: `SELECT id,visit_id,language,summary,needs,objections,competitors,decisions,next_step,opportunity_temperature,draft_actions,no_action,sent_to_client_at,status,validated_at,version,updated_at,seq FROM visit_report t WHERE t.seq > $2 AND can_read_visit($1, t.visit_id)` },
   { key: 'notes', sql: `SELECT id,visit_id,author_id,kind,body,recording_id,attachment_id,noted_at,updated_at,deleted_at,seq FROM visit_note t WHERE t.seq > $2 AND can_read_visit($1, t.visit_id)` },
   { key: 'internal_notes', sql: `SELECT id,visit_id,author_id,author_name,body,updated_at,deleted_at,seq FROM internal_note t WHERE t.seq > $2 AND can_read_internal_note($1, t.id)` },
   { key: 'private_notes', sql: `SELECT id,visit_id,body,version,updated_at,deleted_at,seq FROM private_note t WHERE t.seq > $2 AND t.author_id = $1` },

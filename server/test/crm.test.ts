@@ -30,7 +30,7 @@ test('API CRM : comptes rendus validés seulement ; suppressions logiques visibl
   const v = uuid(), draft = uuid(), valid = uuid(), v2 = uuid(), n = uuid(), act = uuid();
   await a.push([
     op('visit', 'create', v, { company_id: f.f1 }), op('report', 'create', draft, { visit_id: v, language: 'fr', summary: 'brouillon' }),
-    op('visit', 'create', v2, { company_id: f.f1, status: 'done' }), op('report', 'create', valid, { visit_id: v2, language: 'fr', summary: 'validé', status: 'validated' }),
+    op('visit', 'create', v2, { company_id: f.f1, status: 'done' }), op('report', 'create', valid, { visit_id: v2, language: 'fr', summary: 'validé', status: 'validated', no_action: true }),
     op('note', 'create', n, { visit_id: v, kind: 'text', body: 'à supprimer' }),
   ]);
   await insertAction(env.pool, { id: act, company: f.f1, visit: v, author: f.c1, title: 'À annuler' });

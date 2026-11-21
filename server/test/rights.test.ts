@@ -13,7 +13,7 @@ before(async () => {
     op('note', 'create', uuid(), { visit_id: visit, kind: 'text', body: 'Note publique' }),
     op('private_note', 'create', privNote, { visit_id: visit, body: SECRET }),
     op('visit', 'update', visit, { status: 'done' }, 1),                                    // les notes ne se modifient plus après
-    op('report', 'create', uuid(), { visit_id: visit, language: 'fr', summary: 'Résumé public', status: 'validated' }),
+    op('report', 'create', uuid(), { visit_id: visit, language: 'fr', summary: 'Résumé public', status: 'validated', no_action: true }),
   ]);
   assert.deepEqual(r.body.results.map((x: any) => x.result), ['applied', 'applied', 'applied', 'applied', 'applied']);
 });

@@ -72,7 +72,7 @@ test('scénario 8 : 200 utilisateurs synchronisent en même temps, chacun ne voi
     const v = uuid();
     const r = await a.push([
       op('visit', 'create', v, { company_id: u.company, status: 'done' }),
-      op('report', 'create', uuid(), { visit_id: v, language: 'fr', summary: u.email, status: 'validated',
+      op('report', 'create', uuid(), { visit_id: v, language: 'fr', summary: u.email, status: 'validated', no_action: true,
         draft_actions: Array.from({ length: 3 }, (_, k) => ({ id: uuid(), title: `Action ${k}`, due_date: null, origin: 'manual' })) }),
     ]);
     if (!r.body.results.every((x: any) => x.result === 'applied')) { failures++; return; }

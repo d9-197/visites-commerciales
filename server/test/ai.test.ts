@@ -91,7 +91,7 @@ test('IA : moment autorisé : visite en cours ou terminée tant que le compte re
   const a = await f.login('c1@x.fr');
   const mk = async (status: string, reportStatus?: string) => {
     const v = uuid(), r = uuid();
-    await a.push([op('visit', 'create', v, { company_id: f.f1, status }), op('report', 'create', r, { visit_id: v, language: 'fr', ...(reportStatus ? { summary: 'Résumé', status: reportStatus } : {}) })]);
+    await a.push([op('visit', 'create', v, { company_id: f.f1, status }), op('report', 'create', r, { visit_id: v, language: 'fr', ...(reportStatus ? { summary: 'Résumé', status: reportStatus, no_action: true } : {}) })]);
     return r;
   };
   const planned = await ask('c1@x.fr', undefined, await mk('planned'));

@@ -44,6 +44,50 @@ export function canDeleteVisit(role: UserRole, isAuthor: boolean): boolean {
   return role === 'directeur' || (role === 'commercial' && isAuthor);
 }
 
+/**
+ * Notes internes : ajout possible tant que la visite n'est pas supprimée ; une fois le compte rendu validé (visite « validée »),
+ * les notes existantes ne se modifient ni ne se suppriment plus (le journal ne se réécrit pas).
+ */
+export function canEditInternalNote(visitStatus: VisitStatus | string): boolean {
+  return !['validated', 'deleted'].includes(visitStatus);
+}
+
+/** Jours après la fin de la visite au-delà desquels un compte rendu non validé est signalé en retard. */
+export const REPORT_LATE_DAYS = 2;
+
+/** Visite terminée (côté client) dont le compte rendu n'est pas validé depuis plus de REPORT_LATE_DAYS jours. */
+export function isReportLate(v: Record<string, any>, now: Date = new Date()): boolean {
+  if (v.status !== 'done') return false;
+  const t = new Date(v.ended_at ?? v.updated_at ?? '').getTime();
+  return !Number.isNaN(t) && t + REPORT_LATE_DAYS * 86_400_000 < now.getTime();
+}
+
+/**
+ * Échéance d'une action antérieure à la date de la visite (début réel, sinon date prévue). Tolérance d'un jour (fuseaux horaires).
+ * Sans date de visite ou sans échéance : jamais en cause.
+ */
+export function isDueBeforeVisit(due: string | null | undefined, visit: Record<string, any>): boolean {
+  const ref = visit.started_at ?? visit.planned_start;
+  if (!due || !ref) return false;
+  const d = new Date(ref);
+  if (Number.isNaN(d.getTime())) return false;
+  d.setUTCDate(d.getUTCDate() - 1);
+  return due < d.toISOString().slice(0, 10);
+}
+
+/** Un compte rendu ne se valide sans action (ni prévue, ni déjà créée) que si « aucune action à prévoir » est coché. */
+export function needsNoActionAck(draftCount: number, existingActions: number, noAction: boolean): boolean {
+  return draftCount === 0 && existingActions === 0 && !noAction;
+}
+
+/**
+ * Étape d'une visite pour l'affichage : « validée » (compte rendu validé) devient « terminée » quand plus aucune action n'est à faire.
+ * Les autres statuts sont inchangés. `done` s'affiche « effectuée » (le commercial a quitté le client ; il reste le compte rendu et les actions).
+ */
+export function visitStage(status: VisitStatus | string, openActions: number): string {
+  return status === 'validated' && openActions === 0 ? 'closed' : status;
+}
+
 /** Le compte rendu ne se valide qu'une fois la visite terminée. */
 export function canValidateReport(visitStatus: VisitStatus | string): boolean {
   return visitStatus === 'done';
@@ -51,6 +95,8 @@ export function canValidateReport(visitStatus: VisitStatus | string): boolean {
 
 /** Champs d'une visite dont la modification est tracée dans l'historique. */
 export const VISIT_HISTORY_FIELDS = ['planned_start', 'location_text'] as const;
+/** Événements ajoutés par le serveur à l'historique (sans valeur ancienne/nouvelle). */
+export const VISIT_HISTORY_EVENTS = ['report_validated', 'report_reopened', 'visit_deleted'] as const;
 
 /** Marge avant de considérer une visite non commencée comme en retard (l'heure par défaut d'une nouvelle visite est « maintenant »). */
 export const VISIT_LATE_GRACE_MINUTES = 60;

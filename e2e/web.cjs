@@ -1,7 +1,9 @@
 // Test de bout en bout de l'application web, dans un navigateur au format téléphone.
 // Prérequis : back démarré avec les données de démonstration (npm -w server run seed), application web construite.
-// Usage : BASE_URL=http://127.0.0.1:3000 SHOTS=/dossier node e2e/web.cjs   (Playwright doit être installé)
+// DATABASE_URL (même base que le back) : le test vieillit quelques dates directement en base (retards impossibles à créer par l'application).
+// Usage : DATABASE_URL=postgres://… BASE_URL=http://127.0.0.1:3000 SHOTS=/dossier node e2e/web.cjs   (Playwright doit être installé)
 const { chromium } = require('playwright');
+const { execFileSync } = require('node:child_process');
 const assert = require('node:assert/strict');
 const BASE = process.env.BASE_URL ?? 'http://127.0.0.1:3000';
 const SHOTS = process.env.SHOTS;
@@ -218,7 +220,7 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await page.getByLabel('Résumé du compte rendu').fill('Intéressé par l\'offre B, budget à confirmer.');
   // validation du compte rendu impossible tant que la visite n'est pas terminée
   assert.equal(await page.getByRole('button', { name: 'Valider le compte rendu' }).isDisabled(), true, 'validation refusée visite en cours');
-  await page.getByText('Terminez la visite pour pouvoir valider le compte rendu.').waitFor();
+  await page.getByText('Terminez le rendez-vous (« Fin du rendez-vous ») pour pouvoir valider le compte rendu.').waitFor();
   await page.getByRole('button', { name: 'Enregistrer', exact: true }).click();
   await page.getByRole('button', { name: '‹ Retour' }).click();
   await page.getByRole('heading', { name: 'Dupont SA' }).waitFor();
@@ -226,15 +228,16 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await page.getByText('2 actions prévues : créées à la validation du compte rendu.').waitFor();
 
   // Fin de visite : les notes durant visite ne sont plus modifiables (les notes internes, si) ; terminer ne crée aucune action
-  await page.getByRole('button', { name: 'Terminer la visite' }).click();
-  await page.getByText('La visite est terminée : les notes ne sont plus modifiables.').waitFor();
+  await page.getByRole('button', { name: 'Fin du rendez-vous' }).click();
+  await page.getByText('Le rendez-vous est terminé : les notes durant visite ne sont plus modifiables.').waitFor();
   assert.equal(await page.getByRole('button', { name: 'Modifier la note', exact: true }).count(), 0, 'plus de modification de note');
   assert.equal(await page.getByRole('button', { name: '+ Ajouter une note', exact: true }).count(), 0, 'plus d\'ajout de note');
   assert.equal(await page.getByRole('button', { name: /Dicter une note/ }).count(), 0, 'plus de dictée de note');
   assert.ok(await page.getByRole('button', { name: '+ Ajouter une note interne' }).isVisible(), 'notes internes : toujours possibles');
   assert.equal(await page.getByText('Aucune action pour cette visite.').count(), 1, 'terminer la visite ne crée aucune action');
+  assert.ok(await page.getByText('Effectuée', { exact: true }).first().isVisible(), 'rendez-vous fini : visite « Effectuée », pas « Terminée »');
 
-  // Validation du compte rendu : crée les actions prévues, passe la visite à « Validée », verrouille le compte rendu
+  // Validation du compte rendu : crée les actions prévues, passe la visite à « CR validé », verrouille le compte rendu
   await page.getByRole('button', { name: 'Ouvrir le compte rendu' }).click();
   await page.getByRole('button', { name: 'Valider le compte rendu' }).click();
   await page.getByText('Compte rendu validé : les actions ont été créées.').waitFor();
@@ -244,8 +247,21 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await page.getByText('2 à faire · 0 terminée').waitFor();                      // actions créées par le serveur, reçues à la synchro
   await shot(page, '3c-compte-rendu-valide');
   await page.getByRole('button', { name: '‹ Retour' }).click();
-  await page.getByText('Validée', { exact: true }).first().waitFor();
+  await page.getByText('CR validé', { exact: true }).first().waitFor();
   await page.getByText('2 à faire · 0 terminée').waitFor();
+  {       // suivi d'équipe : le manager voit les actions en retard de ses commerciaux
+    await page.getByRole('button', { name: 'Synchroniser' }).click(); await page.getByText('Synchronisé').waitFor();
+    execFileSync('psql', [process.env.DATABASE_URL, '-c', "UPDATE action_item SET due_date = current_date - 3 WHERE title = 'Préparer la démo'"]);
+    const tctx = await newPhone(browser); const tp = await tctx.newPage(); tp.on('pageerror', e => errors.push(e.message));
+    await login(tp, 'manager@exemple.invalid');
+    await tp.getByRole('button', { name: 'Actions', exact: true }).click();
+    await tp.getByLabel('Actions de l\'équipe').waitFor();
+    await tp.getByText('Équipe · 1 action en retard').waitFor();
+    await tp.getByText('1 en retard · 2 à faire').waitFor();
+    await tctx.close();
+    execFileSync('psql', [process.env.DATABASE_URL, '-c', "UPDATE action_item SET due_date = current_date + 10 WHERE title = 'Préparer la démo'"]);   // la suite attend une seule action en retard
+    await page.getByRole('button', { name: 'Synchroniser' }).click(); await page.getByText('Synchronisé').waitFor();
+  }
 
   // Actions de la visite : lien avec compteur ; accès à la visite depuis une action ; plus de création depuis la vue Actions
   await page.getByRole('button', { name: 'Voir les actions de la visite' }).click();
@@ -269,9 +285,15 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await page.getByText('3 à faire · 0 terminée').waitFor();
   await page.getByRole('button', { name: '+ Ajouter une action' }).click();
   await page.getByLabel('Intitulé de l\'action').fill('Relancer le client (en retard)');
-  await page.getByLabel('Échéance de l\'action').fill(daysAgo(5));
+  await page.getByLabel('Échéance de l\'action').fill(daysAgo(5));                  // échéance antérieure à la visite : refusée
+  await page.getByText('L\'échéance est antérieure à la date de la visite.').waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Enregistrer', exact: true }).isDisabled(), true, 'enregistrement bloqué');
+  await page.getByLabel('Échéance de l\'action').fill('2026-12-15');
   await page.getByRole('button', { name: 'Enregistrer', exact: true }).click();
   await page.getByText('4 à faire · 0 terminée').waitFor();
+  // L'application interdit une échéance antérieure à la visite ; pour obtenir une action en retard, on vieillit son échéance en base.
+  execFileSync('psql', [process.env.DATABASE_URL, '-c', `UPDATE action_item SET due_date = '${daysAgo(5)}' WHERE title = 'Relancer le client (en retard)'`]);
+  await page.getByRole('button', { name: 'Synchroniser' }).click(); await page.getByText('Synchronisé').waitFor();
   await shot(page, '3c-terminee');
 
   // Une visite validée ne disparaît pas de la liste tant qu'il reste des actions à faire
@@ -320,11 +342,12 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await page.getByText('Aucune action à afficher.', { exact: false }).waitFor();
   await page.getByRole('button', { name: 'Visites', exact: true }).click();
   await page.getByText('Aucune visite à afficher.').waitFor();
-  await page.getByText('1 visite validée masquée.').waitFor();
-  await page.getByRole('switch', { name: 'Afficher les visites validées' }).click();
+  await page.getByText('1 visite terminée masquée.').waitFor();
+  await page.getByRole('switch', { name: 'Afficher les visites terminées' }).click();
   await page.getByText('1 visite', { exact: true }).waitFor();
+  await page.getByText('Terminée', { exact: true }).first().waitFor();       // compte rendu validé et toutes les actions faites : « Terminée »
 
-  // Compte rendu validé : verrouillé ; remise en brouillon avec confirmation ; la visite redevient « Terminée »
+  // Compte rendu validé : verrouillé ; remise en brouillon avec confirmation ; la visite redevient « Effectuée »
   await page.getByText(/^Réalisée /).click();
   await page.getByRole('heading', { name: 'Dupont SA' }).waitFor();
   await page.getByRole('button', { name: 'Ouvrir le compte rendu' }).click();
@@ -338,8 +361,8 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await page.getByRole('button', { name: 'Valider le compte rendu' }).waitFor();
   assert.equal(await page.getByLabel('Résumé du compte rendu').isEditable(), true, 'brouillon : modifiable de nouveau');
   await page.getByRole('button', { name: '‹ Retour' }).click();
-  await page.getByText('Terminée', { exact: true }).first().waitFor();                // la visite est repassée à « Terminée »
-  assert.equal(await page.getByText('Validée', { exact: true }).count(), 0);
+  await page.getByText('Effectuée', { exact: true }).first().waitFor();                // la visite est repassée à « Effectuée »
+  assert.equal(await page.getByText('CR validé', { exact: true }).count(), 0);
   await page.getByRole('button', { name: 'Ouvrir le compte rendu' }).click();
   await page.getByRole('button', { name: 'Valider le compte rendu' }).click();       // nouvelle validation : pas de doublon d'actions
   await page.getByText('Compte rendu validé : les actions ont été créées.').waitFor();
@@ -466,6 +489,40 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   // même repli pour un champ du compte rendu : icône micro qui ouvre le choix du fichier, texte ajouté au champ
   await np.getByLabel('Fichier audio : Objections', { exact: true }).setInputFiles({ name: 'dictee.webm', mimeType: 'audio/webm', buffer: Buffer.alloc(3000, 5) });
   await np.waitForFunction(() => /Dictée simulée/.test(document.querySelector('[aria-label="Objections"]').value));
+
+  // 7 quater. Fin de rendez-vous sans note : confirmation ; compte rendu en retard signalé ; « aucune action à prévoir » ; historique ; visite « Terminée »
+  await np.getByRole('button', { name: '‹ Retour' }).click();
+  await np.getByRole('button', { name: 'Fin du rendez-vous' }).click();
+  await np.getByText('Terminer le rendez-vous sans note ?').waitFor();
+  await np.getByRole('button', { name: 'Annuler', exact: true }).last().click();
+  await np.getByText('Terminer le rendez-vous sans note ?').waitFor({ state: 'detached' });
+  await np.getByText('En cours', { exact: true }).first().waitFor();
+  await np.getByRole('button', { name: 'Fin du rendez-vous' }).click();
+  await np.getByRole('button', { name: 'Fin du rendez-vous' }).last().click();
+  await np.getByText('Effectuée', { exact: true }).first().waitFor();
+  {       // vieillit la fin du rendez-vous pour voir l'alerte « compte rendu à valider »
+    await np.getByRole('button', { name: 'Synchroniser' }).click(); await np.getByText('Synchronisé').waitFor();
+    execFileSync('psql', [process.env.DATABASE_URL, '-c', "UPDATE visit SET started_at = now() - interval '5 days 1 hour', ended_at = now() - interval '5 days' WHERE status = 'done'"]);
+    await np.getByRole('button', { name: 'Synchroniser' }).click();
+    await np.getByText('CR à valider', { exact: true }).first().waitFor();
+    await np.getByRole('button', { name: 'Visites', exact: true }).click();
+    await np.getByText(/compte rendu à valider depuis plus de 2 jours/).waitFor();
+    await shot(np, '3i-cr-en-retard');
+    await np.getByText('CR à valider', { exact: true }).first().click();
+  }
+  await np.getByRole('button', { name: 'Ouvrir le compte rendu' }).click();
+  await np.getByLabel('Résumé du compte rendu').fill('Visite sans suite immédiate.');
+  assert.equal(await np.getByRole('button', { name: 'Valider le compte rendu' }).isDisabled(), true, 'sans action ni case cochée : validation refusée');
+  await np.getByText('Ajoutez une action ou cochez « Aucune action à prévoir » pour valider.').waitFor();
+  await np.getByRole('checkbox', { name: 'Aucune action à prévoir' }).click();
+  await np.getByRole('button', { name: 'Valider le compte rendu' }).click();
+  await np.getByText('Compte rendu validé : les actions ont été créées.').waitFor();
+  await np.getByRole('button', { name: '‹ Retour' }).click();
+  await np.getByText('Terminée', { exact: true }).first().waitFor();                  // aucun action à faire : « Terminée »
+  assert.equal(await np.getByText('CR à valider', { exact: true }).count(), 0, 'plus d\'alerte une fois validé');
+  await np.getByRole('button', { name: /Historique des modifications/ }).click();
+  await np.getByText('Compte rendu validé', { exact: true }).waitFor();
+  await np.getByRole('button', { name: 'Fermer' }).last().click();
   await nctx.close();
 
   // 8. Mode sombre : suit le réglage du système par défaut, réglable, conservé après rechargement et déconnexion

@@ -68,5 +68,5 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
 /** Couleur associée à un statut de visite. */
 export function visitStatusColor(c: Palette, status: string): string {
-  return ({ planned: c.stPlanned, organized: c.stOrganized, in_progress: c.stProgress, done: c.stDone, validated: c.stValidated, cancelled: c.stCancelled, deleted: c.stCancelled } as Record<string, string>)[status] ?? c.muted;
+  return ({ planned: c.stPlanned, organized: c.stOrganized, in_progress: c.stProgress, done: c.stDone, validated: c.stValidated, cancelled: c.stCancelled, deleted: c.stCancelled, closed: c.ok } as Record<string, string>)[status] ?? c.muted;
 }

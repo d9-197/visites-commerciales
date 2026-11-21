@@ -145,7 +145,7 @@ export async function validatedVisit(api: Api, companyId: string, drafts: { id: 
   const v = randomUUID(), r = randomUUID();
   const res = await api.push([
     op('visit', 'create', v, { company_id: companyId, status: 'done' }),
-    op('report', 'create', r, { visit_id: v, language: 'fr', summary: 'Résumé', status: 'validated', draft_actions: drafts.map(d => ({ due_date: null, origin: 'manual', ...d })) }),
+    op('report', 'create', r, { visit_id: v, language: 'fr', summary: 'Résumé', status: 'validated', ...(drafts.length ? {} : { no_action: true }), draft_actions: drafts.map(d => ({ due_date: null, origin: 'manual', ...d })) }),
   ]);
   if (!res.body.results.every((x: any) => x.result === 'applied')) throw new Error(`validatedVisit : ${JSON.stringify(res.body.results)}`);
   return { visit: v, report: r };

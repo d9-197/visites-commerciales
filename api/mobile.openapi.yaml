@@ -577,7 +577,7 @@ components:
       properties:
         id: {$ref: 'common.yaml#/components/schemas/Uuid'}
         visit_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
-        field: {type: string, enum: [planned_start, location_text]}
+        field: {type: string, enum: [planned_start, location_text, report_validated, report_reopened, visit_deleted]}
         old_value: {type: [string, 'null']}
         new_value: {type: [string, 'null']}
         changed_by_name: {type: string}
@@ -840,9 +840,10 @@ components:
     ReportWrite:
       description: |
         Brouillon : tous les champs, dont `draft_actions` (actions prévues, créées par le serveur à la validation). Passage à `validated` : visite terminée et `summary` non vide ; le serveur crée alors les actions prévues et vide la liste.
-        Compte rendu validé : seule la remise en brouillon (`status: draft`, rien d'autre) est acceptée ; la visite repasse à « terminée ». Sinon `locked_status`.
+        Compte rendu validé : seule la remise en brouillon (`status: draft`, rien d'autre) est acceptée ; la visite repasse à « effectuée » (done) ; refusée (`locked_status`) si le compte rendu a été transmis au client (`sent_to_client_at`). Une échéance d'action prévue antérieure à la date de la visite (tolérance 1 jour) est refusée (`validation_failed`). Sinon `locked_status`.
       type: object
       properties:
+        no_action: {type: boolean, description: "« Aucune action à prévoir » : requis pour valider un compte rendu sans action prévue ni action déjà créée (sinon validation_failed)."}
         draft_actions:
           type: array
           maxItems: 30

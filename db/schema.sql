@@ -221,7 +221,7 @@ CREATE TRIGGER visit_contact_seq BEFORE INSERT OR UPDATE ON visit_contact FOR EA
 CREATE TABLE visit_history (
   id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   visit_id        uuid NOT NULL REFERENCES visit(id),
-  field           text NOT NULL CHECK (field IN ('planned_start','location_text')),
+  field           text NOT NULL CHECK (field IN ('planned_start','location_text','report_validated','report_reopened','visit_deleted')),
   old_value       text,
   new_value       text,
   changed_by      uuid REFERENCES app_user(id),
@@ -247,6 +247,8 @@ CREATE TABLE visit_report (
   decisions      text,
   next_step      text,
   opportunity_temperature text CHECK (opportunity_temperature IN ('cold','warm','hot')),
+  no_action      boolean NOT NULL DEFAULT false,    -- « aucune action à prévoir » : requis pour valider un compte rendu sans action
+  sent_to_client_at timestamptz,                    -- compte rendu transmis au client : plus de remise en brouillon
   draft_actions  jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(draft_actions) = 'array'),   -- actions prévues, créées à la validation
   status         text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','validated')),
   validated_at   timestamptz,

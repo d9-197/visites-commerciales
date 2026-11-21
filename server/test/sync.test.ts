@@ -110,12 +110,12 @@ test('validation du compte rendu : résumé non vide exigé ; visite terminée e
   const a = await f.login('c1@x.fr');
   const v = uuid(), r = uuid();
   await a.push([visitOp(v, f.f1, { status: 'in_progress' }), op('report', 'create', r, { visit_id: v, language: 'fr' })]);
-  const early = await a.push([op('report', 'update', r, { summary: 'Résumé', status: 'validated' }, 1)]);
+  const early = await a.push([op('report', 'update', r, { summary: 'Résumé', status: 'validated', no_action: true }, 1)]);
   assert.equal(early.body.results[0].code, 'locked_status', 'visite pas terminée');
   await a.push([op('visit', 'update', v, { status: 'done' }, 1)]);
-  const bad = await a.push([op('report', 'update', r, { status: 'validated' }, 1)]);
+  const bad = await a.push([op('report', 'update', r, { status: 'validated', no_action: true }, 1)]);
   assert.equal(bad.body.results[0].code, 'validation_failed', 'résumé requis');
-  const ok = await a.push([op('report', 'update', r, { summary: 'Résumé', status: 'validated' }, 1)]);
+  const ok = await a.push([op('report', 'update', r, { summary: 'Résumé', status: 'validated', no_action: true }, 1)]);
   assert.equal(ok.body.results[0].result, 'applied');
   const back = await a.push([op('report', 'update', r, { status: 'draft' }, 2)]);
   assert.equal(back.body.results[0].result, 'applied', 'remise en brouillon autorisée');

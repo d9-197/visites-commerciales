@@ -59,6 +59,8 @@ erDiagram
 
 ## 2 quater. Actions prévues (migration 004)
 
+`visit_report.no_action` (boolean, « aucune action à prévoir », migration 006) et `visit_report.sent_to_client_at` (transmission au client : verrouille la remise en brouillon ; aucune fonction ne l'alimente encore). `visit_history.field` accepte aussi `report_validated`, `report_reopened`, `visit_deleted` (événements sans valeur ancienne/nouvelle).
+
 `visit_report.draft_actions` (jsonb, tableau d'éléments `{id, title, due_date, origin}`) : actions **prévues** dans le brouillon du compte rendu. À la validation, le serveur crée de vraies lignes `action_item` (mêmes identifiants, responsable = auteur de la visite, origine `ai` ou `manual`) dans la **même transaction** puis vide la liste. Une action n'existe donc jamais avant la validation, sauf ajout manuel depuis une visite dont le compte rendu est déjà validé. `action_item.visit_id` est renseigné pour toute action créée par l'application.
 
 ## 2 ter. Notes internes (migration 003)
