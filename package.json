@@ -5,6 +5,8 @@
   "workspaces": ["server", "packages/*"],
   "scripts": {
     "test": "npm -w server test",
-    "typecheck": "npm -w server run typecheck && npm -w packages/sync-core run typecheck"
+    "typecheck": "npm -w server run typecheck && npm -w packages/sync-core run typecheck && npm --prefix mobile run typecheck",
+    "pg:start": "bash server/scripts/pg-local.sh start",
+    "pg:stop": "bash server/scripts/pg-local.sh stop"
   }
 }

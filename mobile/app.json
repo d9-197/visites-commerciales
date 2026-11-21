@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "name": "Visites commerciales",
+    "slug": "visites-commerciales",
+    "version": "0.1.0",
+    "orientation": "default",
+    "userInterfaceStyle": "automatic",
+    "ios": { "supportsTablet": true, "bundleIdentifier": "invalid.exemple.visites" },
+    "android": { "package": "invalid.exemple.visites" },
+    "plugins": ["expo-secure-store", "expo-sqlite"]
+  }
+}

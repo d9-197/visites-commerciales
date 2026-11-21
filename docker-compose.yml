@@ -1,0 +1,12 @@
+# Base PostgreSQL de développement. Non testé dans cet environnement (pas de démon Docker disponible) :
+# à vérifier. Alternative sans Docker : server/scripts/pg-local.sh start
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: dev
+      POSTGRES_DB: visites
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+volumes:
+  pgdata:
