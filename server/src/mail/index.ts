@@ -20,11 +20,12 @@ export class SmtpMailService implements MailService {
 }
 
 /** Configuration SMTP de l'environnement ; undefined si SMTP_HOST ou SMTP_FROM manquent : les routes d'e-mail répondent alors 503. */
-export function mailFromEnv(env: NodeJS.ProcessEnv = process.env): MailService | undefined {
+export function mailFromEnv(env: NodeJS.ProcessEnv = process.env, brandName?: string): MailService | undefined {
   if (!env.SMTP_HOST || !env.SMTP_FROM) return undefined;
   const port = Number(env.SMTP_PORT ?? 587);
   return new SmtpMailService({
     host: env.SMTP_HOST, port, secure: env.SMTP_SECURE ? env.SMTP_SECURE === 'true' : port === 465,
-    user: env.SMTP_USER || undefined, pass: env.SMTP_PASS || undefined, from: env.SMTP_FROM,
+    user: env.SMTP_USER || undefined, pass: env.SMTP_PASS || undefined,
+    from: brandName && !env.SMTP_FROM.includes('<') ? `"${brandName.replace(/["\\]/g, '')}" <${env.SMTP_FROM}>` : env.SMTP_FROM,   // nom de l'entreprise comme expéditeur affiché
   });
 }

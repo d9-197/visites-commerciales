@@ -35,9 +35,13 @@ services:
       SMTP_PASS: ${SMTP_PASS:-}
       SMTP_FROM: ${SMTP_FROM:-}
       EMAIL_RATE_PER_HOUR: ${EMAIL_RATE_PER_HOUR:-}
+      # Marque blanche : nom et logo de l'entreprise (facultatif). Logo : fichier du dossier ./brand (png, jpg, webp ou svg, 512 Ko au plus).
+      BRAND_NAME: ${BRAND_NAME:-}
+      BRAND_LOGO_FILE: ${BRAND_LOGO_FILE:-}
       PORT: "3000"
       # Application servie sous un sous-chemin du domaine (https://exemple.fr/visit) : BASE_PATH=/visit. Vide : à la racine.
       BASE_PATH: ${BASE_PATH:-}
+    volumes: ["./brand:/brand:ro"]
     ports: ["${APP_PORT:-3000}:3000"]
 volumes:
   pgdata:

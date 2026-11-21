@@ -4,7 +4,7 @@ export type EmailPart = 'report' | 'actions' | 'notes';
 
 export interface EmailInput {
   company: string; plannedStart: string | null; startedAt: string | null; endedAt: string | null; location: string | null;
-  senderName: string; message?: string;
+  senderName: string; message?: string; brandName?: string;
   report?: { summary: string | null; needs: string | null; objections: string | null; competitors: string | null; decisions: string | null; next_step: string | null; opportunity_temperature: string | null };
   actions?: { title: string; due_date: string | null; status: string }[];
   notes?: { body: string }[];
@@ -61,7 +61,8 @@ export function composeVisitEmail(i: EmailInput): { subject: string; text: strin
       text.push(''); html.push(`<ul>${i.notes.map(n => `<li>${nl2br(n.body.trim())}</li>`).join('')}</ul>`);
     }
   }
-  text.push('— Envoyé depuis l\'application Visites commerciales. Les notes internes ne sont jamais incluses.');
-  html.push('<hr><p style="color:#666;font-size:12px">Envoyé depuis l\'application Visites commerciales. Les notes internes ne sont jamais incluses.</p>');
+  const app = i.brandName?.trim() || 'Visites commerciales';
+  text.push(`— Envoyé depuis ${app}. Les notes internes ne sont jamais incluses.`);
+  html.push(`<hr><p style="color:#666;font-size:12px">Envoyé depuis ${esc(app)}. Les notes internes ne sont jamais incluses.</p>`);
   return { subject, text: text.join('\n'), html: html.join('\n') };
 }

@@ -1,10 +1,10 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, BackHandler, Platform, Pressable, SafeAreaView, ScrollView, Switch, Text, TextInput, View } from 'react-native';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, AppState, BackHandler, Image, Platform, Pressable, SafeAreaView, ScrollView, Switch, Text, TextInput, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { ApiClient, ApiError, type EmailOptions, NetworkError, SyncEngine, uuidv4, type AiProposalResponse, type Row, type SyncReport } from '@visites/sync-core';
 import type { SqliteStore } from '@visites/sync-core';
 import { openStore } from './src/expoDb';
-import { clearSession, loadSession, saveSession, saveTokens, type Session, type ThemePref } from './src/session';
+import { clearSession, loadBrand, loadSession, saveBrand, saveSession, saveTokens, type Brand, type Session, type ThemePref } from './src/session';
 import { ThemeProvider, useTheme, visitStatusColor } from './src/theme';
 import { REPORT_LATE_DAYS, canEditInternalNote, isDueBeforeVisit, isReportLate, visitStage, canDeleteVisit, canEditVisitAddress, canEditVisitDate, canEditVisitNotes, canValidateReport, isActionLate, isVisitLate, type UserRole } from '@visites/sync-core';
 import { ceilTo15, dateToStr, fmtDate, fmtDateTime, strToDate, visitWhen, VISIT_STATUS } from './src/dates';
@@ -60,8 +60,36 @@ export default function App() {
   return <ThemeProvider><Root /></ThemeProvider>;
 }
 
+const DEFAULT_BRAND: Brand = { name: 'Visites commerciales' };
+const BrandContext = createContext<Brand>(DEFAULT_BRAND);
+const useBrand = () => useContext(BrandContext);
+
+/** Marque blanche du serveur (nom et logo) ; undefined si le serveur ne répond pas (on garde alors la marque conservée). */
+async function fetchBrand(server: string): Promise<Brand | undefined> {
+  try { const b = await new ApiClient(server, APP_VERSION, undefined).brand(); return { name: b.name, logoUrl: b.logo_path ? server + b.logo_path : null }; }
+  catch { return undefined; }
+}
+
+/** Logo (s'il y en a un) et nom de l'entreprise, discrets. Logo illisible : on garde le nom. */
+function BrandMark({ height = 28, name = true }: { height?: number; name?: boolean }) {
+  const b = useBrand(); const { s } = useTheme();
+  const [broken, setBroken] = useState(false);
+  useEffect(() => setBroken(false), [b.logoUrl]);
+  const logo = !!b.logoUrl && !broken;
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1 }}>
+      {logo && <Image source={{ uri: b.logoUrl! }} accessibilityLabel={`Logo ${b.name}`} onError={() => setBroken(true)} resizeMode="contain" style={{ height, width: height * 3 }} />}
+      {(!logo || name) && <Text style={[s.muted, { fontWeight: '600', flexShrink: 1 }]} numberOfLines={1}>{b.name}</Text>}
+    </View>
+  );
+}
+
 function Root() {
   const { s } = useTheme();
+  const [brand, setBrand] = useState<Brand>(DEFAULT_BRAND);
+  useEffect(() => { void loadBrand().then(b => { if (b) setBrand(b); }); }, []);
+  useEffect(() => { if (Platform.OS === 'web') document.title = brand.name; }, [brand.name]);
+  const updateBrand = useCallback((b: Brand) => { setBrand(b); void saveBrand(b); }, []);
   const [boot, setBoot] = useState<'loading' | 'login' | 'ready'>('loading');
   const [ctx, setCtx] = useState<Ctx>();
   const storeRef = useRef<SqliteStore>();
@@ -79,7 +107,8 @@ function Root() {
     } catch { /* hors-ligne */ }
     setCtx({ store, engine, client, userId: sess.userId, role, lang });
     setBoot('ready');
-  }, []);
+    void fetchBrand(sess.server).then(b => { if (b) updateBrand(b); });
+  }, [updateBrand]);
 
   useEffect(() => { (async () => {
     const sess = await loadSession();
@@ -94,13 +123,17 @@ function Root() {
   }, [ctx]);
 
   if (boot === 'loading') return <View style={[s.page, { alignItems: 'center', justifyContent: 'center' }]}><ActivityIndicator /></View>;
-  if (boot === 'login' || !ctx) return <Login onDone={async sess => { await saveSession(sess); await start(sess, () => {}); }} />;
-  return <Main ctx={ctx} onLogout={logout} />;
+  const screen = (boot === 'login' || !ctx) ? <Login onBrand={updateBrand} onDone={async sess => { await saveSession(sess); await start(sess, () => {}); }} /> : <Main ctx={ctx} onLogout={logout} />;
+  return <BrandContext.Provider value={brand}>{screen}</BrandContext.Provider>;
 }
 
-function Login({ onDone }: { onDone: (s: Session) => Promise<void> }) {
+function Login({ onDone, onBrand }: { onDone: (s: Session) => Promise<void>; onBrand: (b: Brand) => void }) {
   const { s, c, dark } = useTheme();
+  const brand = useBrand();
+  const [logoBroken, setLogoBroken] = useState(false);
   const [server, setServer] = useState(DEFAULT_SERVER);
+  // Marque du serveur saisi (nom et logo de l'entreprise) : relue quand l'adresse change.
+  useEffect(() => { const t = setTimeout(() => { void fetchBrand(server).then(b => { if (b) { setLogoBroken(false); onBrand(b); } }); }, 400); return () => clearTimeout(t); }, [server]);
   const [email, setEmail] = useState(''); const [password, setPassword] = useState('');
   const [err, setErr] = useState<string>(); const [busy, setBusy] = useState(false);
   const submit = async () => {
@@ -117,7 +150,10 @@ function Login({ onDone }: { onDone: (s: Session) => Promise<void> }) {
   };
   return (
     <SafeAreaView style={s.page}><StatusBar style={dark ? 'light' : 'dark'} /><View style={s.pad}>
-      <Text style={s.h1}>Visites commerciales</Text>
+      <View style={{ alignItems: 'center', gap: 8, paddingVertical: 8 }}>
+        {!!brand.logoUrl && !logoBroken && <Image source={{ uri: brand.logoUrl }} accessibilityLabel={`Logo ${brand.name}`} onError={() => setLogoBroken(true)} resizeMode="contain" style={{ height: 72, width: 240 }} />}
+        <Text style={[s.h1, { textAlign: 'center' }]} accessibilityRole="header">{brand.name}</Text>
+      </View>
       <Label>Adresse du serveur</Label><TextInput accessibilityLabel="Adresse du serveur" placeholderTextColor={c.muted} style={s.input} value={server} onChangeText={setServer} autoCapitalize="none" autoCorrect={false} />
       <Label>E-mail</Label><TextInput accessibilityLabel="E-mail" placeholderTextColor={c.muted} style={s.input} value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" />
       <Label>Mot de passe</Label><TextInput accessibilityLabel="Mot de passe" placeholderTextColor={c.muted} style={s.input} value={password} onChangeText={setPassword} secureTextEntry />
@@ -219,7 +255,7 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
       </View>
       <ScrollView contentContainerStyle={s.pad}>
         {screen.name === 'today' && <>
-          <Text style={s.h1}>Visites</Text>
+          <View style={s.rowBetween}><Text style={s.h1}>Visites</Text><BrandMark name={false} /></View>
           <Seg value={group} onChange={setGroup} options={[['client', 'Par client'], ['date', 'Par date']]} />
           {lateReports.length > 0 && <View style={[s.rowCard, { borderLeftWidth: 6, borderLeftColor: c.late, flexDirection: 'column', alignItems: 'stretch', gap: 2 }]} accessibilityRole="alert">
             <Text style={[s.t, { color: c.late, fontWeight: '700' }]}>{lateReports.length} compte{lateReports.length > 1 ? 's' : ''} rendu{lateReports.length > 1 ? 's' : ''} à valider depuis plus de {REPORT_LATE_DAYS} jours</Text>
@@ -318,6 +354,7 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
           <Label>Affichage</Label>
           <Seg value={pref} onChange={setPref} options={themeLabels} />
           <Text style={s.muted}>« Système » suit le réglage de votre téléphone.</Text>
+          <BrandMark height={36} />
           <Text style={s.muted}>Version {APP_VERSION}. Dictée, IA et chiffrement de la base : non implémentés dans ce prototype.</Text>
           <Btn title="Se déconnecter (efface les données de l'appareil)" onPress={onLogout} />
         </>}

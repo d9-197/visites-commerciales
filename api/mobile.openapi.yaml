@@ -262,6 +262,38 @@ paths:
             image/jpeg: {schema: {type: string, format: binary}}
             image/png: {schema: {type: string, format: binary}}
         '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+  /brand:
+    get:
+      tags: [Partage]
+      summary: Marque blanche du serveur (nom, logo)
+      description: "Public (sans authentification). `logo_path` est relatif à l'URL de l'API ; null sans logo."
+      security: []
+      responses:
+        '200':
+          description: Marque.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [name, logo_path]
+                properties:
+                  name: {type: string, maxLength: 60}
+                  logo_path: {type: [string, 'null']}
+  /brand/logo:
+    get:
+      tags: [Partage]
+      summary: Logo de l'entreprise
+      description: "Public. png, jpeg, webp ou svg (servi avec `nosniff` et une CSP `sandbox`). 404 sans logo."
+      security: []
+      responses:
+        '200':
+          description: Image.
+          content:
+            image/png: {schema: {type: string, format: binary}}
+            image/jpeg: {schema: {type: string, format: binary}}
+            image/webp: {schema: {type: string, format: binary}}
+            image/svg+xml: {schema: {type: string, format: binary}}
+        '404': {description: Aucun logo configuré.}
   /visits/{visit_id}/email-options:
     get:
       tags: [Partage]

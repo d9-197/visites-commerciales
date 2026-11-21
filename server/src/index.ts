@@ -4,6 +4,7 @@ import { createApp } from './app.js';
 import { migrate } from './migrate.js';
 import { aiFromEnv } from './ai/index.js';
 import { mailFromEnv } from './mail/index.js';
+import { brandFromEnv, DEFAULT_BRAND_NAME } from './brand.js';
 import { defaultConfig, DEV_JWT_SECRET } from './config.js';
 
 if (process.env.NODE_ENV === 'production' && (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32)) {
@@ -23,7 +24,9 @@ const port = Number(process.env.PORT ?? 3000);
 const ai = aiFromEnv();
 console.log(ai ? 'Synthèse par IA et transcription vocale : activées (Mistral).' : 'Synthèse par IA et transcription vocale : désactivées (MISTRAL_API_KEY absente).');
 const basePath = process.env.BASE_PATH ?? '';
-const mail = mailFromEnv();
+const brand = brandFromEnv();
+console.log(`Marque : ${brand.name}${brand.logo ? ' (logo chargé)' : ''}.`);
+const mail = mailFromEnv(process.env, brand.name === DEFAULT_BRAND_NAME ? undefined : brand.name);
 console.log(mail ? 'Envoi d\'e-mail : activé (SMTP).' : 'Envoi d\'e-mail : désactivé (SMTP_HOST / SMTP_FROM absents).');
 
-createApp(pool, defaultConfig, { webDir, ai, mail, basePath }).listen(port, () => console.log(`API et application web sur http://localhost:${port}${basePath ? ` (sous-chemin ${basePath})` : ''}`));
+createApp(pool, defaultConfig, { webDir, ai, mail, brand, basePath }).listen(port, () => console.log(`API et application web sur http://localhost:${port}${basePath ? ` (sous-chemin ${basePath})` : ''}`));

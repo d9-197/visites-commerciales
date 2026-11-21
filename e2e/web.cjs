@@ -72,9 +72,17 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await page.goto(BASE);
   await page.getByLabel('E-mail').fill('commercial1@exemple.invalid');
   await page.getByLabel('Mot de passe').fill(PWD);
+  // Marque blanche : nom et logo de l'entreprise (BRAND_NAME / BRAND_LOGO_FILE côté back) sur la connexion, titre de la page, puis discrets dans l'application
+  await page.getByRole('heading', { name: 'ACME Industrie' }).waitFor();
+  const logo = page.getByRole('img', { name: 'Logo ACME Industrie' });
+  await logo.waitFor();
+  await page.waitForFunction(() => { const i = document.querySelector('img[alt="Logo ACME Industrie"]'); return i && i.complete && i.naturalWidth > 0; });
+  assert.equal(await page.title(), 'ACME Industrie', 'titre de la page = nom de l\'entreprise');
   await shot(page, '1-connexion');
   await page.getByRole('button', { name: 'Se connecter' }).click();
   await page.getByText('Synchronisé').waitFor();
+  assert.equal(await page.getByRole('img', { name: 'Logo ACME Industrie' }).count(), 1, 'logo discret en haut de la liste des visites');
+  assert.equal(await page.getByText('ACME Industrie', { exact: true }).count(), 0, 'le nom n\'est pas répété à côté du logo');
 
   // 2. Clients reçus du CRM ; création d'une visite
   await page.getByRole('button', { name: 'Clients', exact: true }).click();
@@ -298,7 +306,7 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   assert.equal(mails.length, 1, 'un e-mail reçu par le serveur SMTP');
   assert.deepEqual(mails[0].to.sort(), ['commercial1@exemple.invalid', 'manager@exemple.invalid']);
   const body = mailText(mails[0]);
-  for (const t of ['Intéressé par l\'offre B', 'Préparer la démo', 'Dictée relue', 'Pour info avant le point d\'équipe']) assert.ok(body.includes(t), `l'e-mail contient : ${t}`);
+  for (const t of ['Intéressé par l\'offre B', 'Préparer la démo', 'Dictée relue', 'Pour info avant le point d\'équipe', 'Envoyé depuis ACME Industrie']) assert.ok(body.includes(t), `l'e-mail contient : ${t}`);
   assert.ok(!body.includes('Budget réel plus élevé'), 'les notes internes ne sont jamais envoyées par e-mail');
   {       // suivi d'équipe : le manager voit les actions en retard de ses commerciaux
     await page.getByRole('button', { name: 'Synchroniser' }).click(); await page.getByText('Synchronisé').waitFor();

@@ -53,6 +53,13 @@ export class ApiClient implements Transport {
     return r.body;
   }
 
+  /** Marque blanche du serveur (nom, logo) : publique, appelée avant la connexion. */
+  async brand(): Promise<{ name: string; logo_path: string | null }> {
+    const r = await this.raw('GET', '/brand', undefined, false);
+    if (r.status !== 200) throw new ApiError(r.status, r.body?.code ?? 'error', r.body?.detail);
+    return r.body;
+  }
+
   async login(email: string, password: string, platform: 'ios' | 'android' | 'web', deviceId?: string): Promise<Tokens> {
     const r = await this.raw('POST', '/auth/login', { email, password, device: { platform, app_version: this.appVersion, ...(deviceId ? { device_id: deviceId } : {}) } }, false);
     if (r.status !== 200) throw new ApiError(r.status, r.body?.code ?? 'error', r.body?.detail);

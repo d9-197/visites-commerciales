@@ -10,14 +10,25 @@ import { push, pushSchema } from '../sync/push.js';
 import { AiError, type AiServices } from '../ai/index.js';
 import type { MailService } from '../mail/index.js';
 import { composeVisitEmail } from '../mail/compose.js';
+import { DEFAULT_BRAND_NAME, type Brand } from '../brand.js';
 
 const loginSchema = z.object({
   email: z.string().email(), password: z.string().min(1),
   device: z.object({ device_id: z.string().uuid().optional(), platform: z.enum(['ios', 'android', 'web']), os_version: z.string().optional(), app_version: z.string() }),
 });
 
-export function mobileRouter(pool: Pool, cfg: Config, ai?: AiServices, mail?: MailService) {
+export function mobileRouter(pool: Pool, cfg: Config, ai?: AiServices, mail?: MailService, brand: Brand = { name: DEFAULT_BRAND_NAME }) {
   const r = express.Router();
+
+  // Marque blanche (publique : l'écran de connexion l'affiche avant toute authentification).
+  r.get('/brand', (_req, res) => {
+    res.set('Cache-Control', 'public, max-age=300').json({ name: brand.name, logo_path: brand.logo ? `/brand/logo?v=${brand.logo.version}` : null });
+  });
+  r.get('/brand/logo', (_req, res) => {
+    if (!brand.logo) throw new HttpError(404, 'not_found', 'Aucun logo configuré');
+    // Un SVG peut contenir des scripts : servi en image seulement, sans exécution (CSP), jamais interprété comme autre chose.
+    res.set({ 'Content-Type': brand.logo.mime, 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox", 'Cache-Control': 'public, max-age=3600' }).send(brand.logo.data);
+  });
   const aiCalls = new Map<string, number[]>();      // limitation de débit de l'IA, par utilisateur (en mémoire : une seule instance du back)
   const auth = requireAuth(pool, cfg, { checkVersion: true });
 
@@ -259,7 +270,7 @@ export function mobileRouter(pool: Pool, cfg: Config, ai?: AiServices, mail?: Ma
 
     const input: Parameters<typeof composeVisitEmail>[0] = {
       company: v.company_name, plannedStart: v.planned_start?.toISOString() ?? null, startedAt: v.started_at?.toISOString() ?? null, endedAt: v.ended_at?.toISOString() ?? null,
-      location: v.location_text, senderName: me.display_name, message: body.data.message,
+      location: v.location_text, senderName: me.display_name, message: body.data.message, brandName: brand.name,
     };
     if (parts.includes('report')) {
       const rep = (await pool.query(`SELECT summary, needs, objections, competitors, decisions, next_step, opportunity_temperature FROM visit_report WHERE visit_id = $1 AND status = 'validated'`, [v.id])).rows[0];

@@ -22,6 +22,13 @@ export async function saveTokens(t: Tokens | undefined) {
 }
 export async function clearSession() { for (const k of Object.values(K)) await SecureStore.deleteItemAsync(k); }
 
+// Marque blanche (nom, logo) : conservée à la déconnexion, pour l'écran de connexion hors-ligne. Non sensible.
+export interface Brand { name: string; logoUrl?: string | null }
+export async function loadBrand(): Promise<Brand | undefined> {
+  try { const v = await SecureStore.getItemAsync('brand'); return v ? JSON.parse(v) : undefined; } catch { return undefined; }
+}
+export async function saveBrand(b: Brand) { try { await SecureStore.setItemAsync('brand', JSON.stringify(b)); } catch { /* non conservée */ } }
+
 // Préférence d'affichage : conservée à la déconnexion (ce n'est pas une donnée métier).
 export type ThemePref = 'system' | 'light' | 'dark';
 export async function loadTheme(): Promise<ThemePref> {

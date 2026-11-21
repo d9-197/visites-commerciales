@@ -14,6 +14,13 @@ export async function saveTokens(t: Tokens | undefined) {
 }
 export async function clearSession() { localStorage.removeItem(K); }
 
+// Marque blanche (nom, logo) : conservée à la déconnexion. Non sensible.
+export interface Brand { name: string; logoUrl?: string | null }
+export async function loadBrand(): Promise<Brand | undefined> {
+  try { const v = localStorage.getItem('visites.brand'); return v ? JSON.parse(v) : undefined; } catch { return undefined; }
+}
+export async function saveBrand(b: Brand) { try { localStorage.setItem('visites.brand', JSON.stringify(b)); } catch { /* non conservée */ } }
+
 export type ThemePref = 'system' | 'light' | 'dark';
 export async function loadTheme(): Promise<ThemePref> {
   try { const v = localStorage.getItem('visites.theme'); return v === 'light' || v === 'dark' ? v : 'system'; } catch { return 'system'; }
