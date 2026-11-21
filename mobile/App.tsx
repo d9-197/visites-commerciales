@@ -304,7 +304,7 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
             })}
           </>;
         })()}
-        {screen.name === 'action' && <ActionForm key={screen.id} id={screen.id} data={data} ctx={ctx} act={act} back={goBack} companyName={companyName} openVisit={id => navigate({ name: 'visit', id })} />}
+        {screen.name === 'action' && <ActionForm key={screen.id} offline={status.offline} id={screen.id} data={data} ctx={ctx} act={act} back={goBack} companyName={companyName} openVisit={id => navigate({ name: 'visit', id })} />}
         {screen.name === 'settings' && <>
           <Text style={s.h1}>Réglages</Text>
           <Label>Affichage</Label>
@@ -508,22 +508,22 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName, offline, open
     <ConfirmSheet visible={confirmDelete} title="Supprimer cette visite ?" danger confirmLabel="Supprimer la visite"
       message="La visite passe au statut « Supprimée » et est masquée par défaut. Elle reste consultable (interrupteur « Afficher les visites supprimées ») mais n'est plus modifiable, et ne peut pas être restaurée."
       onClose={() => setConfirmDelete(false)} onConfirm={() => { setConfirmDelete(false); void act(() => ctx.engine.update('visit', v.id, { status: 'deleted' })); back(); }} />
-    <AddNoteSheet visible={noteSheet !== 'none'} title={noteSheet === 'internal' ? 'Note interne' : 'Note durant la visite'} label={noteSheet === 'internal' ? 'Nouvelle note interne' : 'Nouvelle note'}
+    <AddNoteSheet voice={{ ctx, visitId, offline }} visible={noteSheet !== 'none'} title={noteSheet === 'internal' ? 'Note interne' : 'Note durant la visite'} label={noteSheet === 'internal' ? 'Nouvelle note interne' : 'Nouvelle note'}
       placeholder={noteSheet === 'internal' ? 'Information importante pour l\'équipe' : 'Ce qui se dit pendant la visite'}
       hint={noteSheet === 'internal' ? 'Partagée avec votre hiérarchie. Absente du compte rendu, jamais envoyée à l\'IA.' : 'Ces notes servent à rédiger le compte rendu (génération par IA comprise).'}
       onClose={() => setNoteSheet('none')}
       onAdd={text => { const k = noteSheet; setNoteSheet('none'); void act(() => k === 'internal'
         ? ctx.engine.create('internal_note', { visit_id: visitId, body: text })
         : ctx.engine.create('note', { visit_id: visitId, kind: 'text', body: text })); }} />
-    <ActionSheet visible={actionSheet} visit={v} title="Nouvelle action" onClose={() => setActionSheet(false)}
+    <ActionSheet voice={{ ctx, visitId, offline }} visible={actionSheet} visit={v} title="Nouvelle action" onClose={() => setActionSheet(false)}
       hint={report?.status === 'validated' ? 'Le compte rendu est validé : l\'action est créée tout de suite.' : 'Elle sera créée quand le compte rendu sera validé.'}
       onSave={a => { setActionSheet(false); void act(async () => addActionToVisit(ctx, v, await freshReport(ctx, visitId), a)); }} />
-    <NoteEditSheet target={editing} onClose={() => setEditing(null)}
+    <NoteEditSheet voice={{ ctx, visitId, offline }} target={editing} onClose={() => setEditing(null)}
       onSave={text => { const t = editing!; setEditing(null); void act(() => ctx.engine.update(t.entity, t.row.id, { body: text })); }}
       onDelete={() => { const t = editing!; setEditing(null); void act(() => ctx.engine.remove(t.entity, t.row.id)); }} />
     <EditDateSheet visible={sheet === 'date'} initial={v.planned_start} onClose={() => setSheet('none')}
       onSave={d => { setSheet('none'); void act(() => ctx.engine.update('visit', v.id, { planned_start: d ? d.toISOString() : null })); }} />
-    <EditAddressSheet visible={sheet === 'address'} initial={address} onClose={() => setSheet('none')}
+    <EditAddressSheet voice={{ ctx, visitId, offline }} visible={sheet === 'address'} initial={address} onClose={() => setSheet('none')}
       onSave={t => { setSheet('none'); void act(() => ctx.engine.update('visit', v.id, { location_text: t.trim() || null })); }} />
     <HistorySheet visible={sheet === 'history'} entries={entries} onClose={() => setSheet('none')} />
     <NavChooser address={address} visible={sheet === 'nav'} onClose={() => setSheet('none')} />
@@ -661,11 +661,11 @@ function ReportScreen({ visitId, data, ctx, act, back, companyName, offline, ope
     <ConfirmSheet visible={confirmReopen} title="Remettre le compte rendu en brouillon ?" confirmLabel="Remettre en brouillon"
       message="Le compte rendu redeviendra modifiable et la visite repassera à « Effectuée ». Les actions déjà créées sont conservées ; à la prochaine validation, seules les nouvelles actions prévues seront créées."
       onClose={() => setConfirmReopen(false)} onConfirm={() => { setConfirmReopen(false); void act(async () => { const cur = await freshReport(ctx, visitId); if (cur) await ctx.engine.update('report', cur.id, { status: 'draft' }); }); }} />
-    <ActionSheet visible={!!actionSheet} visit={v} title={actionSheet?.index === null ? 'Nouvelle action prévue' : 'Modifier l\'action prévue'}
+    <ActionSheet voice={{ ctx, visitId, offline }} visible={!!actionSheet} visit={v} title={actionSheet?.index === null ? 'Nouvelle action prévue' : 'Modifier l\'action prévue'}
       initial={actionSheet && actionSheet.index !== null ? drafts[actionSheet.index] : undefined} hint="Créée à la validation du compte rendu."
       onClose={() => setActionSheet(null)}
       onSave={a => { const i = actionSheet!.index; setActionSheet(null); void saveDrafts(i === null ? [...drafts, { id: uuidv4(), title: a.title, due_date: a.due_date, origin: 'manual' }] : drafts.map((d, j) => j === i ? { ...d, ...a } : d)); }} />
-    <AiSheet result={ai} onClose={() => setAi(undefined)} onApply={applyAi} />
+    <AiSheet voice={{ ctx, visitId, offline }} result={ai} onClose={() => setAi(undefined)} onApply={applyAi} />
   </>;
 }
 
@@ -689,15 +689,14 @@ async function addActionToVisit(ctx: Ctx, v: Row, report: Row | undefined, a: { 
 }
 
 /** Fenêtre d'ajout ou de modification d'une action (intitulé et échéance). */
-function ActionSheet({ visible, visit, title, initial, hint, onClose, onSave }: { visible: boolean; visit?: Row; title: string; initial?: { title: string; due_date: string | null }; hint?: string; onClose: () => void; onSave: (a: { title: string; due_date: string | null }) => void }) {
+function ActionSheet({ voice, visible, visit, title, initial, hint, onClose, onSave }: { voice?: Voice; visible: boolean; visit?: Row; title: string; initial?: { title: string; due_date: string | null }; hint?: string; onClose: () => void; onSave: (a: { title: string; due_date: string | null }) => void }) {
   const { s, c } = useTheme();
   const [text, setText] = useState(''); const [due, setDue] = useState<Date | undefined>();
   useEffect(() => { if (visible) { setText(initial?.title ?? ''); setDue(strToDate(initial?.due_date)); } }, [visible]);
   const tooEarly = !!due && !!visit && isDueBeforeVisit(dateToStr(due), visit);
   return (
     <Sheet title={title} visible={visible} onClose={onClose}>
-      <Label>Intitulé</Label>
-      <TextInput accessibilityLabel="Intitulé de l'action" placeholderTextColor={c.muted} style={s.input} value={text} onChangeText={setText} placeholder="Ex. Envoyer le devis" />
+      <VoiceInput voice={voice} id="action-title" label="Intitulé" accessibilityLabel="Intitulé de l'action" value={text} onChange={setText} placeholder="Ex. Envoyer le devis" />
       <Label>Échéance</Label>
       <DateField label="Échéance de l'action" mode="date" value={due} onChange={setDue} clearable />
       {hint ? <Text style={s.muted}>{hint}</Text> : null}
@@ -721,13 +720,13 @@ function ConfirmSheet({ visible, title, message, confirmLabel, danger, onConfirm
 }
 
 /** Ajout d'une note (durant visite ou interne) dans une fenêtre, pour garder l'écran léger. */
-function AddNoteSheet({ visible, title, label, placeholder, hint, onClose, onAdd }: { visible: boolean; title: string; label: string; placeholder: string; hint: string; onClose: () => void; onAdd: (text: string) => void }) {
+function AddNoteSheet({ voice, visible, title, label, placeholder, hint, onClose, onAdd }: { voice?: Voice; visible: boolean; title: string; label: string; placeholder: string; hint: string; onClose: () => void; onAdd: (text: string) => void }) {
   const { s, c } = useTheme();
   const [text, setText] = useState('');
   useEffect(() => { if (visible) setText(''); }, [visible]);
   return (
     <Sheet title={title} visible={visible} onClose={onClose}>
-      <TextInput accessibilityLabel={label} placeholderTextColor={c.muted} style={[s.input, { minHeight: 110 }]} value={text} onChangeText={setText} placeholder={placeholder} multiline />
+      <VoiceInput voice={voice} id="add-note" label={label} accessibilityLabel={label} value={text} onChange={setText} placeholder={placeholder} multiline minHeight={110} />
       <Text style={s.muted}>{hint}</Text>
       <Btn title="Ajouter" disabled={!text.trim()} onPress={() => onAdd(text.trim())} />
       <Btn small title="Annuler" onPress={onClose} />
@@ -736,7 +735,7 @@ function AddNoteSheet({ visible, title, label, placeholder, hint, onClose, onAdd
 }
 
 /** Modification d'une note ; suppression en deux temps (confirmation dans la fenêtre : les boîtes de dialogue du système ne servent pas sur le web). */
-function NoteEditSheet({ target, onClose, onSave, onDelete }: { target: { entity: 'note' | 'internal_note'; row: Row } | null; onClose: () => void; onSave: (text: string) => void; onDelete: () => void }) {
+function NoteEditSheet({ voice, target, onClose, onSave, onDelete }: { voice?: Voice; target: { entity: 'note' | 'internal_note'; row: Row } | null; onClose: () => void; onSave: (text: string) => void; onDelete: () => void }) {
   const { s, c } = useTheme();
   const [text, setText] = useState('');
   const [confirming, setConfirming] = useState(false);
@@ -750,7 +749,7 @@ function NoteEditSheet({ target, onClose, onSave, onDelete }: { target: { entity
         <Btn title="Confirmer la suppression" danger onPress={onDelete} />
         <Btn small title="Annuler" onPress={() => setConfirming(false)} />
       </> : <>
-        <TextInput accessibilityLabel="Texte de la note" placeholderTextColor={c.muted} style={[s.input, { minHeight: 110 }]} value={text} onChangeText={setText} multiline />
+        <VoiceInput voice={voice} id="edit-note" label="Texte de la note" accessibilityLabel="Texte de la note" value={text} onChange={setText} multiline minHeight={110} />
         <Btn title="Enregistrer" disabled={!text.trim() || text.trim() === ((target?.row.body as string) ?? '').trim()} onPress={() => onSave(text.trim())} />
         <Btn small title="Supprimer la note" danger onPress={() => setConfirming(true)} />
         <Btn small title="Annuler" onPress={onClose} />
@@ -773,13 +772,38 @@ function EditDateSheet({ visible, initial, onClose, onSave }: { visible: boolean
   );
 }
 
-function EditAddressSheet({ visible, initial, onClose, onSave }: { visible: boolean; initial: string; onClose: () => void; onSave: (t: string) => void }) {
+/** Dictée possible pour un champ : transcription rattachée à une visite (le back exige une visite pour compter le quota et tracer l'usage). */
+interface Voice { ctx: Ctx; visitId: string; offline: boolean }
+
+/** Champ texte avec micro : le texte dicté est ajouté à la fin, à relire et corriger sur place. Un seul enregistrement à la fois par champ. */
+function VoiceInput({ voice, id, label, accessibilityLabel, value, onChange, placeholder, multiline, minHeight }: {
+  voice?: Voice; id: string; label: string; accessibilityLabel: string; value: string; onChange: (t: string) => void; placeholder?: string; multiline?: boolean; minHeight?: number;
+}) {
+  const { s, c } = useTheme();
+  const [active, setActive] = useState<string | null>(null);
+  const [err, setErr] = useState<string>();
+  const cur = useRef(value); cur.current = value;                        // la dictée se termine plus tard : on ajoute au texte courant
+  const append = (t: string) => onChange(cur.current.trim() ? `${cur.current.trimEnd()} ${t}` : t);
+  return (
+    <View style={{ gap: 4 }}>
+      <View style={s.rowBetween}>
+        <Text style={s.label}>{label}</Text>
+        {voice && <DictationControl compact id={`voice:${id}`} label={label} active={active} setActive={setActive} ctx={voice.ctx} visitId={voice.visitId} offline={voice.offline}
+          onText={append} onError={(_, m) => setErr(m)} />}
+      </View>
+      {err && <Text style={s.err}>{err}</Text>}
+      <TextInput accessibilityLabel={accessibilityLabel} placeholderTextColor={c.muted} style={[s.input, minHeight ? { minHeight } : null]} value={value} onChangeText={onChange} placeholder={placeholder} multiline={multiline} />
+    </View>
+  );
+}
+
+function EditAddressSheet({ voice, visible, initial, onClose, onSave }: { voice?: Voice; visible: boolean; initial: string; onClose: () => void; onSave: (t: string) => void }) {
   const { s, c } = useTheme();
   const [text, setText] = useState(initial);
   useEffect(() => { if (visible) setText(initial); }, [visible, initial]);
   return (
     <Sheet title="Adresse de la visite" visible={visible} onClose={onClose}>
-      <TextInput accessibilityLabel="Adresse de la visite" placeholderTextColor={c.muted} style={[s.input, { minHeight: 90 }]} value={text} onChangeText={setText} placeholder="Numéro, rue, code postal, ville" multiline />
+      <VoiceInput voice={voice} id="address" label="Adresse de la visite" accessibilityLabel="Adresse de la visite" value={text} onChange={setText} placeholder="Numéro, rue, code postal, ville" multiline minHeight={90} />
       <Text style={s.muted}>L'adresse du client n'est pas modifiée : elle ne concerne que cette visite.</Text>
       <Btn title="Enregistrer" disabled={text.trim() === initial.trim()} onPress={() => onSave(text)} />
       <Btn small title="Annuler" onPress={onClose} />
@@ -875,7 +899,7 @@ function DictationControl({ id, label, active, setActive, ctx, visitId, offline,
 }
 
 /** Proposition de l'IA : à relire et corriger avant de l'appliquer. Rien n'est enregistré tant que l'utilisateur n'applique pas. */
-function AiSheet({ result, onClose, onApply }: { result?: AiProposalResponse; onClose: () => void; onApply: (fields: Record<string, string>, actions: { title: string; due_date: string | null }[]) => void }) {
+function AiSheet({ voice, result, onClose, onApply }: { voice?: Voice; result?: AiProposalResponse; onClose: () => void; onApply: (fields: Record<string, string>, actions: { title: string; due_date: string | null }[]) => void }) {
   const { s, c } = useTheme();
   const [fields, setFields] = useState<Record<string, string>>({});
   const [acts, setActs] = useState<{ title: string; due_date: string | null; due_date_certain: boolean; on: boolean }[]>([]);
@@ -894,15 +918,14 @@ function AiSheet({ result, onClose, onApply }: { result?: AiProposalResponse; on
         </View>)}
       {REPORT_FIELDS.map(([k, label]) => (
         <View key={k} style={{ gap: 4 }}>
-          <Text style={s.muted}>{label}</Text>
-          <TextInput accessibilityLabel={`Proposition : ${label}`} placeholderTextColor={c.muted} style={[s.input, { minHeight: 48 }]} value={fields[k] ?? ''} onChangeText={t => setFields(cur => ({ ...cur, [k]: t }))} multiline />
+          <VoiceInput voice={voice} id={`ai-${k}`} label={label} accessibilityLabel={`Proposition : ${label}`} value={fields[k] ?? ''} onChange={t => setFields(cur => ({ ...cur, [k]: t }))} multiline minHeight={48} />
         </View>))}
       {acts.length > 0 && <Label>Actions proposées</Label>}
       {acts.map((a, i) => (
         <View key={i} style={s.rowBetween}>
           <Switch value={a.on} onValueChange={on => setActs(cur => cur.map((x, j) => j === i ? { ...x, on } : x))} accessibilityLabel={`Créer l'action : ${a.title}`} trackColor={{ true: c.accent, false: c.line }} />
           <View style={{ flex: 1 }}>
-            <TextInput accessibilityLabel={`Action proposée ${i + 1}`} placeholderTextColor={c.muted} style={s.input} value={a.title} onChangeText={t => setActs(cur => cur.map((x, j) => j === i ? { ...x, title: t } : x))} />
+            <VoiceInput voice={voice} id={`ai-act-${i}`} label={`Action ${i + 1}`} accessibilityLabel={`Action proposée ${i + 1}`} value={a.title} onChange={t => setActs(cur => cur.map((x, j) => j === i ? { ...x, title: t } : x))} />
             <Text style={s.muted}>{a.due_date ? `${fmtDate(a.due_date)}${a.due_date_certain ? '' : ' (calculée : à vérifier)'}` : 'sans échéance'}</Text>
           </View>
         </View>))}
@@ -915,7 +938,7 @@ function AiSheet({ result, onClose, onApply }: { result?: AiProposalResponse; on
 }
 
 /** Modification d'une action existante (elles naissent toutes d'une visite : pas de création depuis cet écran). */
-function ActionForm({ id, data, ctx, act, back, companyName, openVisit }: { id: string; data: Data; ctx: Ctx; act: Act; back: () => void; companyName: (id: string) => string; openVisit: (id: string) => void }) {
+function ActionForm({ id, data, ctx, act, back, companyName, openVisit, offline }: { offline: boolean; id: string; data: Data; ctx: Ctx; act: Act; back: () => void; companyName: (id: string) => string; openVisit: (id: string) => void }) {
   const { s, c } = useTheme();
   const existing: Row | undefined = data.actions.find(a => a.id === id);
   const [title, setTitle] = useState(existing?.title ?? ''); const [due, setDue] = useState<Date | undefined>(strToDate(existing?.due_date));
@@ -927,7 +950,7 @@ function ActionForm({ id, data, ctx, act, back, companyName, openVisit }: { id: 
     <Text style={s.h1}>Modifier l'action</Text>
     <Text style={s.muted}>Client : {companyName(existing.company_id)}</Text>
     {visit && <Btn small title="Ouvrir la visite" onPress={() => openVisit(visit.id)} />}
-    <Label>Intitulé</Label><TextInput accessibilityLabel="Intitulé de l'action" placeholderTextColor={c.muted} style={s.input} value={title} onChangeText={setTitle} />
+    <VoiceInput voice={visit ? { ctx, visitId: visit.id, offline } : undefined} id="form-title" label="Intitulé" accessibilityLabel="Intitulé de l'action" value={title} onChange={setTitle} />
     <Label>Échéance</Label><DateField label="Échéance" mode="date" value={due} onChange={setDue} clearable />
     <Text style={s.muted}>Responsable : vous.</Text>
     {tooEarly && <Text style={s.err}>L'échéance est antérieure à la date de la visite.</Text>}

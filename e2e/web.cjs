@@ -121,21 +121,21 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await page.getByText('En cours', { exact: true }).first().waitFor();
   assert.equal(await page.getByRole('button', { name: 'Modifier l\'adresse de la visite' }).count(), 0, 'adresse non modifiable une fois la visite commencée');
   assert.equal(await page.getByRole('button', { name: 'Modifier la date prévue' }).count(), 0, 'date prévue non modifiable une fois la visite commencée');
-  assert.equal(await page.getByLabel('Nouvelle note').count(), 0, 'plus de champ de note permanent : écran allégé');
+  assert.equal(await page.getByLabel('Nouvelle note', { exact: true }).count(), 0, 'plus de champ de note permanent : écran allégé');
   assert.ok(await page.getByText('Notes durant visite', { exact: true }).first().isVisible(), 'libellé « Notes durant visite »');
   assert.ok(await page.getByRole('button', { name: /🎤 Dicter une note/ }).isVisible(), 'icône micro sur le bouton dicter');
   await page.getByRole('button', { name: '+ Ajouter une note', exact: true }).click();
-  await page.getByLabel('Nouvelle note').fill('M. Martin intéressé par l\'offre B');
+  await page.getByLabel('Nouvelle note', { exact: true }).fill('M. Martin intéressé par l\'offre B');
   await page.getByRole('button', { name: 'Ajouter', exact: true }).click();
   await page.getByText('M. Martin intéressé par l\'offre B').first().waitFor();
 
   // 2 sexies bis bis. Notes modifiables ; suppression avec confirmation ; notes internes (distinctes, partagées avec la hiérarchie)
   await page.getByRole('button', { name: 'Modifier la note', exact: true }).first().click();
-  await page.getByLabel('Texte de la note').fill('M. Martin intéressé par l\'offre B (corrigé)');
+  await page.getByLabel('Texte de la note', { exact: true }).fill('M. Martin intéressé par l\'offre B (corrigé)');
   await page.getByRole('button', { name: 'Enregistrer' }).last().click();
   await page.getByText('M. Martin intéressé par l\'offre B (corrigé)').first().waitFor();
   await page.getByRole('button', { name: '+ Ajouter une note', exact: true }).click();
-  await page.getByLabel('Nouvelle note').fill('À supprimer');
+  await page.getByLabel('Nouvelle note', { exact: true }).fill('À supprimer');
   await page.getByRole('button', { name: 'Ajouter', exact: true }).click();
   await page.locator('textarea[aria-label^="Nouvelle note"]').waitFor({ state: 'detached' });
   await page.getByText('À supprimer', { exact: true }).waitFor();
@@ -144,14 +144,14 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await page.getByText('Supprimer cette note ?').waitFor();                       // confirmation demandée
   assert.ok(await page.getByText('La suppression est définitive.').isVisible());
   await page.getByRole('button', { name: 'Annuler' }).last().click();               // annuler la confirmation : retour à l'édition, rien supprimé
-  await page.getByLabel('Texte de la note').waitFor();
+  await page.getByLabel('Texte de la note', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Supprimer la note' }).click();
   await page.getByRole('button', { name: 'Confirmer la suppression' }).click();
   await page.getByText('Supprimer cette note ?').waitFor({ state: 'detached' });
   await page.getByText('À supprimer', { exact: true }).waitFor({ state: 'detached' });
   assert.ok(await page.getByText('Notes internes', { exact: true }).first().isVisible(), 'section « Notes internes » distincte');
   await page.getByRole('button', { name: '+ Ajouter une note interne' }).click();
-  await page.getByLabel('Nouvelle note interne').fill('Budget réel plus élevé, ne pas communiquer au client');
+  await page.getByLabel('Nouvelle note interne', { exact: true }).fill('Budget réel plus élevé, ne pas communiquer au client');
   await page.getByRole('button', { name: 'Ajouter', exact: true }).click();
   await page.locator('textarea[aria-label^="Nouvelle note"]').waitFor({ state: 'detached' });
   await page.getByText('Budget réel plus élevé, ne pas communiquer au client').waitFor();
@@ -385,7 +385,7 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await p1.getByText('À organiser', { exact: true }).first().waitFor();
   await p1.getByText('Le compte rendu sera disponible une fois la visite commencée.').waitFor();
   await p1.getByRole('button', { name: '+ Ajouter une note interne' }).click();
-  await p1.getByLabel('Nouvelle note interne').fill('Le client hésite, voir avec la direction');
+  await p1.getByLabel('Nouvelle note interne', { exact: true }).fill('Le client hésite, voir avec la direction');
   await p1.getByRole('button', { name: 'Ajouter', exact: true }).click();
   await p1.locator('textarea[aria-label^="Nouvelle note"]').waitFor({ state: 'detached' });
   await p1.getByText('Le client hésite, voir avec la direction').waitFor();
@@ -512,6 +512,12 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   }
   await np.getByRole('button', { name: 'Ouvrir le compte rendu' }).click();
   await np.getByLabel('Résumé du compte rendu').fill('Visite sans suite immédiate.');
+  // dictée aussi dans la fenêtre d'ajout d'une action (tous les champs de saisie proposent le micro) ; repli par fichier audio sur cette page en HTTP
+  await np.getByRole('button', { name: '+ Ajouter une action' }).click();
+  await np.getByLabel('Fichier audio : Intitulé', { exact: true }).setInputFiles({ name: 'dictee.webm', mimeType: 'audio/webm', buffer: Buffer.alloc(3000, 5) });
+  await np.waitForFunction(() => /Dictée simulée/.test(document.querySelector('[aria-label="Intitulé de l\'action"]').value));
+  assert.equal((await (await fetch('http://127.0.0.1:4010/__transcriptions')).json()).length, 5, 'la dictée du champ « Intitulé » est transcrite');
+  await np.getByRole('button', { name: 'Annuler', exact: true }).last().click();
   assert.equal(await np.getByRole('button', { name: 'Valider le compte rendu' }).isDisabled(), true, 'sans action ni case cochée : validation refusée');
   await np.getByText('Ajoutez une action ou cochez « Aucune action à prévoir » pour valider.').waitFor();
   await np.getByRole('checkbox', { name: 'Aucune action à prévoir' }).click();
