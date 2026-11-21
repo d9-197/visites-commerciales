@@ -43,4 +43,15 @@ export class MemoryStore implements Store {
   async pendingFor(entity: string, entityId: string) { return this.queue.filter(o => o.entity === entity && o.entity_id === entityId).map(o => structuredClone(o)); }
   async removePending(id: string) { this.queue = this.queue.filter(o => o.id !== id); }
   async pendingCount() { return this.queue.length; }
+
+  /** Instantané sérialisable (persistance dans le navigateur). */
+  snapshot(): string {
+    return JSON.stringify({ meta: [...this.meta], tables: [...this.tables].map(([k, m]) => [k, [...m]]), queue: this.queue });
+  }
+  restore(json: string) {
+    const d = JSON.parse(json);
+    this.meta = new Map(d.meta);
+    this.tables = new Map(d.tables.map(([k, rows]: [ChangeKey, [string, Row][]]) => [k, new Map(rows)]));
+    this.queue = d.queue;
+  }
 }

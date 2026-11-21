@@ -103,7 +103,7 @@ $$;
 CREATE TABLE device (
   id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id      uuid NOT NULL REFERENCES app_user(id),
-  platform     text NOT NULL CHECK (platform IN ('ios','android')),
+  platform     text NOT NULL CHECK (platform IN ('ios','android','web')),
   os_version   text,
   app_version  text,
   registered_at timestamptz NOT NULL DEFAULT now(),

@@ -10,6 +10,7 @@ Statut : conception à l'état de brouillon ; **premier prototype** disponible (
 - [Maquette cliquable](maquette/index.html) (ouvrir le fichier dans un navigateur)
 - [Plan de la phase 0 (réduit)](docs/PHASE0_PLAN.md) · [plan complet archivé](docs/PHASE0_PLAN_COMPLET.md)
 - [Architecture technique](docs/ARCHITECTURE.md)
+- [Tester sur un téléphone](docs/TEST_TELEPHONE.md)
 - [État du prototype](docs/PROTOTYPE.md)
 - [Contrat des API](docs/API.md) · [OpenAPI](api/)
 - [Schéma de données](docs/SCHEMA_DONNEES.md) · [schema.sql](db/schema.sql)

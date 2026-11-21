@@ -39,7 +39,7 @@ export class ApiClient implements Transport {
     return r.body;
   }
 
-  async login(email: string, password: string, platform: 'ios' | 'android', deviceId?: string): Promise<Tokens> {
+  async login(email: string, password: string, platform: 'ios' | 'android' | 'web', deviceId?: string): Promise<Tokens> {
     const r = await this.raw('POST', '/auth/login', { email, password, device: { platform, app_version: this.appVersion, ...(deviceId ? { device_id: deviceId } : {}) } }, false);
     if (r.status !== 200) throw new ApiError(r.status, r.body?.code ?? 'error', r.body?.detail);
     this.tokens = r.body as Tokens; this.onTokens(this.tokens);

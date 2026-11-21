@@ -1,15 +1,18 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, Platform, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import * as Crypto from 'expo-crypto';
-import { ApiClient, SyncEngine, type Row, type SyncReport } from '@visites/sync-core';
+import { ApiClient, SyncEngine, uuidv4, type Row, type SyncReport } from '@visites/sync-core';
 import { openStore } from './src/expoDb';
 import type { SqliteStore } from '@visites/sync-core';
 import { clearSession, loadSession, saveSession, saveTokens, type Session } from './src/session';
 
 // Prototype : écrans minimaux pour exercer la synchro. La dictée vocale et l'IA ne sont PAS implémentées.
 const APP_VERSION = '0.1.0';
-const DEFAULT_SERVER = 'http://10.0.2.2:3000/api/mobile/v1';   // 10.0.2.2 = machine hôte depuis l'émulateur Android
+// Web : même adresse que la page. Mobile natif : à saisir (10.0.2.2 = machine hôte depuis l'émulateur Android).
+const DEFAULT_SERVER = Platform.OS === 'web' ? '/api/mobile/v1' : 'http://10.0.2.2:3000/api/mobile/v1';
+const PLATFORM: 'ios' | 'android' | 'web' = Platform.OS === 'ios' ? 'ios' : Platform.OS === 'web' ? 'web' : 'android';
+
+const VISIT_STATUS: Record<string, string> = { planned: 'Planifiée', in_progress: 'En cours', done: 'Terminée', cancelled: 'Annulée' };
 
 type Screen = { name: 'today' } | { name: 'visit'; id: string } | { name: 'clients' } | { name: 'actions' } | { name: 'action'; id?: string } | { name: 'settings' };
 
@@ -24,7 +27,7 @@ export default function App() {
     storeRef.current ??= await openStore();
     const store = storeRef.current;
     const client = new ApiClient(s.server, APP_VERSION, s.tokens, t => { void saveTokens(t); onTokens(t); });
-    const engine = new SyncEngine(store, client, { newId: () => Crypto.randomUUID(), userId: s.userId });
+    const engine = new SyncEngine(store, client, { newId: uuidv4, userId: s.userId });
     setCtx({ store, engine, client, userId: s.userId, refresh: () => {} });
     setBoot('ready');
   }, []);
@@ -54,7 +57,7 @@ function Login({ onDone }: { onDone: (s: Session) => Promise<void> }) {
     setBusy(true); setErr(undefined);
     try {
       const client = new ApiClient(server, APP_VERSION, undefined);
-      const tokens = await client.login(email.trim(), password, Platform.OS === 'ios' ? 'ios' : 'android');
+      const tokens = await client.login(email.trim(), password, PLATFORM);
       const me = await client.me();
       await onDone({ server, userId: me.id, tokens });
     } catch (e: any) {
@@ -65,9 +68,9 @@ function Login({ onDone }: { onDone: (s: Session) => Promise<void> }) {
   return (
     <SafeAreaView style={s.page}><View style={s.pad}>
       <Text style={s.h1}>Visites commerciales</Text>
-      <Label>Adresse du serveur</Label><TextInput style={s.input} value={server} onChangeText={setServer} autoCapitalize="none" autoCorrect={false} />
-      <Label>E-mail</Label><TextInput style={s.input} value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" />
-      <Label>Mot de passe</Label><TextInput style={s.input} value={password} onChangeText={setPassword} secureTextEntry />
+      <Label>Adresse du serveur</Label><TextInput accessibilityLabel="Adresse du serveur" style={s.input} value={server} onChangeText={setServer} autoCapitalize="none" autoCorrect={false} />
+      <Label>E-mail</Label><TextInput accessibilityLabel="E-mail" style={s.input} value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" />
+      <Label>Mot de passe</Label><TextInput accessibilityLabel="Mot de passe" style={s.input} value={password} onChangeText={setPassword} secureTextEntry />
       {err ? <Text style={s.err}>{err}</Text> : null}
       <Btn title={busy ? 'Connexion…' : 'Se connecter'} onPress={submit} disabled={busy || !email || !password} />
     </View></SafeAreaView>
@@ -117,7 +120,7 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
           <Text style={s.h1}>Visites</Text>
           {data.visits.length === 0 && <Text style={s.muted}>Aucune visite. Créez-en une depuis un client.</Text>}
           {[...data.visits].sort((a, b) => String(a.planned_start ?? a.updated_at).localeCompare(String(b.planned_start ?? b.updated_at))).map(v => (
-            <Row key={v.id} onPress={() => setScreen({ name: 'visit', id: v.id })} title={companyName(v.company_id)} sub={`${v.status}${v.objective ? ' · ' + v.objective : ''}`} />
+            <Row key={v.id} onPress={() => setScreen({ name: 'visit', id: v.id })} title={companyName(v.company_id)} sub={`${VISIT_STATUS[v.status] ?? v.status}${v.objective ? ' · ' + v.objective : ''}`} />
           ))}
         </>}
         {screen.name === 'clients' && <>
@@ -173,17 +176,17 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName }: { visitId: 
   return <>
     <Btn small title="‹ Retour" onPress={back} />
     <Text style={s.h1}>{companyName(v.company_id)}</Text>
-    <Text style={s.muted}>Statut : {v.status}</Text>
+    <Text style={s.muted}>Statut : {VISIT_STATUS[v.status] ?? v.status}</Text>
     {mine && <View style={s.rowBetween}>
       {v.status === 'planned' && <Btn title="Démarrer" onPress={() => act(() => ctx.engine.update('visit', v.id, { status: 'in_progress', started_at: new Date().toISOString() }))} />}
       {v.status === 'in_progress' && <Btn title="Terminer" onPress={() => act(() => ctx.engine.update('visit', v.id, { status: 'done', ended_at: new Date().toISOString() }))} />}
     </View>}
     <Label>Notes</Label>
     {data.notes.filter((n: Row) => n.visit_id === visitId).map((n: Row) => <Text key={n.id} style={s.note}>{n.body}</Text>)}
-    {mine && <><TextInput style={s.input} value={note} onChangeText={setNote} placeholder="Nouvelle note" multiline />
+    {mine && <><TextInput accessibilityLabel="Nouvelle note" style={s.input} value={note} onChangeText={setNote} placeholder="Nouvelle note" multiline />
       <Btn small title="Ajouter" disabled={!note.trim()} onPress={() => act(async () => { await ctx.engine.create('note', { visit_id: visitId, kind: 'text', body: note.trim() }); setNote(''); })} /></>}
     <Label>Compte rendu {report?.status === 'validated' ? '(validé)' : ''}</Label>
-    <TextInput style={[s.input, { minHeight: 110 }]} value={summary} onChangeText={setSummary} multiline editable={mine} placeholder="Résumé de la visite" />
+    <TextInput accessibilityLabel="Résumé du compte rendu" style={[s.input, { minHeight: 110 }]} value={summary} onChangeText={setSummary} multiline editable={mine} placeholder="Résumé de la visite" />
     <Text style={s.muted}>Saisie manuelle. La dictée vocale et l'IA ne sont pas disponibles dans ce prototype.</Text>
     {mine && <View style={s.rowBetween}>
       <Btn small title="Enregistrer" onPress={() => saveReport(false)} />
@@ -200,10 +203,10 @@ function ActionForm({ id, data, ctx, act, back }: { id?: string; data: any; ctx:
   return <>
     <Btn small title="‹ Retour" onPress={back} />
     <Text style={s.h1}>{existing ? 'Modifier l\'action' : 'Nouvelle action'}</Text>
-    <Label>Intitulé</Label><TextInput style={s.input} value={title} onChangeText={setTitle} />
+    <Label>Intitulé</Label><TextInput accessibilityLabel="Intitulé de l'action" style={s.input} value={title} onChangeText={setTitle} />
     <Label>Client</Label>
     {data.companies.map((c: Row) => <Pressable key={c.id} onPress={() => !existing && setCompany(c.id)} style={[s.choice, company === c.id && s.choiceOn]}><Text>{c.name}</Text></Pressable>)}
-    <Label>Échéance (AAAA-MM-JJ)</Label><TextInput style={s.input} value={due} onChangeText={setDue} placeholder="2026-11-26" autoCapitalize="none" />
+    <Label>Échéance (AAAA-MM-JJ)</Label><TextInput accessibilityLabel="Échéance" style={s.input} value={due} onChangeText={setDue} placeholder="2026-11-26" autoCapitalize="none" />
     <Text style={s.muted}>Responsable : vous.</Text>
     <Btn title="Enregistrer" disabled={!valid} onPress={() => act(async () => {
       if (existing) await ctx.engine.update('action', existing.id, { title: title.trim(), due_date: due || null });

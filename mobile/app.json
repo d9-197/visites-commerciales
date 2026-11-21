@@ -5,8 +5,20 @@
     "version": "0.1.0",
     "orientation": "default",
     "userInterfaceStyle": "automatic",
-    "ios": { "supportsTablet": true, "bundleIdentifier": "invalid.exemple.visites" },
-    "android": { "package": "invalid.exemple.visites" },
-    "plugins": ["expo-secure-store", "expo-sqlite"]
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "invalid.exemple.visites"
+    },
+    "android": {
+      "package": "invalid.exemple.visites"
+    },
+    "plugins": [
+      "expo-secure-store",
+      "expo-sqlite"
+    ],
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    }
   }
 }

@@ -10,7 +10,7 @@ import { push, pushSchema } from '../sync/push.js';
 
 const loginSchema = z.object({
   email: z.string().email(), password: z.string().min(1),
-  device: z.object({ device_id: z.string().uuid().optional(), platform: z.enum(['ios', 'android']), os_version: z.string().optional(), app_version: z.string() }),
+  device: z.object({ device_id: z.string().uuid().optional(), platform: z.enum(['ios', 'android', 'web']), os_version: z.string().optional(), app_version: z.string() }),
 });
 
 export function mobileRouter(pool: Pool, cfg: Config) {

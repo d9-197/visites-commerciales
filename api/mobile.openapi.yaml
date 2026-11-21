@@ -361,7 +361,7 @@ components:
           required: [platform, app_version]
           properties:
             device_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
-            platform: {type: string, enum: [ios, android]}
+            platform: {type: string, enum: [ios, android, web]}
             os_version: {type: string}
             app_version: {type: string}
     TokenPair:

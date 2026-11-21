@@ -10,8 +10,10 @@ export interface Config {
   pullDefaultLimit: number;
 }
 
+export const DEV_JWT_SECRET = 'dev-secret-a-changer-dev-secret-a-changer';
+
 export const defaultConfig: Config = {
-  jwtSecret: process.env.JWT_SECRET ?? 'dev-secret-a-changer-dev-secret-a-changer',
+  jwtSecret: process.env.JWT_SECRET ?? DEV_JWT_SECRET,
   accessTtlSeconds: 15 * 60,
   refreshTtlDays: 30,
   minAppVersion: process.env.MIN_APP_VERSION ?? '0.0.0',

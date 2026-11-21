@@ -8,6 +8,7 @@ const pool = createPool(process.env.DATABASE_URL ?? 'postgres://postgres@127.0.0
 const exists = (await pool.query(`SELECT to_regclass('public.app_user') AS t`)).rows[0].t;
 if (!exists) await pool.query(readFileSync(new URL('../../db/schema.sql', import.meta.url), 'utf8'));
 
+if (process.env.NODE_ENV === 'production' && !process.env.SEED_PASSWORD) { console.error('SEED_PASSWORD est obligatoire en production.'); process.exit(1); }
 const pwd = process.env.SEED_PASSWORD ?? 'demo-mot-de-passe-12';
 const h = await hashPassword(pwd);
 const mk = async (email: string, name: string, role: string, manager?: string, admin = false) =>
@@ -25,5 +26,5 @@ await importCrm(pool, [
   { crm_id: 'D-002', name: 'Atelier Roux', city: 'Villeurbanne', contacts: [{ crm_id: 'D-002-1', full_name: 'Mme Roux', job_title: 'Gérante' }], sales_emails: ['commercial1@exemple.invalid', 'commercial2@exemple.invalid'] },
   { crm_id: 'D-003', name: 'Groupe Bernard', city: 'Grenoble', contacts: [], sales_emails: ['commercial2@exemple.invalid'] },
 ]);
-console.log(`Données de démonstration prêtes. Comptes : commercial1@exemple.invalid, commercial2@exemple.invalid, manager@exemple.invalid, directeur@exemple.invalid, admin@exemple.invalid (mot de passe : ${pwd})`);
+console.log(`Données de démonstration prêtes. Comptes : commercial1@exemple.invalid, commercial2@exemple.invalid, manager@exemple.invalid, directeur@exemple.invalid, admin@exemple.invalid ${process.env.SEED_PASSWORD ? '(mot de passe : celui de SEED_PASSWORD)' : `(mot de passe : ${pwd})`}`);
 await pool.end();
