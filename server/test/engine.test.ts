@@ -83,23 +83,12 @@ test('moteur : conflit entre deux appareils d\'un même utilisateur : le serveur
   assert.equal((await b.store.get('visits', v))!.location_text, 'Lyon 3e');   // B a reçu la valeur du serveur
 });
 
-test('moteur : une opération refusée retire la création locale ; une modification locale en attente n\'est pas écrasée par la lecture', async () => {
+test('moteur : une opération refusée retire la création locale', async () => {
   const d = await device('c2@x.fr', f.c2);                         // c2 n'a aucun client
   const v = await d.engine.create('visit', { company_id: f.f1, status: 'planned' });
   const rep = await d.engine.sync();
   assert.equal(rep.rejected.length, 1);
   assert.equal(await d.store.get('visits', v), undefined);
-
-  const c = await device('c1@x.fr', f.c1);
-  await c.engine.sync();
-  const company = (await c.store.list('companies'))[0]!;
-  const vid = await c.engine.create('visit', { company_id: company.id, status: 'planned', location_text: 'A' });
-  await c.engine.sync();
-  await c.engine.update('visit', vid, { location_text: 'B (en attente)' });
-  await env.pool.query(`UPDATE visit SET objective = 'modifié ailleurs' WHERE id = $1`, [vid]);   // le serveur change : il y aura une ligne à lire
-  // lecture seule, sans envoyer : on appelle directement la lecture du transport pour simuler « pull avant push »
-  const st = c.store; const before = (await st.get('visits', vid))!.location_text;
-  assert.equal(before, 'B (en attente)');
 });
 
 test('moteur : retrait d\'accès côté serveur : l\'appareil supprime la donnée et ses dépendances', async () => {
@@ -116,7 +105,6 @@ test('moteur : retrait d\'accès côté serveur : l\'appareil supprime la donné
   assert.ok((await c3.store.list('notes')).length > 0);
 
   const admin = await device('admin@x.fr', f.admin);
-  const r = await admin.client['call']('PUT', `/admin-placeholder`).catch(() => null); void r;
   const adminUrl = env.base + '/api/admin/v1/companies/' + f.f1 + '/assignments';
   const res = await fetch(adminUrl, { method: 'PUT', headers: { 'content-type': 'application/json', authorization: `Bearer ${(admin.client as any).tokens.access_token}` }, body: JSON.stringify({ user_ids: [f.c1] }) });
   assert.equal(res.status, 200);
