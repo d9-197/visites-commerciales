@@ -8,6 +8,6 @@ Statut : **phase de conception** (design + fonctions). Aucun code.
 - [Spécification fonctionnelle](docs/SPEC_FONCTIONNELLE.md)
 - [Design et maquettes](docs/DESIGN.md)
 - [Maquette cliquable](maquette/index.html) (ouvrir le fichier dans un navigateur)
-- [Plan de la phase 0](docs/PHASE0_PLAN.md)
+- [Plan de la phase 0 (réduit)](docs/PHASE0_PLAN.md) · [plan complet archivé](docs/PHASE0_PLAN_COMPLET.md)
 - [Architecture technique](docs/ARCHITECTURE.md)
 - [Comparatif transcription et IA](docs/COMPARATIF_FOURNISSEURS.md)
