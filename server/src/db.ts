@@ -9,7 +9,10 @@ export type Pool = pg.Pool;
 export type Client = pg.PoolClient;
 
 export function createPool(connectionString: string): Pool {
-  return new pg.Pool({ connectionString, max: 20 });
+  const pool = new pg.Pool({ connectionString, max: 20 });
+  // Une connexion inactive coupée par le serveur ne doit pas faire tomber le processus.
+  pool.on('error', err => console.error('connexion inactive en erreur :', err.message));
+  return pool;
 }
 
 export async function tx<T>(pool: Pool, fn: (c: Client) => Promise<T>): Promise<T> {
