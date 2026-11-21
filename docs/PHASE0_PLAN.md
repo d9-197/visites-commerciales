@@ -68,7 +68,8 @@ Inchangé (voir `PHASE0_PLAN_COMPLET.md` §5) : 8 scénarios automatisés rejou�
 Questions à envoyer, sans réunion obligatoire :
 - **CRM** : authentification, champs client/contact, quotas, identifiant de référence, format attendu pour récupérer visites et CR, identifiant du client absorbant lors d'une fusion, (le serveur et le CRM sont sur le même réseau : confirmé).
 - **Protection des données** : nécessité d'une analyse d'impact, durées de conservation, base légale, information des utilisateurs.
-- **Hébergement** : administrateur du serveur, stockage de sauvegarde hors serveur, validation de l'exposition Internet par la sécurité informatique.
+
+Infrastructure, exposition réseau et sauvegardes : hors périmètre.
 
 ## 8. Calendrier indicatif
 

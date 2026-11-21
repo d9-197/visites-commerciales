@@ -147,27 +147,9 @@ Alternative écartée à ce stade : une base répliquée clé en main. Elle réd
 - Observabilité : journaux structurés, métriques (latence, taille de la file de synchro, échecs de transcription/IA, coûts), alertes. Aucun contenu de compte rendu dans les journaux.
 - Montée de version : l'application vérifie une version minimale exigée par le back.
 
-## 15. Infrastructure : serveur Docker interne
+## 15. Infrastructure
 
-**Décisions (21/11)** : serveur Docker hébergé chez vous, en UE ; même réseau que le CRM ; indisponibilité acceptable de quelques heures, **sans perte de données**.
-
-| Service (conteneur) | Rôle |
-|---------------------|------|
-| Reverse proxy | Terminaison TLS, certificats, limitation de débit ; seul point exposé à Internet |
-| API | API mobile, API CRM, console d'administration (fichiers statiques) |
-| Worker | Transcription, IA, import CRM, purge de l'audio |
-| PostgreSQL | Données, journal des changements, file de tâches |
-| Stockage de fichiers | Audio et photos : volume dédié ou stockage compatible S3 auto-hébergé (licence à vérifier) |
-| Supervision | Journaux et métriques (facultatif au début) |
-
-- **Exposition** : les téléphones sont hors de votre réseau ; le reverse proxy doit être joignable depuis Internet (nom de domaine, certificat valide, pare-feu fermant tous les autres ports, limites de débit). Prévoir une zone réseau isolée (DMZ) entre Internet et le réseau interne, car le serveur est sur le même réseau que le CRM. À valider avec votre sécurité informatique.
-- **Sorties réseau** : le serveur doit joindre les services de transcription et d'IA retenus ; on limite les sorties à ces destinations.
-- **« Sans perte de données »** : une sauvegarde quotidienne ne suffit pas, elle peut perdre jusqu'à 24 h de données. Il faut un archivage continu de PostgreSQL (journaux de transaction) et une copie fréquente des fichiers, chiffrés, **hors du serveur** (en UE), avec essais de restauration réguliers. Une partie des données récentes existe aussi sur les appareils tant qu'elle n'est pas synchronisée, mais cela ne remplace pas la sauvegarde. Sans second serveur, la restauration prend quelques heures, ce qui correspond à votre tolérance.
-- **Mises à jour** : images versionnées, Docker Compose, migrations automatisées avec sauvegarde préalable. L'outillage de migration PostgreSQL du dépôt PMA peut servir de modèle.
-- **Secrets** : hors dépôt et hors images.
-- **Capacité** : à dimensionner (processeur, mémoire, disque pour l'audio, bande passante) : voir §12. Disque : l'audio brut est purgé après la durée configurée.
-- **Transcription et IA** : services externes en UE ; les héberger soi-même demanderait du matériel adapté (cartes graphiques), non prévu.
-- **Questions restantes** : qui administre le serveur ? quel stockage de sauvegarde hors serveur ? quelle équipe sécurité valide l'exposition Internet ?
+Le déploiement se fait sur un serveur Docker (décision du 21/11). L'infrastructure, l'exposition réseau et les sauvegardes sont **hors périmètre de ce document** : elles sont traitées ailleurs. Seule contrainte retenue ici : les conteneurs du back (API, worker, PostgreSQL, stockage de fichiers) doivent pouvoir être déployés avec Docker Compose, et les données restent dans l'UE.
 
 ## 12. Dimensionnement indicatif
 
@@ -187,7 +169,6 @@ Hypothèses : 50 à 200 utilisateurs, 10 h d'audio par utilisateur et par mois.
 | Comptes propres sans SSO | Charge de sécurité sur le projet | Double authentification, console IT, journal d'audit ; réexaminer un SSO |
 | Dépendance à un fournisseur IA/transcription | Coût, disponibilité, conformité | Adaptateurs, double fournisseur possible, quotas |
 | Pas de test de qualité avant le développement | Qualité insuffisante dans certaines langues découverte tard | Lancement langue par langue, mesure intégrée au produit, fournisseur interchangeable |
-| Serveur Docker unique | Panne = indisponibilité de la synchro, de la transcription et de l'IA (l'application continue hors-ligne) | Sauvegardes continues et restaurations testées, §15 |
 
 ## 14. Phasage proposé
 
