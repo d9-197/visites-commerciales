@@ -227,7 +227,7 @@ action(){const f=S.form,edit=f.id!==null;
  <div class="field"><label class="label" for="f_c">Client</label><select id="f_c">${CLIENTS.map(c=>`<option value="${c.id}" ${c.id===f.c?'selected':''}>${c.name}</option>`).join('')}</select></div>
  <div class="field"><label class="label" for="f_due">Échéance</label><input type="date" id="f_due" value="${f.due}"></div>
  <div class="field"><label class="label" for="f_rem">Rappel</label><select id="f_rem">${[['none','Aucun'],['day','Le jour même, 9 h'],['eve','La veille, 17 h']].map(([v,l])=>`<option value="${v}" ${v===f.remind?'selected':''}>${l}</option>`).join('')}</select></div>
- <div class="field"><span class="label">Responsable</span><span>Vous</span><span class="sub">L'assignation à un collègue n'est pas prévue dans cette version.</span></div>
+ <div class="field"><span class="label">Responsable</span><span>Vous</span><span class="sub">L'action est toujours attribuée à son auteur.</span></div>
  ${edit?`<div class="field"><span class="label">Statut</span><div class="seg" role="group">${[['todo','À faire'],['done','Terminée'],['cancel','Annulée']].map(([v,l])=>`<button data-fst="${v}" aria-pressed="${f.st===v}">${l}</button>`).join('')}</div></div>`:''}
  <div class="row"><button class="btn primary" data-fsave>Enregistrer</button>${edit?'<button class="btn small" data-fpost>Reporter de 7 jours</button>':''}</div>`},
 settings(){return `<h2>Réglages</h2>

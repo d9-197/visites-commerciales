@@ -23,7 +23,7 @@ données exploitable (comptes rendus structurés, actions, prochaines étapes).
 | Fournisseur transcription/IA | Non choisi, à comparer | Comparatif à produire (traitement UE, langues, coût, DPA) à partir de sources vérifiées |
 | MDM | NinjaOne | Distribution et politiques de l'appli via NinjaOne ; à vérifier : plateformes mobiles gérées (iOS/Android), mode de déploiement d'une appli privée, configuration à distance (AppConfig), effacement à distance |
 | CRM (précisions du 20/11) | CRM interne, non nommé ; clients en lecture seule dans l'appli (pas de création) ; le CRM vient **récupérer** visites et CR par API | Le back expose une API REST dédiée au CRM (authentification par clé/jeton de service, pagination, filtre « modifié depuis », identifiants stables, suppression logique) ; le back lit les clients du CRM de son côté ; pas d'écriture dans le CRM |
-| API pour le CRM : périmètre | « Tout récupérer potentiellement », actions comprises | L'API couvre toutes les entités : visites, comptes rendus, notes, actions, contacts liés, participants, rattachements, avec statut et historique de modification, y compris annulations et suppressions logiques. Exceptions à trancher : notes privées et audio brut (voir §11) |
+| API pour le CRM : périmètre | « Tout récupérer potentiellement », actions comprises | L'API couvre toutes les entités : visites, comptes rendus, notes, actions, contacts liés, participants, rattachements, avec statut et historique de modification, y compris annulations et suppressions logiques. Exclus de l'API (décision du 21/11) : notes privées et audio brut |
 | Administration des comptes | L'IT, via une console d'administration | Console web (création, réinitialisation, désactivation, rôles, rattachement hiérarchique, affectation client-commerciaux) ; pas d'inscription libre-service |
 | Volume de dictée | ~10 h d'audio par commercial et par mois | Base de calcul du budget : 10 h/mois/utilisateur, à comparer au plafond de 30 € |
 | Parc | Mixte iOS + Android, géré par NinjaOne | Appli multiplateforme, tests sur les deux systèmes ; dictée native différente selon l'OS |
@@ -65,7 +65,7 @@ données exploitable (comptes rendus structurés, actions, prochaines étapes).
 
 **Suppression** : pas de suppression ; une action est « annulée » pour garder l'historique (et la rendre récupérable par l'API).
 
-**Responsable** : l'auteur, non modifiable en v1. L'assignation à un collègue n'est pas prévue **[À VALIDER]**.
+**Responsable** : l'auteur, non modifiable. L'assignation à un collègue est exclue (décision du 21/11, pas seulement reportée).
 
 **Droits** : le responsable modifie ses actions ; un manager voit celles de son équipe (lecture).
 
@@ -153,6 +153,4 @@ Garde-fous :
 2. Combien de niveaux hiérarchiques ? Confirmer la règle de visibilité des CR (§1 bis).
 3. Documentation de l'API du CRM : authentification, champs client/contact, quotas, identifiant de référence ?
 4. Format et contenu attendus par le CRM pour récupérer visites et CR (champs, fréquence d'appel, historique initial) ?
-5. L'API destinée au CRM doit-elle exposer les notes privées et l'audio brut ? Par défaut : non, car les notes privées sont réservées à leur auteur, et un compte de service CRM les rendrait lisibles par quiconque administre le CRM **[À VALIDER]**.
-6. Assignation d'une action à un collègue : à autoriser plus tard ?
-7. Un client supprimé ou fusionné dans le CRM : que deviennent ses visites dans le back ?
+5. Un client supprimé ou fusionné dans le CRM : que deviennent ses visites dans le back ?
