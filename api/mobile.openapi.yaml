@@ -357,7 +357,7 @@ paths:
         '403': {$ref: 'common.yaml#/components/responses/Forbidden'}
         '404': {$ref: 'common.yaml#/components/responses/NotFound'}
         '409':
-          description: Génération impossible à ce moment : visite pas encore commencée, annulée, ou compte rendu déjà validé (ai_not_available).
+          description: "Génération impossible à ce moment : visite pas encore commencée, annulée, ou compte rendu déjà validé (ai_not_available)."
           content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}
         '429': {$ref: 'common.yaml#/components/responses/TooManyRequests'}
         '502':
