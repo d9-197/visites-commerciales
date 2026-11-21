@@ -21,4 +21,5 @@ const webDir = resolve(process.env.WEB_DIR ?? new URL('../../mobile/dist-web', i
 const port = Number(process.env.PORT ?? 3000);
 const ai = aiFromEnv();
 console.log(ai ? 'Synthèse par IA et transcription vocale : activées (Mistral).' : 'Synthèse par IA et transcription vocale : désactivées (MISTRAL_API_KEY absente).');
-createApp(pool, defaultConfig, { webDir, ai }).listen(port, () => console.log(`API et application web sur http://localhost:${port}`));
+const basePath = process.env.BASE_PATH ?? '';
+createApp(pool, defaultConfig, { webDir, ai, basePath }).listen(port, () => console.log(`API et application web sur http://localhost:${port}${basePath ? ` (sous-chemin ${basePath})` : ''}`));

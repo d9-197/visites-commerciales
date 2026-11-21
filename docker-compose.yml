@@ -28,6 +28,8 @@ services:
       MISTRAL_PRICE_IN_EUR_PER_M: ${MISTRAL_PRICE_IN_EUR_PER_M:-}
       MISTRAL_PRICE_OUT_EUR_PER_M: ${MISTRAL_PRICE_OUT_EUR_PER_M:-}
       PORT: "3000"
+      # Application servie sous un sous-chemin du domaine (https://exemple.fr/visit) : BASE_PATH=/visit. Vide : à la racine.
+      BASE_PATH: ${BASE_PATH:-}
     ports: ["${APP_PORT:-3000}:3000"]
 volumes:
   pgdata:

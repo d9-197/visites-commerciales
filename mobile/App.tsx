@@ -18,7 +18,9 @@ import { companyAddress } from './src/nav';
 // Prototype : écrans minimaux pour exercer la synchro. La dictée vocale et l'IA ne sont PAS implémentées.
 const APP_VERSION = '0.1.0';
 // Web : même adresse que la page. Mobile natif : à saisir (10.0.2.2 = machine hôte depuis l'émulateur Android).
-const DEFAULT_SERVER = Platform.OS === 'web' ? '/api/mobile/v1' : 'http://10.0.2.2:3000/api/mobile/v1';
+// Sous un sous-chemin (https://exemple.fr/visit), le back transmet le préfixe dans window.__BASE_PATH__.
+const WEB_BASE = Platform.OS === 'web' ? ((globalThis as { __BASE_PATH__?: string }).__BASE_PATH__ ?? '') : '';
+const DEFAULT_SERVER = Platform.OS === 'web' ? `${WEB_BASE}/api/mobile/v1` : 'http://10.0.2.2:3000/api/mobile/v1';
 const PLATFORM: 'ios' | 'android' | 'web' = Platform.OS === 'ios' ? 'ios' : Platform.OS === 'web' ? 'web' : 'android';
 
 const todayStr = () => dateToStr(new Date());

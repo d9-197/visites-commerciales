@@ -27,6 +27,12 @@ Comptes de démonstration (mot de passe = `SEED_PASSWORD`) : `commercial1@exempl
 
 Sans Docker : `npm install && npm run pg:start`, puis `npm -w server run seed` et `npm -w server start` (voir `docs/PROTOTYPE.md` §6), après `cd mobile && npm install && npm run build:web`.
 
+### Servir l'application sous un sous-chemin de votre domaine (https://mon-domaine.fr/visit)
+
+Renseignez `BASE_PATH=/visit` dans `.env` puis `docker compose up -d` (recréation du conteneur). Cela fonctionne que votre reverse proxy **conserve** le préfixe (`/visit/…` transmis tel quel) ou le **retire** (`/visit/…` devient `/…`) ; l'API répond sous le même préfixe (`/visit/api/mobile/v1`), et l'adresse du serveur de l'écran de connexion est préremplie en conséquence. Sans `BASE_PATH`, la page s'affiche **vide** : elle charge son code par un chemin absolu (`/_expo/static/js/web/…`) que le navigateur cherche alors à la racine du domaine. Le plus simple reste de la servir à la racine d'un domaine ou d'un sous-domaine (`https://visites.mon-domaine.fr`).
+
+Si l'écran reste blanc : ouvrez la console du navigateur (onglet Réseau) et regardez la requête du fichier `…/_expo/static/js/web/index-….js` : un 404, ou une page d'un autre site, confirme un problème de chemin ; une erreur JavaScript rouge dans la console est un autre problème, à m'envoyer.
+
 ## 2. Parcours de test conseillé (5 minutes)
 
 1. Ouvrir l'adresse dans le navigateur du téléphone, se connecter avec `commercial1@exemple.invalid`.
