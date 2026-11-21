@@ -131,3 +131,22 @@ export async function fixture(env: TestEnv) {
   return { dir, mgr1, mgr2, c1, c2, c3, admin, f1, contact, login };
 }
 export type Fixture = Awaited<ReturnType<typeof fixture>>;
+
+/** Insère directement une action (hors règles de création) : pour les tests qui portent sur la vie d'une action, pas sur sa création. */
+export async function insertAction(pool: Pool, o: { id?: string; company: string; visit?: string | null; author: string; title?: string; due?: string | null; status?: string }) {
+  const id = o.id ?? randomUUID();
+  await pool.query(`INSERT INTO action_item(id, company_id, visit_id, author_id, owner_id, title, due_date, status) VALUES ($1,$2,$3,$4,$4,$5,$6,$7)`,
+    [id, o.company, o.visit ?? null, o.author, o.title ?? 'Action', o.due ?? null, o.status ?? 'todo']);
+  return id;
+}
+
+/** Visite terminée dont le compte rendu est validé (les actions prévues sont créées par le serveur). */
+export async function validatedVisit(api: Api, companyId: string, drafts: { id: string; title: string; due_date?: string | null; origin?: 'ai' | 'manual' }[] = []) {
+  const v = randomUUID(), r = randomUUID();
+  const res = await api.push([
+    op('visit', 'create', v, { company_id: companyId, status: 'done' }),
+    op('report', 'create', r, { visit_id: v, language: 'fr', summary: 'Résumé', status: 'validated', draft_actions: drafts.map(d => ({ due_date: null, origin: 'manual', ...d })) }),
+  ]);
+  if (!res.body.results.every((x: any) => x.result === 'applied')) throw new Error(`validatedVisit : ${JSON.stringify(res.body.results)}`);
+  return { visit: v, report: r };
+}

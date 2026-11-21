@@ -57,6 +57,10 @@ erDiagram
 - `visit_history` : une ligne par modification de la date prévue ou de l'adresse (ancienne valeur, nouvelle valeur, nom de la personne copié au moment de la modification, date). Écrite par le serveur seulement ; lue par ceux qui voient la visite ; exposée au CRM par la vue `crm_visit_history`.
 - Les bases existantes sont mises à niveau par `db/migrations/001_visite_organisee_et_historique.sql`, appliquée automatiquement au démarrage (table `schema_migrations`).
 
+## 2 quater. Actions prévues (migration 004)
+
+`visit_report.draft_actions` (jsonb, tableau d'éléments `{id, title, due_date, origin}`) : actions **prévues** dans le brouillon du compte rendu. À la validation, le serveur crée de vraies lignes `action_item` (mêmes identifiants, responsable = auteur de la visite, origine `ai` ou `manual`) dans la **même transaction** puis vide la liste. Une action n'existe donc jamais avant la validation, sauf ajout manuel depuis une visite dont le compte rendu est déjà validé. `action_item.visit_id` est renseigné pour toute action créée par l'application.
+
 ## 2 ter. Notes internes (migration 003)
 
 `internal_note` : id, visite, auteur, **nom de l'auteur copié à la création**, texte, dates, suppression logique. **Lisible par l'auteur et par sa hiérarchie** (fonction `can_read_internal_note`, fermeture de hiérarchie), **indépendamment du mode de visibilité** des comptes rendus. Aucune vue du CRM ne l'expose ; elle n'entre ni dans le compte rendu ni dans la génération par IA. Un changement de supérieur produit des retraits d'accès pour l'ancienne hiérarchie.

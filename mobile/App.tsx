@@ -6,7 +6,7 @@ import type { SqliteStore } from '@visites/sync-core';
 import { openStore } from './src/expoDb';
 import { clearSession, loadSession, saveSession, saveTokens, type Session, type ThemePref } from './src/session';
 import { ThemeProvider, useTheme, visitStatusColor } from './src/theme';
-import { canEditVisitAddress, canEditVisitDate, isActionLate, isVisitLate, type UserRole } from '@visites/sync-core';
+import { canEditVisitAddress, canEditVisitDate, canEditVisitNotes, canValidateReport, isActionLate, isVisitLate, type UserRole } from '@visites/sync-core';
 import { ceilTo15, dateToStr, fmtDate, fmtDateTime, strToDate, visitWhen, VISIT_STATUS } from './src/dates';
 import { Sheet } from './src/Sheet';
 import { DateField } from './src/DateField';
@@ -43,7 +43,7 @@ const voiceErrorMessage = (e: unknown): string => {
     ai_failed: 'Le service de transcription n\'a pas pu répondre. Réessayez.', payload_too_large: 'Enregistrement trop long.', forbidden: 'Seul l\'auteur de la visite peut dicter.' } as Record<string, string>)[code] ?? 'La transcription a échoué. Réessayez.';
 };
 
-type Screen = { name: 'today' } | { name: 'visit'; id: string } | { name: 'report'; id: string } | { name: 'clients' } | { name: 'actions' } | { name: 'action'; id?: string } | { name: 'settings' };
+type Screen = { name: 'today' } | { name: 'visit'; id: string } | { name: 'report'; id: string } | { name: 'clients' } | { name: 'actions'; visitId?: string } | { name: 'action'; id: string } | { name: 'settings' };
 interface Data { visits: Row[]; companies: Row[]; actions: Row[]; reports: Row[]; notes: Row[]; internalNotes: Row[]; history: Row[]; pending: number }
 interface Ctx { store: SqliteStore; engine: SyncEngine; client: ApiClient; userId: string; role: UserRole; lang: string }
 type Act = (f: () => Promise<unknown>) => Promise<void>;
@@ -129,8 +129,10 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
   const TAB_SCREENS = ['today', 'clients', 'actions', 'settings'];
   const navigate = useCallback((next: Screen) => {
     const cur = stackRef.current;
-    const isTab = TAB_SCREENS.includes(next.name);
-    if (isTab && cur[cur.length - 1]!.name === next.name) return;
+    const top = cur[cur.length - 1]! as { name: string; visitId?: string };
+    // Actions d'une visite : écran empilé (le retour ramène à la visite) ; sinon onglet.
+    const isTab = TAB_SCREENS.includes(next.name) && !(next.name === 'actions' && (next as { visitId?: string }).visitId);
+    if (isTab && top.name === next.name && !top.visitId) return;
     const ns: Screen[] = isTab ? (next.name === 'today' ? [next] : [{ name: 'today' }, next]) : [...cur, next];
     stackRef.current = ns; setStack(ns);
     if (Platform.OS === 'web') history.pushState({ stack: ns }, '');
@@ -185,7 +187,9 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
   // Plus récente d'abord ; les visites sans date prévue en dernier.
   const byDateDesc = (a: Row, b: Row) => String(b.planned_start ?? '').localeCompare(String(a.planned_start ?? ''));
 
-  const shownVisits = data.visits.filter(v => showValidated || v.status !== 'validated');
+  const openActionsOf = (visitId: string) => data.actions.filter(a => a.visit_id === visitId && a.status === 'todo').length;
+  // Une visite validée ne disparaît pas de la liste tant que des actions restent à faire.
+  const shownVisits = data.visits.filter(v => showValidated || v.status !== 'validated' || openActionsOf(v.id) > 0);
   const hiddenValidated = data.visits.length - shownVisits.length;
   const groups = (() => {
     const m = new Map<string, Row[]>();
@@ -216,9 +220,9 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
             ? groups.map(g => (
               <View key={g.id} style={{ gap: 8 }}>
                 <View style={s.group}><Text accessibilityRole="header" style={s.h2}>{g.name}</Text><Text style={s.muted}>{g.visits.length} visite{g.visits.length > 1 ? 's' : ''}{g.visits.some(v => isVisitLate(v)) ? <Text style={{ color: c.late, fontWeight: '700' }}> · {g.visits.filter(v => isVisitLate(v)).length} en retard</Text> : null}</Text></View>
-                {g.visits.map(v => <VisitRow key={v.id} v={v} onPress={() => navigate({ name: 'visit', id: v.id })} />)}
+                {g.visits.map(v => <VisitRow key={v.id} v={v} onPress={() => navigate({ name: 'visit', id: v.id })} openActions={openActionsOf(v.id)} />)}
               </View>))
-            : [...shownVisits].sort(byDateDesc).map(v => <VisitRow key={v.id} v={v} client={companyName(v.company_id)} onPress={() => navigate({ name: 'visit', id: v.id })} />)}
+            : [...shownVisits].sort(byDateDesc).map(v => <VisitRow key={v.id} v={v} client={companyName(v.company_id)} onPress={() => navigate({ name: 'visit', id: v.id })} openActions={openActionsOf(v.id)} />)}
         </>}
         {screen.name === 'clients' && <>
           <Text style={s.h1}>Clients</Text>
@@ -229,30 +233,46 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
                 const id = await ctx.engine.create('visit', { company_id: c.id, status: 'planned', planned_start: ceilTo15(new Date()).toISOString(), ...(addr ? { location_text: addr } : {}) }); navigate({ name: 'visit', id }); })} />
           ))}
         </>}
-        {screen.name === 'visit' && <VisitScreen key={screen.id} visitId={screen.id} data={data} ctx={ctx} act={act} back={goBack} companyName={companyName} offline={status.offline} openReport={() => navigate({ name: 'report', id: screen.id })} />}
-        {screen.name === 'report' && <ReportScreen key={screen.id} visitId={screen.id} data={data} ctx={ctx} act={act} back={goBack} companyName={companyName} offline={status.offline} />}
-        {screen.name === 'actions' && <>
-          <View style={s.rowBetween}><Text style={s.h1}>Actions</Text><Btn small title="+ Nouvelle" onPress={() => navigate({ name: 'action' })} /></View>
-          <View style={s.rowBetween}>
-            <Text style={[s.t, { flex: 1 }]}>Afficher les actions terminées ou annulées</Text>
-            <Switch value={showFinished} onValueChange={setShowFinished} accessibilityLabel="Afficher les actions terminées ou annulées" trackColor={{ true: c.accent, false: c.line }} />
-          </View>
-          {!showFinished && data.actions.some(a => a.status !== 'todo') && <Text style={s.muted}>{data.actions.filter(a => a.status !== 'todo').length} action(s) terminée(s) ou annulée(s) masquée(s).</Text>}
-          {data.actions.filter(a => showFinished || a.status === 'todo').length === 0 && <Text style={s.muted}>Aucune action à afficher.</Text>}
-          {[...data.actions].filter(a => showFinished || a.status === 'todo').sort((a, b) => String(a.due_date ?? '9').localeCompare(String(b.due_date ?? '9'))).map(a => {
-            const late = isActionLate(a, todayStr());
-            return (
-            <View key={a.id} style={[s.rowCard, late && { borderLeftWidth: 6, borderLeftColor: c.late }]}>
-              <Pressable onPress={() => act(() => ctx.engine.update('action', a.id, { status: a.status === 'done' ? 'todo' : 'done' }))} accessibilityRole="checkbox" accessibilityState={{ checked: a.status === 'done' }} style={[s.box, a.status === 'done' && s.boxOn, late && a.status === 'todo' && { borderColor: c.late }]} />
-              <Pressable style={{ flex: 1, gap: 2 }} onPress={() => navigate({ name: 'action', id: a.id })}>
-                <Text style={[s.t, a.status !== 'todo' && s.done]}>{a.title}</Text>
-                <Text style={[s.muted, late && { color: c.late, fontWeight: '600' }]}>{companyName(a.company_id)} · {a.due_date ? fmtDate(a.due_date) : 'sans échéance'}{a.status === 'cancelled' ? ' · annulée' : ''}</Text>
-                {late && <Pill text="En retard" color={c.late} />}
-              </Pressable>
-            </View>);
-          })}
-        </>}
-        {screen.name === 'action' && <ActionForm key={screen.id ?? 'new'} id={screen.id} data={data} ctx={ctx} act={act} back={goBack} />}
+        {screen.name === 'visit' && <VisitScreen key={screen.id} visitId={screen.id} data={data} ctx={ctx} act={act} back={goBack} companyName={companyName} offline={status.offline} openReport={() => navigate({ name: 'report', id: screen.id })} openActions={() => navigate({ name: 'actions', visitId: screen.id })} />}
+        {screen.name === 'report' && <ReportScreen key={screen.id} visitId={screen.id} data={data} ctx={ctx} act={act} back={goBack} companyName={companyName} offline={status.offline} openActions={() => navigate({ name: 'actions', visitId: screen.id })} />}
+        {screen.name === 'actions' && (() => {
+          const filterVisit = screen.visitId ? data.visits.find(x => x.id === screen.visitId) : undefined;
+          const inScope = data.actions.filter(a => !screen.visitId || a.visit_id === screen.visitId);
+          const shown = inScope.filter(a => showFinished || a.status === 'todo');
+          return <>
+            <Text style={s.h1}>Actions</Text>
+            {screen.visitId && (
+              <View style={[s.rowCard, { flexDirection: 'column', alignItems: 'stretch', gap: 6 }]}>
+                <Text style={s.t}>Actions de la visite{filterVisit ? ` · ${companyName(filterVisit.company_id)}` : ''}</Text>
+                {filterVisit && <Pressable onPress={() => navigate({ name: 'visit', id: filterVisit.id })} accessibilityRole="button" accessibilityLabel="Ouvrir la visite"><Text style={s.link}>Ouvrir la visite ›</Text></Pressable>}
+                <Pressable onPress={() => navigate({ name: 'actions' })} accessibilityRole="button" accessibilityLabel="Toutes les actions"><Text style={s.link}>Toutes les actions</Text></Pressable>
+              </View>)}
+            <View style={s.rowBetween}>
+              <Text style={[s.t, { flex: 1 }]}>Afficher les actions terminées ou annulées</Text>
+              <Switch value={showFinished} onValueChange={setShowFinished} accessibilityLabel="Afficher les actions terminées ou annulées" trackColor={{ true: c.accent, false: c.line }} />
+            </View>
+            {!showFinished && inScope.some(a => a.status !== 'todo') && <Text style={s.muted}>{inScope.filter(a => a.status !== 'todo').length} action(s) terminée(s) ou annulée(s) masquée(s).</Text>}
+            {shown.length === 0 && <Text style={s.muted}>Aucune action à afficher. Les actions naissent d'une visite : à la validation du compte rendu, ou depuis la visite une fois le compte rendu validé.</Text>}
+            {[...shown].sort((a, b) => String(a.due_date ?? '9').localeCompare(String(b.due_date ?? '9'))).map(a => {
+              const late = isActionLate(a, todayStr());
+              const visit = data.visits.find(x => x.id === a.visit_id);
+              return (
+              <View key={a.id} style={[s.rowCard, late && { borderLeftWidth: 6, borderLeftColor: c.late }]}>
+                <Pressable onPress={() => act(() => ctx.engine.update('action', a.id, { status: a.status === 'done' ? 'todo' : 'done' }))} accessibilityRole="checkbox" accessibilityState={{ checked: a.status === 'done' }} style={[s.box, a.status === 'done' && s.boxOn, late && a.status === 'todo' && { borderColor: c.late }]} />
+                <View style={{ flex: 1, gap: 2 }}>
+                  <Pressable onPress={() => navigate({ name: 'action', id: a.id })} accessibilityRole="button" accessibilityLabel={`Modifier l'action : ${a.title}`}>
+                    <Text style={[s.t, a.status !== 'todo' && s.done]}>{a.title}</Text>
+                    <Text style={[s.muted, late && { color: c.late, fontWeight: '600' }]}>{companyName(a.company_id)} · {a.due_date ? fmtDate(a.due_date) : 'sans échéance'}{a.status === 'cancelled' ? ' · annulée' : ''}</Text>
+                  </Pressable>
+                  {late && <Pill text="En retard" color={c.late} />}
+                  {visit && <Pressable onPress={() => navigate({ name: 'visit', id: visit.id })} accessibilityRole="link" accessibilityLabel={`Voir la visite de l'action : ${a.title}`} style={{ minHeight: 32, justifyContent: 'center' }}>
+                    <Text style={s.link}>Voir la visite{visit.planned_start ? ` du ${fmtDate(String(visit.planned_start).slice(0, 10))}` : ''} ›</Text></Pressable>}
+                </View>
+              </View>);
+            })}
+          </>;
+        })()}
+        {screen.name === 'action' && <ActionForm key={screen.id} id={screen.id} data={data} ctx={ctx} act={act} back={goBack} companyName={companyName} openVisit={id => navigate({ name: 'visit', id })} />}
         {screen.name === 'settings' && <>
           <Text style={s.h1}>Réglages</Text>
           <Label>Affichage</Label>
@@ -271,18 +291,19 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
   );
 }
 
-function VisitRow({ v, client, onPress }: { v: Row; client?: string; onPress: () => void }) {
+function VisitRow({ v, client, onPress, openActions }: { v: Row; client?: string; onPress: () => void; openActions: number }) {
   const { c } = useTheme();
   const w = visitWhen(v);
   const late = isVisitLate(v);
   const col = visitStatusColor(c, v.status);
-  const pills = [{ text: VISIT_STATUS[v.status] ?? v.status, color: col }, ...(late ? [{ text: 'En retard', color: c.late }] : [])];
+  const pills = [{ text: VISIT_STATUS[v.status] ?? v.status, color: col }, ...(late ? [{ text: 'En retard', color: c.late }] : []),
+    ...(openActions > 0 ? [{ text: `${openActions} action${openActions > 1 ? 's' : ''} à faire`, color: c.accent }] : [])];
   // Par client : la date est le titre. Par date : le client est le titre, la date en dessous.
   return <Row onPress={onPress} stripe={late ? c.late : col} pills={pills} tone={late ? 'late' : undefined}
     title={client ?? w.main} sub={client ? w.main : (w.sub ? `${w.sub}${v.objective ? ' · ' + v.objective : ''}` : v.objective ?? undefined)} />;
 }
 
-function VisitScreen({ visitId, data, ctx, act, back, companyName, offline, openReport }: { visitId: string; data: Data; ctx: Ctx; act: Act; back: () => void; companyName: (id: string) => string; offline: boolean; openReport: () => void }) {
+function VisitScreen({ visitId, data, ctx, act, back, companyName, offline, openReport, openActions }: { visitId: string; data: Data; ctx: Ctx; act: Act; back: () => void; companyName: (id: string) => string; offline: boolean; openReport: () => void; openActions: () => void }) {
   const { s, c } = useTheme();
   const v: Row | undefined = data.visits.find(x => x.id === visitId);
   const report: Row | undefined = data.reports.find(r => r.visit_id === visitId);
@@ -290,6 +311,7 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName, offline, open
   const [dictErr, setDictErr] = useState<{ id: string; msg: string }>();
   const [noteSheet, setNoteSheet] = useState<'none' | 'note' | 'internal'>('none');
   const [editing, setEditing] = useState<{ entity: 'note' | 'internal_note'; row: Row } | null>(null);
+  const [actionSheet, setActionSheet] = useState(false);
   const [sheet, setSheet] = useState<'none' | 'date' | 'address' | 'history' | 'nav'>('none');
   const setDictError = (id: string, msg?: string) => setDictErr(msg ? { id, msg } : undefined);
   const company: Row | undefined = data.companies.find(co => co.id === v?.company_id);
@@ -305,6 +327,10 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName, offline, open
   const visitNotes = data.notes.filter(n => n.visit_id === visitId);
   const internal = data.internalNotes.filter(n => n.visit_id === visitId);
   const reportOpen = ['in_progress', 'done', 'validated'].includes(v.status);
+  const notesOpen = canEditVisitNotes(v.status);                               // notes durant visite figées une fois la visite terminée
+  const visitActions = data.actions.filter(a => a.visit_id === visitId);
+  const todoCount = visitActions.filter(a => a.status === 'todo').length, doneCount = visitActions.filter(a => a.status === 'done').length;
+  const drafts = draftsOf(report);
   const reportState = !report ? { text: 'Non rédigé', color: c.stDone } : report.status === 'validated' ? { text: 'Validé', color: c.stValidated } : { text: 'Brouillon', color: c.stPlanned };
   const Icon = ({ label, onPress }: { label: string; onPress: () => void }) => (
     <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={label} style={s.iconBtn}><Text style={s.iconText}>✎</Text></Pressable>);
@@ -335,11 +361,12 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName, offline, open
     {mine && v.status === 'in_progress' && <Btn title="Terminer la visite" onPress={() => setStatus('done', { ended_at: new Date().toISOString() })} />}
 
     <Label>Notes durant visite</Label>
-    {visitNotes.map(n => n.author_id === ctx.userId
+    {visitNotes.map(n => n.author_id === ctx.userId && notesOpen
       ? <Pressable key={n.id} onPress={() => setEditing({ entity: 'note', row: n })} accessibilityRole="button" accessibilityLabel="Modifier la note" style={[s.note, { flexDirection: 'row', gap: 8 }]}>
           <Text style={{ color: c.text, flex: 1 }}>{n.body}</Text><Text style={s.iconText}>✎</Text></Pressable>
       : <Text key={n.id} style={s.note}>{n.body}</Text>)}
-    {mine && <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+    {mine && !notesOpen && <Text style={s.muted}>La visite est terminée : les notes ne sont plus modifiables.</Text>}
+    {mine && notesOpen && <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
       <DictationControl id="notes" label="Notes durant visite" review active={dictating} setActive={setDictating} ctx={ctx} visitId={visitId} offline={offline}
         onText={text => act(() => ctx.engine.create('note', { visit_id: visitId, kind: 'voice', body: text }))} onError={setDictError} />
       {dictating !== 'notes' && <Btn small title="+ Ajouter une note" onPress={() => setNoteSheet('note')} />}
@@ -355,6 +382,17 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName, offline, open
         <Text style={s.muted}>{n.author_id === ctx.userId ? 'Vous' : n.author_name}</Text>
       </Pressable>))}
     {ctx.role === 'commercial' && <View style={{ flexDirection: 'row' }}><Btn small title="+ Ajouter une note interne" onPress={() => setNoteSheet('internal')} /></View>}
+
+    <Label>Actions</Label>
+    {visitActions.length > 0
+      ? <Pressable onPress={openActions} accessibilityRole="button" accessibilityLabel="Voir les actions de la visite" style={s.rowCard}>
+          <View style={{ flex: 1, gap: 2 }}>
+            <Text style={s.t}>Actions de la visite</Text>
+            <Text style={s.muted}>{todoCount} à faire · {doneCount} terminée{doneCount > 1 ? 's' : ''}</Text>
+          </View><Text style={s.muted}>›</Text></Pressable>
+      : <Text style={s.muted}>Aucune action pour cette visite.</Text>}
+    {drafts.length > 0 && <Text style={s.muted}>{drafts.length} action{drafts.length > 1 ? 's' : ''} prévue{drafts.length > 1 ? 's' : ''} : créée{drafts.length > 1 ? 's' : ''} à la validation du compte rendu.</Text>}
+    {mine && reportOpen && <View style={{ flexDirection: 'row' }}><Btn small title="+ Ajouter une action" onPress={() => setActionSheet(true)} /></View>}
 
     <Label>Compte rendu</Label>
     {reportOpen
@@ -372,6 +410,9 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName, offline, open
       onAdd={text => { const k = noteSheet; setNoteSheet('none'); void act(() => k === 'internal'
         ? ctx.engine.create('internal_note', { visit_id: visitId, body: text })
         : ctx.engine.create('note', { visit_id: visitId, kind: 'text', body: text })); }} />
+    <ActionSheet visible={actionSheet} title="Nouvelle action" onClose={() => setActionSheet(false)}
+      hint={report?.status === 'validated' ? 'Le compte rendu est validé : l\'action est créée tout de suite.' : 'Elle sera créée quand le compte rendu sera validé.'}
+      onSave={a => { setActionSheet(false); void act(async () => addActionToVisit(ctx, v, await freshReport(ctx, visitId), a)); }} />
     <NoteEditSheet target={editing} onClose={() => setEditing(null)}
       onSave={text => { const t = editing!; setEditing(null); void act(() => ctx.engine.update(t.entity, t.row.id, { body: text })); }}
       onDelete={() => { const t = editing!; setEditing(null); void act(() => ctx.engine.remove(t.entity, t.row.id)); }} />
@@ -388,7 +429,7 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName, offline, open
  * Écran du compte rendu : rédigé après (ou en fin de) visite, à part de la prise de notes. Génération par IA à partir des notes
  * durant visite (jamais des notes internes), puis correction et complément à la main ou à la voix, enfin validation.
  */
-function ReportScreen({ visitId, data, ctx, act, back, companyName, offline }: { visitId: string; data: Data; ctx: Ctx; act: Act; back: () => void; companyName: (id: string) => string; offline: boolean }) {
+function ReportScreen({ visitId, data, ctx, act, back, companyName, offline, openActions }: { visitId: string; data: Data; ctx: Ctx; act: Act; back: () => void; companyName: (id: string) => string; offline: boolean; openActions: () => void }) {
   const { s, c } = useTheme();
   const v: Row | undefined = data.visits.find(x => x.id === visitId);
   const report: Row | undefined = data.reports.find(r => r.visit_id === visitId);
@@ -398,6 +439,8 @@ function ReportScreen({ visitId, data, ctx, act, back, companyName, offline }: {
   const [ai, setAi] = useState<AiProposalResponse>();
   const [dictating, setDictating] = useState<string | null>(null);
   const [dictErr, setDictErr] = useState<{ id: string; msg: string }>();
+  const [actionSheet, setActionSheet] = useState<{ index: number | null } | null>(null);     // ajout (null) ou modification d'une action prévue
+  const [confirmReopen, setConfirmReopen] = useState(false);
   const setDictError = (id: string, msg?: string) => setDictErr(msg ? { id, msg } : undefined);
   const appendTo = (k: string, text: string) => setF(cur => ({ ...cur, [k]: cur[k] && cur[k]!.trim() ? `${cur[k]!.trimEnd()} ${text}` : text }));
   useEffect(() => { if (report) setF(cur => (Object.values(cur).some(x => x) ? cur : pickFields(report))); }, [report?.id]);
@@ -407,14 +450,24 @@ function ReportScreen({ visitId, data, ctx, act, back, companyName, offline }: {
   const notesText = data.notes.filter(n => n.visit_id === visitId && n.body).map(n => n.body).join('\n');   // notes durant visite seulement
   const inEndPhase = v.status === 'in_progress' || v.status === 'done';
   const canGenerate = mine && inEndPhase && !validated && !!notesText.trim() && !offline;
+  const drafts = draftsOf(report);
+  const visitActions = data.actions.filter(a => a.visit_id === visitId);
+  const todoCount = visitActions.filter(a => a.status === 'todo').length, doneCount = visitActions.filter(a => a.status === 'done').length;
+  const canValidate = canValidateReport(v.status) && (f.summary ?? '').trim().length > 0 && !validated;
+  const saveDrafts = (list: DraftAction[]) => act(async () => {
+    const cur = await freshReport(ctx, visitId);
+    if (cur) await ctx.engine.update('report', cur.id, { draft_actions: list });
+    else await ctx.engine.create('report', { visit_id: visitId, language: ctx.lang, draft_actions: list, status: 'draft' });
+  });
   const whyNot = !mine ? undefined : !inEndPhase && !validated ? 'La génération est possible une fois la visite commencée.' : validated ? 'Le compte rendu est validé.' : offline ? 'Hors-ligne : la génération par IA demande une connexion.' : !notesText.trim() ? 'Ajoutez des notes durant visite pour pouvoir générer le compte rendu.' : undefined;
   const hasContent = Object.values(f).some(x => x.trim());
   const state = !report ? { text: 'Non rédigé', color: c.stDone } : validated ? { text: 'Validé', color: c.stValidated } : { text: 'Brouillon', color: c.stPlanned };
 
   const saveReport = (validate: boolean, values: Record<string, string> = f) => act(async () => {
     const st = validate ? 'validated' : 'draft';
-    if (!report) await ctx.engine.create('report', { visit_id: visitId, language: ctx.lang, ...values, status: st });
-    else await ctx.engine.update('report', report.id, { ...values, ...(validate ? { status: st } : {}) });
+    const cur = await freshReport(ctx, visitId);
+    if (!cur) await ctx.engine.create('report', { visit_id: visitId, language: ctx.lang, ...values, status: st });
+    else await ctx.engine.update('report', cur.id, { ...values, ...(validate ? { status: st } : {}) });
   });
   // Génération par IA : le compte rendu doit exister sur le serveur ; on le crée en brouillon et on synchronise d'abord.
   const generate = async () => {
@@ -431,10 +484,12 @@ function ReportScreen({ visitId, data, ctx, act, back, companyName, offline }: {
   const applyAi = (fields: Record<string, string>, actions: { title: string; due_date: string | null }[]) => {
     const merged = { ...f, ...Object.fromEntries(Object.entries(fields).filter(([, x]) => x.trim())) };   // un champ vide proposé n'efface rien
     setF(merged); setAi(undefined);
+    // Les actions proposées deviennent des actions PRÉVUES du brouillon : elles ne sont créées qu'à la validation du compte rendu.
     void act(async () => {
-      if (report) await ctx.engine.update('report', report.id, merged);
-      else await ctx.engine.create('report', { visit_id: visitId, language: ctx.lang, ...merged, status: 'draft' });
-      for (const a of actions) await ctx.engine.create('action', { company_id: v.company_id, visit_id: visitId, title: a.title, origin: 'ai', ...(a.due_date ? { due_date: a.due_date } : {}) });
+      const cur = await freshReport(ctx, visitId);
+      const planned = [...draftsOf(cur), ...actions.map(a => ({ id: uuidv4(), title: a.title, due_date: a.due_date, origin: 'ai' as const }))];
+      if (cur) await ctx.engine.update('report', cur.id, { ...merged, draft_actions: planned });
+      else await ctx.engine.create('report', { visit_id: visitId, language: ctx.lang, ...merged, draft_actions: planned, status: 'draft' });
     });
   };
 
@@ -457,20 +512,97 @@ function ReportScreen({ visitId, data, ctx, act, back, companyName, offline }: {
       <View key={k} style={{ gap: 4 }}>
         <View style={s.rowBetween}>
           <Text style={s.muted}>{label}</Text>
-          {mine && <DictationControl compact id={`field:${k}`} label={label} active={dictating} setActive={setDictating} ctx={ctx} visitId={visitId} offline={offline}
+          {mine && !validated && <DictationControl compact id={`field:${k}`} label={label} active={dictating} setActive={setDictating} ctx={ctx} visitId={visitId} offline={offline}
             onText={text => appendTo(k, text)} onError={setDictError} />}
         </View>
         {dictErr?.id === `field:${k}` && <Text style={s.err}>{dictErr.msg}</Text>}
         <TextInput accessibilityLabel={k === 'summary' ? 'Résumé du compte rendu' : label} placeholderTextColor={c.muted} style={[s.input, { minHeight: k === 'summary' ? 90 : 60 }]}
-          value={f[k] ?? ''} onChangeText={t => setF(cur => ({ ...cur, [k]: t }))} multiline editable={mine} />
+          value={f[k] ?? ''} onChangeText={t => setF(cur => ({ ...cur, [k]: t }))} multiline editable={mine && !validated} />
       </View>))}
-    {mine && <View style={s.rowBetween}>
-      <Btn small title="Enregistrer" disabled={!hasContent && !report} onPress={() => saveReport(false)} />
-      <Btn small title="Valider le compte rendu" disabled={!(f.summary ?? '').trim() || validated} onPress={() => saveReport(true)} />
-    </View>}
+
+    <Label>{validated ? 'Actions' : 'Actions à créer à la validation'}</Label>
+    {validated
+      ? <Text style={s.muted}>Compte rendu validé : les actions ont été créées.</Text>
+      : <Text style={s.muted}>Elles ne deviennent de vraies actions que lorsque le compte rendu est validé.</Text>}
+    {!validated && drafts.map((d, i) => (
+      <Pressable key={d.id} disabled={!mine} onPress={() => setActionSheet({ index: i })} accessibilityRole="button" accessibilityLabel={`Modifier l'action prévue : ${d.title}`} style={[s.note, { flexDirection: 'row', gap: 8 }]}>
+        <View style={{ flex: 1 }}><Text style={{ color: c.text }}>{d.title}</Text><Text style={s.muted}>{d.due_date ? fmtDate(d.due_date) : 'sans échéance'}{d.origin === 'ai' ? ' · proposée par l\'IA' : ''}</Text></View>
+        {mine && <Text style={s.iconText}>✎</Text>}
+      </Pressable>))}
+    {mine && !validated && <View style={{ flexDirection: 'row' }}><Btn small title="+ Ajouter une action" onPress={() => setActionSheet({ index: null })} /></View>}
+    {visitActions.length > 0 && <Pressable onPress={openActions} accessibilityRole="button" accessibilityLabel="Voir les actions de la visite" style={s.rowCard}>
+      <View style={{ flex: 1, gap: 2 }}><Text style={s.t}>Actions de la visite</Text><Text style={s.muted}>{todoCount} à faire · {doneCount} terminée{doneCount > 1 ? 's' : ''}</Text></View><Text style={s.muted}>›</Text></Pressable>}
+
+    {mine && !validated && <>
+      <View style={s.rowBetween}>
+        <Btn small title="Enregistrer" disabled={!hasContent && !report} onPress={() => saveReport(false)} />
+        <Btn small title="Valider le compte rendu" disabled={!canValidate} onPress={() => saveReport(true)} />
+      </View>
+      {!canValidateReport(v.status) && <Text style={s.muted}>Terminez la visite pour pouvoir valider le compte rendu.</Text>}
+    </>}
+    {mine && validated && <>
+      <Text style={s.muted}>Un compte rendu validé n'est plus modifiable. Pour le corriger, remettez-le en brouillon : la visite repassera à « Terminée ».</Text>
+      <Btn small title="Remettre en brouillon" onPress={() => setConfirmReopen(true)} />
+    </>}
     {!mine && <Text style={s.muted}>Seul l'auteur de la visite modifie le compte rendu.</Text>}
+    <ConfirmSheet visible={confirmReopen} title="Remettre le compte rendu en brouillon ?" confirmLabel="Remettre en brouillon"
+      message="Le compte rendu redeviendra modifiable et la visite repassera à « Terminée ». Les actions déjà créées sont conservées ; à la prochaine validation, seules les nouvelles actions prévues seront créées."
+      onClose={() => setConfirmReopen(false)} onConfirm={() => { setConfirmReopen(false); void act(async () => { const cur = await freshReport(ctx, visitId); if (cur) await ctx.engine.update('report', cur.id, { status: 'draft' }); }); }} />
+    <ActionSheet visible={!!actionSheet} title={actionSheet?.index === null ? 'Nouvelle action prévue' : 'Modifier l\'action prévue'}
+      initial={actionSheet && actionSheet.index !== null ? drafts[actionSheet.index] : undefined} hint="Créée à la validation du compte rendu."
+      onClose={() => setActionSheet(null)}
+      onSave={a => { const i = actionSheet!.index; setActionSheet(null); void saveDrafts(i === null ? [...drafts, { id: uuidv4(), title: a.title, due_date: a.due_date, origin: 'manual' }] : drafts.map((d, j) => j === i ? { ...d, ...a } : d)); }} />
     <AiSheet result={ai} onClose={() => setAi(undefined)} onApply={applyAi} />
   </>;
+}
+
+interface DraftAction { id: string; title: string; due_date: string | null; origin: 'ai' | 'manual' }
+/** Compte rendu d'une visite relu dans le stockage local au moment d'agir : l'écran peut afficher une version plus ancienne. */
+const freshReport = async (ctx: Ctx, visitId: string): Promise<Row | undefined> => (await ctx.store.list('reports')).find(r => r.visit_id === visitId);
+const draftsOf = (report?: Row): DraftAction[] => (Array.isArray(report?.draft_actions) ? (report!.draft_actions as DraftAction[]) : []);
+
+/**
+ * Ajout d'une action depuis une visite. Une action n'existe qu'une fois le compte rendu validé : avant, elle est seulement « prévue »
+ * dans le brouillon du compte rendu et sera créée par le serveur à la validation ; après, elle est créée tout de suite.
+ */
+async function addActionToVisit(ctx: Ctx, v: Row, report: Row | undefined, a: { title: string; due_date: string | null }) {
+  if (report?.status === 'validated') {
+    await ctx.engine.create('action', { company_id: v.company_id, visit_id: v.id, title: a.title, origin: 'manual', ...(a.due_date ? { due_date: a.due_date } : {}) });
+    return;
+  }
+  const list = [...draftsOf(report), { id: uuidv4(), title: a.title, due_date: a.due_date, origin: 'manual' as const }];
+  if (report) await ctx.engine.update('report', report.id, { draft_actions: list });
+  else await ctx.engine.create('report', { visit_id: v.id, language: ctx.lang, draft_actions: list, status: 'draft' });
+}
+
+/** Fenêtre d'ajout ou de modification d'une action (intitulé et échéance). */
+function ActionSheet({ visible, title, initial, hint, onClose, onSave }: { visible: boolean; title: string; initial?: { title: string; due_date: string | null }; hint?: string; onClose: () => void; onSave: (a: { title: string; due_date: string | null }) => void }) {
+  const { s, c } = useTheme();
+  const [text, setText] = useState(''); const [due, setDue] = useState<Date | undefined>();
+  useEffect(() => { if (visible) { setText(initial?.title ?? ''); setDue(strToDate(initial?.due_date)); } }, [visible]);
+  return (
+    <Sheet title={title} visible={visible} onClose={onClose}>
+      <Label>Intitulé</Label>
+      <TextInput accessibilityLabel="Intitulé de l'action" placeholderTextColor={c.muted} style={s.input} value={text} onChangeText={setText} placeholder="Ex. Envoyer le devis" />
+      <Label>Échéance</Label>
+      <DateField label="Échéance de l'action" mode="date" value={due} onChange={setDue} clearable />
+      {hint ? <Text style={s.muted}>{hint}</Text> : null}
+      <Btn title="Enregistrer" disabled={!text.trim()} onPress={() => onSave({ title: text.trim(), due_date: due ? dateToStr(due) : null })} />
+      <Btn small title="Annuler" onPress={onClose} />
+    </Sheet>
+  );
+}
+
+/** Confirmation en deux temps dans une fenêtre (les boîtes de dialogue du système ne servent pas sur le web). */
+function ConfirmSheet({ visible, title, message, confirmLabel, danger, onConfirm, onClose }: { visible: boolean; title: string; message: string; confirmLabel: string; danger?: boolean; onConfirm: () => void; onClose: () => void }) {
+  const { s } = useTheme();
+  return (
+    <Sheet title={title} visible={visible} onClose={onClose}>
+      <Text style={s.muted}>{message}</Text>
+      <Btn title={confirmLabel} danger={danger} onPress={onConfirm} />
+      <Btn small title="Annuler" onPress={onClose} />
+    </Sheet>
+  );
 }
 
 /** Ajout d'une note (durant visite ou interne) dans une fenêtre, pour garder l'écran léger. */
@@ -665,26 +797,26 @@ function AiSheet({ result, onClose, onApply }: { result?: AiProposalResponse; on
   );
 }
 
-function ActionForm({ id, data, ctx, act, back }: { id?: string; data: Data; ctx: Ctx; act: Act; back: () => void }) {
+/** Modification d'une action existante (elles naissent toutes d'une visite : pas de création depuis cet écran). */
+function ActionForm({ id, data, ctx, act, back, companyName, openVisit }: { id: string; data: Data; ctx: Ctx; act: Act; back: () => void; companyName: (id: string) => string; openVisit: (id: string) => void }) {
   const { s, c } = useTheme();
-  const existing: Row | undefined = id ? data.actions.find(a => a.id === id) : undefined;
+  const existing: Row | undefined = data.actions.find(a => a.id === id);
   const [title, setTitle] = useState(existing?.title ?? ''); const [due, setDue] = useState<Date | undefined>(strToDate(existing?.due_date));
-  const [company, setCompany] = useState<string>(existing?.company_id ?? data.companies[0]?.id ?? '');
-  const valid = title.trim().length > 0 && !!company;
+  if (!existing) return <><Btn small title="‹ Retour" onPress={back} /><Text style={s.muted}>Action introuvable.</Text></>;
+  const visit = data.visits.find(v => v.id === existing.visit_id);
   return <>
     <Btn small title="‹ Retour" onPress={back} />
-    <Text style={s.h1}>{existing ? 'Modifier l\'action' : 'Nouvelle action'}</Text>
+    <Text style={s.h1}>Modifier l'action</Text>
+    <Text style={s.muted}>Client : {companyName(existing.company_id)}</Text>
+    {visit && <Btn small title="Ouvrir la visite" onPress={() => openVisit(visit.id)} />}
     <Label>Intitulé</Label><TextInput accessibilityLabel="Intitulé de l'action" placeholderTextColor={c.muted} style={s.input} value={title} onChangeText={setTitle} />
-    <Label>Client</Label>
-    {data.companies.map(co => <Pressable key={co.id} onPress={() => !existing && setCompany(co.id)} style={[s.choice, company === co.id && s.choiceOn]}><Text style={{ color: c.text }}>{co.name}</Text></Pressable>)}
     <Label>Échéance</Label><DateField label="Échéance" mode="date" value={due} onChange={setDue} clearable />
     <Text style={s.muted}>Responsable : vous.</Text>
-    <Btn title="Enregistrer" disabled={!valid} onPress={() => act(async () => {
-      if (existing) await ctx.engine.update('action', existing.id, { title: title.trim(), due_date: due ? dateToStr(due) : null });
-      else await ctx.engine.create('action', { company_id: company, title: title.trim(), ...(due ? { due_date: dateToStr(due) } : {}), origin: 'manual' });
+    <Btn title="Enregistrer" disabled={!title.trim()} onPress={() => act(async () => {
+      await ctx.engine.update('action', existing.id, { title: title.trim(), due_date: due ? dateToStr(due) : null });
       back();
     })} />
-    {existing && existing.status !== 'cancelled' && <Btn title="Annuler l'action" onPress={() => act(async () => { await ctx.engine.update('action', existing.id, { status: 'cancelled' }); back(); })} />}
+    {existing.status !== 'cancelled' && <Btn title="Annuler l'action" onPress={() => act(async () => { await ctx.engine.update('action', existing.id, { status: 'cancelled' }); back(); })} />}
   </>;
 }
 

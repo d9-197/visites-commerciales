@@ -40,7 +40,7 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await page.getByText('Synchronisé').waitFor();
 
   // 2. Clients reçus du CRM ; création d'une visite
-  await page.getByRole('button', { name: 'Clients' }).click();
+  await page.getByRole('button', { name: 'Clients', exact: true }).click();
   await page.getByText('Dupont SA').waitFor();
   assert.ok(await page.getByText('Atelier Roux').isVisible());
   assert.equal(await page.getByText('Groupe Bernard').count(), 0, 'commercial1 ne voit pas le client de commercial2');
@@ -203,25 +203,73 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   const besoinsApres = await page.getByLabel('Besoins', { exact: true }).inputValue();
   assert.equal(besoinsApres, `${besoinsAvant} Dictée simulée : le client confirme un budget de 40 000 euros.`, 'texte ajouté à la suite du champ, sans écraser');
   await page.getByLabel('Besoins', { exact: true }).fill(besoinsAvant);
+  // Les actions proposées par la génération sont seulement « prévues » dans le brouillon : pas encore de vraies actions
+  await page.getByText('Préparer la démo').waitFor();
+  await page.getByText('Rappeler M. Martin').waitFor();
+  assert.ok(await page.getByText('Elles ne deviennent de vraies actions que lorsque le compte rendu est validé.').isVisible());
   await page.getByLabel('Résumé du compte rendu').fill('Intéressé par l\'offre B, budget à confirmer.');
-  await page.getByRole('button', { name: 'Valider le compte rendu' }).click();
-  await page.getByText('Validé', { exact: true }).first().waitFor();
+  // validation du compte rendu impossible tant que la visite n'est pas terminée
+  assert.equal(await page.getByRole('button', { name: 'Valider le compte rendu' }).isDisabled(), true, 'validation refusée visite en cours');
+  await page.getByText('Terminez la visite pour pouvoir valider le compte rendu.').waitFor();
+  await page.getByRole('button', { name: 'Enregistrer', exact: true }).click();
   await page.getByRole('button', { name: '‹ Retour' }).click();
   await page.getByRole('heading', { name: 'Dupont SA' }).waitFor();
-  await page.getByText('Validé', { exact: true }).first().waitFor();            // compte rendu validé, visible depuis la visite
-  await page.getByRole('button', { name: 'Terminer la visite' }).click();
-  await page.getByText('Validée', { exact: true }).first().waitFor();      // compte rendu déjà validé : la visite terminée devient validée
-  await shot(page, '3c-terminee');
-  await page.getByRole('button', { name: '‹ Retour' }).click();
-  await page.getByText('Source : CRM, lecture seule').waitFor();       // « Retour » ramène à l'écran d'où l'on vient (Clients)
-  await page.getByRole('button', { name: 'Visites' }).click();
+  await page.getByText('Aucune action pour cette visite.').waitFor();
+  await page.getByText('2 actions prévues : créées à la validation du compte rendu.').waitFor();
 
-  // 2 septies. Liste : regroupement par client / par date, dates réalisée et prévue
-  // visites validées : masquées par défaut, affichées par l'interrupteur
-  await page.getByText('Aucune visite à afficher.').waitFor();
-  await page.getByText('1 visite validée masquée.').waitFor();
-  await page.getByRole('switch', { name: 'Afficher les visites validées' }).click();
-  await page.getByText('1 visite', { exact: true }).waitFor();
+  // Fin de visite : les notes durant visite ne sont plus modifiables (les notes internes, si) ; terminer ne crée aucune action
+  await page.getByRole('button', { name: 'Terminer la visite' }).click();
+  await page.getByText('La visite est terminée : les notes ne sont plus modifiables.').waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Modifier la note', exact: true }).count(), 0, 'plus de modification de note');
+  assert.equal(await page.getByRole('button', { name: '+ Ajouter une note', exact: true }).count(), 0, 'plus d\'ajout de note');
+  assert.equal(await page.getByRole('button', { name: /Dicter une note/ }).count(), 0, 'plus de dictée de note');
+  assert.ok(await page.getByRole('button', { name: '+ Ajouter une note interne' }).isVisible(), 'notes internes : toujours possibles');
+  assert.equal(await page.getByText('Aucune action pour cette visite.').count(), 1, 'terminer la visite ne crée aucune action');
+
+  // Validation du compte rendu : crée les actions prévues, passe la visite à « Validée », verrouille le compte rendu
+  await page.getByRole('button', { name: 'Ouvrir le compte rendu' }).click();
+  await page.getByRole('button', { name: 'Valider le compte rendu' }).click();
+  await page.getByText('Compte rendu validé : les actions ont été créées.').waitFor();
+  assert.equal(await page.getByLabel('Résumé du compte rendu').isEditable(), false, 'compte rendu validé : champs verrouillés');
+  assert.equal(await page.getByRole('button', { name: 'Valider le compte rendu' }).count(), 0);
+  assert.equal(await page.getByRole('button', { name: /^Dicter : / }).count(), 0, 'plus de dictée dans un compte rendu validé');
+  await page.getByText('2 à faire · 0 terminée').waitFor();                      // actions créées par le serveur, reçues à la synchro
+  await shot(page, '3c-compte-rendu-valide');
+  await page.getByRole('button', { name: '‹ Retour' }).click();
+  await page.getByText('Validée', { exact: true }).first().waitFor();
+  await page.getByText('2 à faire · 0 terminée').waitFor();
+
+  // Actions de la visite : lien avec compteur ; accès à la visite depuis une action ; plus de création depuis la vue Actions
+  await page.getByRole('button', { name: 'Voir les actions de la visite' }).click();
+  await page.getByText('Actions de la visite · Dupont SA').waitFor();
+  await page.getByText('Préparer la démo').waitFor();
+  assert.equal(await page.getByRole('button', { name: '+ Nouvelle' }).count(), 0, 'plus de création d\'action depuis la vue Actions');
+  await page.getByRole('link', { name: /Voir la visite de l'action : Préparer la démo/ }).click();
+  await page.getByRole('heading', { name: 'Dupont SA' }).waitFor();
+  await page.goBack();                                                             // retour du téléphone : revient aux actions de la visite
+  await page.getByText('Actions de la visite · Dupont SA').waitFor();
+  await page.getByRole('button', { name: 'Ouvrir la visite', exact: true }).click();
+  await page.getByRole('heading', { name: 'Dupont SA' }).waitFor();
+
+  // Ajout manuel depuis la visite (compte rendu validé : l'action est créée tout de suite)
+  await page.getByRole('button', { name: '+ Ajouter une action' }).click();
+  await page.getByText('Le compte rendu est validé : l\'action est créée tout de suite.').waitFor();
+  await page.getByLabel('Intitulé de l\'action').fill('Envoyer le devis');
+  assert.equal(await page.getByLabel('Échéance de l\'action').getAttribute('type'), 'date', 'sélecteur natif de date');
+  await page.getByLabel('Échéance de l\'action').fill('2026-11-26');
+  await page.getByRole('button', { name: 'Enregistrer', exact: true }).click();
+  await page.getByText('3 à faire · 0 terminée').waitFor();
+  await page.getByRole('button', { name: '+ Ajouter une action' }).click();
+  await page.getByLabel('Intitulé de l\'action').fill('Relancer le client (en retard)');
+  await page.getByLabel('Échéance de l\'action').fill(daysAgo(5));
+  await page.getByRole('button', { name: 'Enregistrer', exact: true }).click();
+  await page.getByText('4 à faire · 0 terminée').waitFor();
+  await shot(page, '3c-terminee');
+
+  // Une visite validée ne disparaît pas de la liste tant qu'il reste des actions à faire
+  await page.getByRole('button', { name: 'Visites', exact: true }).click();
+  await page.getByText('4 actions à faire').waitFor();
+  assert.equal(await page.getByText('Aucune visite à afficher.').count(), 0, 'visite validée avec actions à faire : toujours affichée');
   await page.getByText(/^Réalisée /).waitFor();
   assert.ok(await page.getByText(/^Prévue .*déc/).first().isVisible(), 'la date prévue reste affichée sous la date réalisée');
   await shot(page, '3d-visites-par-client');
@@ -229,33 +277,17 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await page.getByText('Dupont SA', { exact: true }).first().waitFor();
   await page.getByRole('radio', { name: 'Par client' }).click();
 
-  // 3. Action : sélecteur de date, échéance affichée en clair
-  await page.getByRole('button', { name: 'Actions' }).click();
-  await page.getByRole('button', { name: '+ Nouvelle' }).click();
-  await page.getByLabel('Intitulé de l\'action').fill('Envoyer le devis');
-  assert.equal(await page.getByLabel('Échéance').getAttribute('type'), 'date', 'sélecteur natif de date');
-  await page.getByLabel('Échéance').fill('2026-11-26');
-  await page.getByRole('button', { name: 'Enregistrer' }).click();
-  await page.getByText('Envoyer le devis').waitFor();
-  assert.ok(await page.getByText(/jeu\.? 26 nov\.? 2026/).first().isVisible(), 'échéance affichée en clair, pas en AAAA-MM-JJ');
-  // Action dont l'échéance est passée : identifiable visuellement
-  await page.getByRole('button', { name: '+ Nouvelle' }).click();
-  await page.getByLabel('Intitulé de l\'action').fill('Relancer le client (en retard)');
-  await page.getByLabel('Échéance').fill(daysAgo(5));
-  await page.getByRole('button', { name: 'Enregistrer' }).click();
+  // Vue Actions : échéance en clair, action en retard identifiable, lien vers la visite
+  await page.getByRole('button', { name: 'Actions', exact: true }).click();
   await page.getByText('Relancer le client (en retard)').waitFor();
+  assert.ok(await page.getByText(/jeu\.? 26 nov\.? 2026/).first().isVisible(), 'échéance affichée en clair, pas en AAAA-MM-JJ');
   assert.equal(await page.getByText('En retard', { exact: true }).count(), 1, 'seule l\'action dont l\'échéance est passée est signalée en retard');
   assert.equal(await borderOf(page.getByText('En retard', { exact: true })), 'rgb(198, 40, 40)', 'pastille « En retard » en rouge');
-  await page.getByText('Préparer la démo').waitFor();     // action proposée par l'IA, créée après relecture
-  await page.getByText('Rappeler M. Martin').waitFor();
   await shot(page, '4-actions');
 
-  // 4. Hors-ligne : saisie locale, file en attente, puis reconnexion
+  // Hors-ligne : terminer une action localement, file en attente, puis reconnexion
   await ctx.setOffline(true);
-  await page.getByRole('button', { name: '+ Nouvelle' }).click();
-  await page.getByLabel('Intitulé de l\'action').fill('Appeler Mme Roux (hors-ligne)');
-  await page.getByRole('button', { name: 'Enregistrer' }).click();
-  await page.getByText('Appeler Mme Roux (hors-ligne)').waitFor();
+  await page.getByRole('checkbox').first().click();                                // « Relancer le client (en retard) »
   await page.getByText('Synchroniser').click();
   await page.getByText(/Hors-ligne.*en attente/).waitFor();
   await shot(page, '5-hors-ligne');
@@ -264,20 +296,49 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await page.getByText('Synchronisé').waitFor();
   assert.equal(/en attente/.test(await status()), false);
 
-  // 5. Les données survivent à un rechargement
+  // Les données survivent à un rechargement ; les actions terminées sont masquées par défaut
   await page.reload();
   await page.getByText('Synchronisé').waitFor();
-  await page.getByRole('button', { name: 'Actions' }).click();
-  await page.getByText('Appeler Mme Roux (hors-ligne)').waitFor();
+  await page.getByRole('button', { name: 'Actions', exact: true }).click();
   await page.getByText('Envoyer le devis').waitFor();
-
-  // 6. Terminer une action, puis déconnexion qui efface les données de l'appareil
-  await page.getByRole('checkbox').first().click();
-  await page.getByText('1 action(s) terminée(s) ou annulée(s) masquée(s).').waitFor();       // actions terminées : masquées par défaut
+  await page.getByText('1 action(s) terminée(s) ou annulée(s) masquée(s).').waitFor();
   assert.equal(await page.getByText('Relancer le client (en retard)').count(), 0, 'l\'action terminée disparaît de la liste');
   await page.getByRole('switch', { name: 'Afficher les actions terminées ou annulées' }).click();
   await page.getByText('Relancer le client (en retard)').waitFor();
-  await page.getByRole('button', { name: 'Réglages' }).click();
+  await page.getByRole('switch', { name: 'Afficher les actions terminées ou annulées' }).click();
+
+  // Terminer toutes les actions : la visite validée disparaît alors de la liste (masquée par défaut)
+  for (let i = 0; i < 3; i++) { await page.getByRole('checkbox').first().click(); }
+  await page.getByText('Aucune action à afficher.', { exact: false }).waitFor();
+  await page.getByRole('button', { name: 'Visites', exact: true }).click();
+  await page.getByText('Aucune visite à afficher.').waitFor();
+  await page.getByText('1 visite validée masquée.').waitFor();
+  await page.getByRole('switch', { name: 'Afficher les visites validées' }).click();
+  await page.getByText('1 visite', { exact: true }).waitFor();
+
+  // Compte rendu validé : verrouillé ; remise en brouillon avec confirmation ; la visite redevient « Terminée »
+  await page.getByText(/^Réalisée /).click();
+  await page.getByRole('heading', { name: 'Dupont SA' }).waitFor();
+  await page.getByRole('button', { name: 'Ouvrir le compte rendu' }).click();
+  await page.getByRole('button', { name: 'Remettre en brouillon' }).click();
+  await page.getByText('Remettre le compte rendu en brouillon ?').waitFor();
+  await page.getByRole('button', { name: 'Annuler' }).last().click();                // annuler : rien ne change
+  await page.getByText('Remettre le compte rendu en brouillon ?').waitFor({ state: 'detached' });
+  assert.equal(await page.getByLabel('Résumé du compte rendu').isEditable(), false, 'toujours verrouillé');
+  await page.getByRole('button', { name: 'Remettre en brouillon' }).click();
+  await page.getByRole('button', { name: 'Remettre en brouillon' }).last().click();  // confirmer
+  await page.getByRole('button', { name: 'Valider le compte rendu' }).waitFor();
+  assert.equal(await page.getByLabel('Résumé du compte rendu').isEditable(), true, 'brouillon : modifiable de nouveau');
+  await page.getByRole('button', { name: '‹ Retour' }).click();
+  await page.getByText('Terminée', { exact: true }).first().waitFor();                // la visite est repassée à « Terminée »
+  assert.equal(await page.getByText('Validée', { exact: true }).count(), 0);
+  await page.getByRole('button', { name: 'Ouvrir le compte rendu' }).click();
+  await page.getByRole('button', { name: 'Valider le compte rendu' }).click();       // nouvelle validation : pas de doublon d'actions
+  await page.getByText('Compte rendu validé : les actions ont été créées.').waitFor();
+  await page.getByText('0 à faire · 4 terminées').waitFor();
+
+  // Déconnexion qui efface les données de l'appareil
+  await page.getByRole('button', { name: 'Réglages', exact: true }).click();
   await page.getByRole('button', { name: /Se déconnecter/ }).click();
   await page.getByRole('button', { name: 'Se connecter' }).waitFor();
   const left = await page.evaluate(() => [localStorage.getItem('visites.store.v1'), localStorage.getItem('visites.session.v1')]);
@@ -287,7 +348,7 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   const c1 = await newPhone(browser); const p1 = await c1.newPage();
   p1.on('pageerror', e => errors.push(e.message));
   await login(p1, 'commercial1@exemple.invalid');
-  await p1.getByRole('button', { name: 'Clients' }).click();
+  await p1.getByRole('button', { name: 'Clients', exact: true }).click();
   await p1.getByText('Atelier Roux').click();
   await p1.getByText('À organiser', { exact: true }).first().waitFor();
   await p1.getByText('Le compte rendu sera disponible une fois la visite commencée.').waitFor();
@@ -379,13 +440,13 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await dp.getByRole('button', { name: 'Se connecter' }).click();
   await dp.getByText('Synchronisé').waitFor();
   await shot(dp, '6-sombre');
-  await dp.getByRole('button', { name: 'Réglages' }).click();
+  await dp.getByRole('button', { name: 'Réglages', exact: true }).click();
   await dp.getByRole('radio', { name: 'Clair' }).click();
   await dp.waitForFunction(() => getComputedStyle(document.body).backgroundColor === 'rgb(244, 246, 245)');
   await dp.reload();
   await dp.getByText('Synchronisé').waitFor();
   assert.equal(await bg(dp), 'rgb(244, 246, 245)', 'le choix « Clair » survit au rechargement');
-  await dp.getByRole('button', { name: 'Réglages' }).click();
+  await dp.getByRole('button', { name: 'Réglages', exact: true }).click();
   await dp.getByRole('radio', { name: 'Système' }).click();
   await dp.waitForFunction(() => getComputedStyle(document.body).backgroundColor === 'rgb(12, 19, 23)');
   await dp.getByRole('radio', { name: 'Sombre' }).click();

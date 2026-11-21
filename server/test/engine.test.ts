@@ -2,7 +2,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { SyncEngine, MemoryStore, SqliteStore, ApiClient, NetworkError, type Transport, type Store } from '@visites/sync-core';
 import { nodeSqlDb } from './helpers-sqlite.js';
-import { setup, fixture, uuid, setMode, type TestEnv, type Fixture } from './helpers.js';
+import { setup, fixture, uuid, setMode, insertAction, type TestEnv, type Fixture } from './helpers.js';
 
 let env: TestEnv; let f: Fixture;
 before(async () => { env = await setup(); f = await fixture(env); });
@@ -25,24 +25,27 @@ test(`[${kind}] moteur : saisie hors-ligne, file d\'opérations, puis synchro ve
   const company = (await d.store.list('companies'))[0]!;
   assert.equal(company.name, 'Dupont SA');
 
-  const v = await d.engine.create('visit', { company_id: company.id, status: 'planned', objective: 'Suivi' });
-  const a = await d.engine.create('action', { company_id: company.id, visit_id: v, title: 'Envoyer le devis', due_date: '2026-11-26' });
+  const a = uuid();
+  const v = await d.engine.create('visit', { company_id: company.id, status: 'done', objective: 'Suivi' });
+  await d.engine.create('report', { visit_id: v, language: 'fr', summary: 'Résumé', status: 'validated', draft_actions: [{ id: a, title: 'Envoyer le devis', due_date: '2026-11-26', origin: 'manual' }] });
   assert.equal(await d.store.pendingCount(), 2);                   // rien n'est parti : saisie locale seulement
-  assert.equal((await d.store.get('actions', a))!.status, 'todo'); // visible tout de suite dans l'appli
+  assert.equal(await d.store.get('actions', a), undefined);        // l'action n'existe pas encore : seulement « prévue » dans le compte rendu
 
   const rep = await d.engine.sync();
   assert.equal(rep.rejected.length, 0);
   assert.equal(await d.store.pendingCount(), 0);
   const srv = (await env.pool.query(`SELECT title FROM action_item WHERE id = $1`, [a])).rows[0];
   assert.equal(srv.title, 'Envoyer le devis');
+  assert.equal((await d.store.get('actions', a))!.title, 'Envoyer le devis', 'créée par le serveur à la validation, reçue à la synchro');
+  assert.equal((await d.store.get('visits', v))!.status, 'validated');
 });
 
 test(`[${kind}] moteur : plusieurs modifications hors-ligne de la même entité sont fusionnées en une opération sans conflit avec soi-même`, async () => {
   const d = await device(kind, 'c1@x.fr', f.c1);
   await d.engine.sync();
   const company = (await d.store.list('companies'))[0]!;
-  const act = await d.engine.create('action', { company_id: company.id, title: 'Appeler' });
-  await d.engine.sync();                                           // l'action existe côté serveur (version 1)
+  const act = await insertAction(env.pool, { company: company.id, author: f.c1, title: 'Appeler' });
+  await d.engine.sync();                                           // l'action existe côté serveur (version 1) et arrive sur l'appareil
   await d.engine.update('action', act, { title: 'Appeler M. Martin' });
   await d.engine.update('action', act, { due_date: '2026-11-27' });
   await d.engine.update('action', act, { status: 'done' });
@@ -100,7 +103,7 @@ test(`[${kind}] moteur : retrait d\'accès côté serveur : l\'appareil supprime
   const c1 = await device(kind, 'c1@x.fr', f.c1);
   await c1.engine.sync();
   const company = (await c1.store.list('companies'))[0]!;
-  const v = await c1.engine.create('visit', { company_id: company.id, status: 'done' });
+  const v = await c1.engine.create('visit', { company_id: company.id, status: 'in_progress' });
   await c1.engine.create('note', { visit_id: v, kind: 'text', body: 'Compte rendu' });
   await c1.engine.sync();
   await c3.engine.sync();

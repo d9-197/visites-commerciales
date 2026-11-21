@@ -1,6 +1,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { setup, fixture, op, uuid, type TestEnv, type Fixture } from './helpers.js';
+import { setup, fixture, op, uuid, insertAction, type TestEnv, type Fixture } from './helpers.js';
 
 let env: TestEnv; let f: Fixture;
 before(async () => { env = await setup(); f = await fixture(env); });
@@ -8,19 +8,21 @@ after(async () => { await env.close(); });
 
 const visitOp = (id: string, company: string, extra: Record<string, unknown> = {}) => op('visit', 'create', id, { company_id: company, status: 'planned', ...extra });
 
-test('création hors-ligne d\'une visite, d\'un compte rendu et d\'une action, puis lecture', async () => {
+test('création hors-ligne d\'une visite et de son compte rendu validé : les actions prévues sont créées par le serveur, puis lecture', async () => {
   const a = await f.login('c1@x.fr');
   const v = uuid(), r = uuid(), act = uuid();
   const res = await a.push([
-    visitOp(v, f.f1, { objective: 'Suivi offre B', planned_start: '2026-11-20T10:30:00Z' }),
-    op('report', 'create', r, { visit_id: v, language: 'fr', summary: 'Intéressé par l\'offre B.' }),
-    op('action', 'create', act, { company_id: f.f1, visit_id: v, title: 'Envoyer le devis', due_date: '2026-11-26' }),
+    visitOp(v, f.f1, { objective: 'Suivi offre B', planned_start: '2026-11-20T10:30:00Z', status: 'done' }),
+    op('report', 'create', r, { visit_id: v, language: 'fr', summary: 'Intéressé par l\'offre B.', status: 'validated', draft_actions: [{ id: act, title: 'Envoyer le devis', due_date: '2026-11-26', origin: 'manual' }] }),
   ]);
-  assert.deepEqual(res.body.results.map((x: any) => x.result), ['applied', 'applied', 'applied']);
+  assert.deepEqual(res.body.results.map((x: any) => x.result), ['applied', 'applied']);
   const { changes } = await a.pullAll();
   assert.equal(changes.visits?.length, 1);
-  assert.equal(changes.visits![0].version, 1);
+  assert.equal(changes.visits![0].status, 'validated', 'visite terminée + compte rendu validé');
   assert.equal(changes.reports![0].summary, 'Intéressé par l\'offre B.');
+  assert.deepEqual(changes.reports![0].draft_actions, [], 'les actions prévues ont été converties');
+  assert.equal(changes.actions!.length, 1); assert.equal(changes.actions![0].id, act);
+  assert.equal(changes.actions![0].visit_id, v);
   assert.equal(changes.actions![0].due_date, '2026-11-26');
   assert.equal(changes.actions![0].owner_id, f.c1);   // responsable = auteur dans le MVP
   assert.equal(changes.companies?.[0]?.name, 'Dupont SA');
@@ -79,13 +81,13 @@ test('scénario 3 : rejouer une opération ne crée aucun doublon ; même entit�
 
 test('scénario 7 : reprise après coupure au milieu d\'un lot', async () => {
   const a = await f.login('c1@x.fr');
-  const v = uuid(), n = uuid(), act = uuid();
-  const batch = [visitOp(v, f.f1), op('note', 'create', n, { visit_id: v, kind: 'text', body: 'Note 1' }), op('action', 'create', act, { company_id: f.f1, title: 'Relancer' })];
+  const v = uuid(), n = uuid();
+  const batch = [visitOp(v, f.f1), op('note', 'create', n, { visit_id: v, kind: 'text', body: 'Note 1' })];
   await a.push([batch[0]]);                 // seule la première opération est arrivée
   const full = await a.push(batch);         // l'application renvoie tout le lot
-  assert.deepEqual(full.body.results.map((x: any) => x.result), ['applied', 'applied', 'applied']);
-  const counts = (await env.pool.query(`SELECT (SELECT count(*) FROM visit WHERE id=$1)::int v, (SELECT count(*) FROM visit_note WHERE id=$2)::int n, (SELECT count(*) FROM action_item WHERE id=$3)::int a`, [v, n, act])).rows[0];
-  assert.deepEqual(counts, { v: 1, n: 1, a: 1 });
+  assert.deepEqual(full.body.results.map((x: any) => x.result), ['applied', 'applied']);
+  const counts = (await env.pool.query(`SELECT (SELECT count(*) FROM visit WHERE id=$1)::int v, (SELECT count(*) FROM visit_note WHERE id=$2)::int n`, [v, n])).rows[0];
+  assert.deepEqual(counts, { v: 1, n: 1 });
 });
 
 test('une opération refusée n\'arrête pas les suivantes, sauf celles qui en dépendent', async () => {
@@ -104,22 +106,24 @@ test('une opération refusée n\'arrête pas les suivantes, sauf celles qui en d
   void ok;
 });
 
-test('validation du compte rendu : résumé non vide exigé ; un compte rendu validé ne revient pas en brouillon', async () => {
+test('validation du compte rendu : résumé non vide exigé ; visite terminée exigée ; un compte rendu validé se remet en brouillon', async () => {
   const a = await f.login('c1@x.fr');
   const v = uuid(), r = uuid();
-  await a.push([visitOp(v, f.f1), op('report', 'create', r, { visit_id: v, language: 'fr' })]);
+  await a.push([visitOp(v, f.f1, { status: 'in_progress' }), op('report', 'create', r, { visit_id: v, language: 'fr' })]);
+  const early = await a.push([op('report', 'update', r, { summary: 'Résumé', status: 'validated' }, 1)]);
+  assert.equal(early.body.results[0].code, 'locked_status', 'visite pas terminée');
+  await a.push([op('visit', 'update', v, { status: 'done' }, 1)]);
   const bad = await a.push([op('report', 'update', r, { status: 'validated' }, 1)]);
-  assert.equal(bad.body.results[0].code, 'validation_failed');
+  assert.equal(bad.body.results[0].code, 'validation_failed', 'résumé requis');
   const ok = await a.push([op('report', 'update', r, { summary: 'Résumé', status: 'validated' }, 1)]);
   assert.equal(ok.body.results[0].result, 'applied');
   const back = await a.push([op('report', 'update', r, { status: 'draft' }, 2)]);
-  assert.equal(back.body.results[0].code, 'locked_status');
+  assert.equal(back.body.results[0].result, 'applied', 'remise en brouillon autorisée');
 });
 
 test('action : terminer renseigne completed_at ; annuler est possible ; suppression refusée', async () => {
   const a = await f.login('c1@x.fr');
-  const act = uuid();
-  await a.push([op('action', 'create', act, { company_id: f.f1, title: 'Appeler' })]);
+  const act = await insertAction(env.pool, { company: f.f1, author: f.c1, title: 'Appeler' });
   const done = await a.push([op('action', 'update', act, { status: 'done' }, 1)]);
   assert.equal(done.body.results[0].result, 'applied');
   const row = (await env.pool.query(`SELECT status, completed_at FROM action_item WHERE id = $1`, [act])).rows[0];

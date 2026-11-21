@@ -99,7 +99,7 @@ test('IA : moment autorisé : visite en cours ou terminée tant que le compte re
   assert.equal((await ask('c1@x.fr', undefined, await mk('organized'))).status, 409);
   assert.equal((await ask('c1@x.fr', undefined, await mk('in_progress'))).status, 200, 'en cours : possible');
   assert.equal((await ask('c1@x.fr', undefined, await mk('done'))).status, 200, 'terminée, compte rendu en brouillon : possible');
-  const validated = await ask('c1@x.fr', undefined, await mk('in_progress', 'validated'));
+  const validated = await ask('c1@x.fr', undefined, await mk('done', 'validated'));
   assert.equal(validated.status, 409, 'compte rendu validé : refusé'); assert.equal(validated.body.code, 'ai_not_available');
   assert.equal((await ask('c1@x.fr', undefined, await mk('cancelled'))).status, 409);
 });

@@ -30,6 +30,16 @@ export function canEditVisitDate(status: VisitStatus, isAuthor: boolean): boolea
   return isAuthor && (status === 'planned' || status === 'organized');
 }
 
+/** Notes durant visite : plus modifiables (ajout, modification, suppression) une fois la visite terminée, validée ou annulée. */
+export function canEditVisitNotes(status: VisitStatus | string): boolean {
+  return !['done', 'validated', 'cancelled'].includes(status);
+}
+
+/** Le compte rendu ne se valide qu'une fois la visite terminée. */
+export function canValidateReport(visitStatus: VisitStatus | string): boolean {
+  return visitStatus === 'done';
+}
+
 /** Champs d'une visite dont la modification est tracée dans l'historique. */
 export const VISIT_HISTORY_FIELDS = ['planned_start', 'location_text'] as const;
 

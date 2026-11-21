@@ -247,6 +247,7 @@ CREATE TABLE visit_report (
   decisions      text,
   next_step      text,
   opportunity_temperature text CHECK (opportunity_temperature IN ('cold','warm','hot')),
+  draft_actions  jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(draft_actions) = 'array'),   -- actions prévues, créées à la validation
   status         text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','validated')),
   validated_at   timestamptz,
   validated_by   uuid REFERENCES app_user(id),

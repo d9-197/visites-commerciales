@@ -838,8 +838,22 @@ components:
         visit_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
         contact_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
     ReportWrite:
+      description: |
+        Brouillon : tous les champs, dont `draft_actions` (actions prévues, créées par le serveur à la validation). Passage à `validated` : visite terminée et `summary` non vide ; le serveur crée alors les actions prévues et vide la liste.
+        Compte rendu validé : seule la remise en brouillon (`status: draft`, rien d'autre) est acceptée ; la visite repasse à « terminée ». Sinon `locked_status`.
       type: object
       properties:
+        draft_actions:
+          type: array
+          maxItems: 30
+          items:
+            type: object
+            required: [id, title, origin]
+            properties:
+              id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+              title: {type: string, minLength: 1, maxLength: 200}
+              due_date: {type: [string, 'null'], format: date}
+              origin: {type: string, enum: [ai, manual]}
         visit_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
         language: {$ref: 'common.yaml#/components/schemas/LanguageCode'}
         summary: {type: string}
@@ -865,6 +879,7 @@ components:
         visit_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
         body: {type: string}
     ActionWrite:
+      description: "Création : seulement depuis une visite (`visit_id` requis, son auteur) dont le compte rendu est validé ; `company_id` doit être celui de la visite."
       type: object
       properties:
         company_id: {$ref: 'common.yaml#/components/schemas/Uuid'}

@@ -70,11 +70,11 @@ sequenceDiagram
 |--------|----------|--------------|-------------|---------------------|
 | `visit` | Sur un client que l'utilisateur peut lire | `location_text` (adresse) : voir ci-dessous ; tout le reste : auteur seul ; `base_version` requis ; `planned_start` seulement tant que la visite n'est pas commencée | Non : statut `cancelled` | `author_id`, version, historique |
 | `visit_contact` | Le contact doit appartenir au client de la visite | — | Oui (logique) | |
-| `report` | Un seul par visite, par l'auteur de la visite | Auteur seul ; `base_version` requis ; passage à `validated` : `summary` non vide **[à valider]** | Non | `validated_at`, `validated_by`, version |
-| `note` (notes durant visite) | Par l'auteur de la visite | Champ `body` seulement, par l'auteur | Oui (logique), par l'auteur | `author_id` |
+| `report` | Un seul par visite, par l'auteur de la visite | Auteur seul ; `base_version` requis ; **brouillon** : tous les champs, dont `draft_actions` (actions prévues) ; passage à `validated` : **visite terminée** et `summary` non vide, crée les actions prévues ; **validé** : verrouillé, seule la remise en brouillon (`status: draft`) est acceptée | Non | `validated_at`, `validated_by`, version |
+| `note` (notes durant visite) | Par l'auteur de la visite, **tant qu'elle n'est ni terminée, ni validée, ni annulée** | Champ `body` seulement, par l'auteur, même condition | Oui (logique), par l'auteur, même condition | `author_id` |
 | `internal_note` | Par un **commercial** qui voit la visite | `body`, par l'auteur seul | Oui (logique), par l'auteur | `author_id`, `author_name` ; lecture : l'auteur et sa hiérarchie (lecture seule) |
 | `private_note` | Une par visite et par auteur | Auteur seul ; `base_version` requis | Oui (logique) | `author_id` |
-| `action` | Sur un client que l'utilisateur peut lire | `title`, `due_date`, `reminder`, `status` ; `base_version` requis | Non : statut `cancelled` | `author_id`, `owner_id` (= auteur dans le MVP), `completed_at`, version |
+| `action` | **Depuis une visite** (`visit_id` requis, par son auteur) dont le **compte rendu est validé** ; sinon `locked_status`. Les actions issues du brouillon sont créées par le serveur à la validation | `title`, `due_date`, `reminder`, `status` ; `base_version` requis | Non : statut `cancelled` | `author_id`, `owner_id` (= auteur dans le MVP), `completed_at`, version |
 | `recording` | Métadonnées ; l'audio est envoyé séparément | — | Non | `status`, `purge_after` |
 | `attachment` | Métadonnées ; photo envoyée séparément | `caption` | Oui (logique) | |
 | `glossary_term` | Termes personnels seulement | Auteur seul | Oui (logique) | `scope` = user |

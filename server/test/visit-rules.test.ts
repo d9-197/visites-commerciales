@@ -1,6 +1,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { setup, fixture, op, uuid, setMode, createServiceKey, Api, type TestEnv, type Fixture } from './helpers.js';
+import { setup, fixture, op, uuid, setMode, createServiceKey, validatedVisit, Api, type TestEnv, type Fixture } from './helpers.js';
 import { migrate } from '../src/migrate.js';
 import pg from 'pg';
 
@@ -102,31 +102,98 @@ test('API CRM : l\'historique est exposé en lecture', async () => {
   assert.ok(r.body.items.every((x: any) => x.changed_by_name && x.field));
 });
 
-test('visite terminée + compte rendu validé => visite « validée », dans les deux ordres ; statut jamais attribué à la main', async () => {
+test('compte rendu : validation seulement visite terminée ; elle crée les actions prévues et passe la visite à « validée »', async () => {
   const a = await f.login('c1@x.fr');
-  // ordre 1 : terminer d'abord, valider le compte rendu ensuite
-  const v1 = uuid(), r1 = uuid();
-  await a.push([op('visit', 'create', v1, { company_id: f.f1, status: 'planned' }), op('report', 'create', r1, { visit_id: v1, language: 'fr', summary: 'Résumé' })]);
-  await a.push([op('visit', 'update', v1, { status: 'in_progress' }, 1)]);
-  await a.push([op('visit', 'update', v1, { status: 'done' }, 2)]);
-  assert.equal((await env.pool.query(`SELECT status FROM visit WHERE id = $1`, [v1])).rows[0].status, 'done', 'compte rendu en brouillon : reste terminée');
-  const val = await a.push([op('report', 'update', r1, { status: 'validated' }, 1)]);
-  assert.equal(val.body.results[0].result, 'applied');
-  assert.equal((await env.pool.query(`SELECT status FROM visit WHERE id = $1`, [v1])).rows[0].status, 'validated');
-  // ordre 2 : compte rendu validé pendant la visite, puis visite terminée
-  const v2 = uuid(), r2 = uuid();
-  await a.push([op('visit', 'create', v2, { company_id: f.f1, status: 'in_progress' }), op('report', 'create', r2, { visit_id: v2, language: 'fr', summary: 'Résumé', status: 'validated' })]);
-  assert.equal((await env.pool.query(`SELECT status FROM visit WHERE id = $1`, [v2])).rows[0].status, 'in_progress', 'pas encore terminée');
-  await a.push([op('visit', 'update', v2, { status: 'done' }, 1)]);
-  assert.equal((await env.pool.query(`SELECT status FROM visit WHERE id = $1`, [v2])).rows[0].status, 'validated');
-  // l'appareil reçoit le statut ; il ne peut pas l'imposer ; une visite validée n'est plus modifiable
-  const got = (await a.pullAll()).changes.visits!.find(x => x.id === v1)!;
-  assert.equal(got.status, 'validated');
-  const manual = await a.push([op('visit', 'update', v2, { status: 'validated' }, 3)]);
-  assert.equal(manual.body.results[0].code, 'locked_status');
-  const created = await a.push([op('visit', 'create', uuid(), { company_id: f.f1, status: 'validated' })]);
-  assert.equal(created.body.results[0].code, 'validation_failed');
-  assert.equal((await upd('c1@x.fr', v1, { location_text: 'trop tard' }, got.version)).code, 'locked_status');
+  const v = uuid(), r = uuid(), d1 = uuid(), d2 = uuid();
+  const draft = [{ id: d1, title: 'Envoyer le devis', due_date: '2026-11-26', origin: 'ai' }, { id: d2, title: 'Rappeler M. Martin', due_date: null, origin: 'manual' }];
+  await a.push([op('visit', 'create', v, { company_id: f.f1, status: 'in_progress' }), op('report', 'create', r, { visit_id: v, language: 'fr', summary: 'Résumé', draft_actions: draft })]);
+  const actionsOf = async () => (await env.pool.query(`SELECT id, title, origin, owner_id, author_id, status FROM action_item WHERE visit_id = $1 ORDER BY title`, [v])).rows;
+  assert.equal((await actionsOf()).length, 0, 'actions prévues seulement : aucune vraie action avant la validation');
+
+  const early = (await a.push([op('report', 'update', r, { status: 'validated' }, 1)])).body.results[0];
+  assert.equal(early.code, 'locked_status', 'visite pas terminée : validation refusée');
+  assert.equal((await env.pool.query(`SELECT status FROM visit_report WHERE id = $1`, [r])).rows[0].status, 'draft');
+  assert.equal((await a.push([op('visit', 'update', v, { status: 'done' }, 1)])).body.results[0].result, 'applied');
+  assert.equal((await actionsOf()).length, 0, 'terminer la visite ne crée pas d\'action');
+
+  const ok = (await a.push([op('report', 'update', r, { status: 'validated' }, 1)])).body.results[0];
+  assert.equal(ok.result, 'applied');
+  const acts = await actionsOf();
+  assert.deepEqual(acts.map(x => [x.id, x.title, x.origin, x.status]), [[d1, 'Envoyer le devis', 'ai', 'todo'], [d2, 'Rappeler M. Martin', 'manual', 'todo']].sort((x, y) => String(x[1]).localeCompare(String(y[1]))));
+  assert.ok(acts.every(x => x.owner_id === f.c1 && x.author_id === f.c1));
+  assert.equal((await env.pool.query(`SELECT status FROM visit WHERE id = $1`, [v])).rows[0].status, 'validated');
+  assert.deepEqual((await env.pool.query(`SELECT draft_actions FROM visit_report WHERE id = $1`, [r])).rows[0].draft_actions, [], 'actions prévues converties');
+});
+
+test('compte rendu validé : verrouillé ; seule la remise en brouillon est possible ; elle ramène la visite à « terminée » ; pas de doublon à la nouvelle validation', async () => {
+  const a = await f.login('c1@x.fr');
+  const d1 = uuid();
+  const { visit, report } = await validatedVisit(a, f.f1, [{ id: d1, title: 'Une action' }]);
+  const rv = async (payload: Record<string, unknown>, base: number) => (await a.push([op('report', 'update', report, payload, base)])).body.results[0];
+  const version = async () => (await env.pool.query(`SELECT version FROM visit_report WHERE id = $1`, [report])).rows[0].version as number;
+
+  for (const payload of [{ summary: 'Modifié' }, { draft_actions: [] }, { status: 'draft', summary: 'Modifié en même temps' }, { next_step: 'x' }]) {
+    const r = await rv(payload, await version());
+    assert.equal(r.code, 'locked_status', JSON.stringify(payload));
+  }
+  assert.equal((await env.pool.query(`SELECT summary FROM visit_report WHERE id = $1`, [report])).rows[0].summary, 'Résumé');
+  // un autre utilisateur ne peut pas non plus le rouvrir
+  assert.equal((await (await f.login('mgr1@x.fr')).push([op('report', 'update', report, { status: 'draft' }, await version())])).body.results[0].code, 'forbidden');
+
+  const reopen = await rv({ status: 'draft' }, await version());
+  assert.equal(reopen.result, 'applied');
+  const row = (await env.pool.query(`SELECT status, validated_at, validated_by FROM visit_report WHERE id = $1`, [report])).rows[0];
+  assert.deepEqual([row.status, row.validated_at, row.validated_by], ['draft', null, null]);
+  assert.equal((await env.pool.query(`SELECT status FROM visit WHERE id = $1`, [visit])).rows[0].status, 'done', 'la visite redevient terminée');
+  assert.equal((await env.pool.query(`SELECT count(*)::int n FROM action_item WHERE visit_id = $1`, [visit])).rows[0].n, 1, 'les actions déjà créées sont conservées');
+
+  // modifiable de nouveau ; nouvelle validation : seules les NOUVELLES actions prévues sont créées
+  assert.equal((await rv({ summary: 'Corrigé', draft_actions: [{ id: uuid(), title: 'Nouvelle', due_date: null, origin: 'manual' }] }, await version())).result, 'applied');
+  assert.equal((await rv({ status: 'validated' }, await version())).result, 'applied');
+  assert.deepEqual((await env.pool.query(`SELECT title FROM action_item WHERE visit_id = $1 ORDER BY title`, [visit])).rows.map(x => x.title), ['Nouvelle', 'Une action']);
+  assert.equal((await env.pool.query(`SELECT status FROM visit WHERE id = $1`, [visit])).rows[0].status, 'validated');
+});
+
+test('notes durant visite : plus modifiables une fois la visite terminée (ajout, modification, suppression) ; notes internes non concernées', async () => {
+  const a = await f.login('c1@x.fr');
+  const v = uuid(), n = uuid(), inn = uuid();
+  await a.push([op('visit', 'create', v, { company_id: f.f1, status: 'in_progress' }), op('note', 'create', n, { visit_id: v, kind: 'text', body: 'Pendant la visite' })]);
+  assert.equal((await a.push([op('note', 'update', n, { body: 'Corrigée' })])).body.results[0].result, 'applied', 'visite en cours : modifiable');
+  assert.equal((await a.push([op('visit', 'update', v, { status: 'done' }, 1)])).body.results[0].result, 'applied');
+  const locked = async (o: Record<string, unknown>) => (await a.push([o])).body.results[0].code;
+  assert.equal(await locked(op('note', 'update', n, { body: 'Trop tard' })), 'locked_status');
+  assert.equal(await locked(op('note', 'delete', n, {})), 'locked_status');
+  assert.equal(await locked(op('note', 'create', uuid(), { visit_id: v, kind: 'text', body: 'Après coup' })), 'locked_status');
+  assert.equal((await env.pool.query(`SELECT body, deleted_at FROM visit_note WHERE id = $1`, [n])).rows[0].body, 'Corrigée');
+  assert.equal((await a.push([op('internal_note', 'create', inn, { visit_id: v, body: 'Info interne après la visite' })])).body.results[0].result, 'applied', 'note interne : toujours possible');
+  // visite annulée : verrouillée aussi
+  const v2 = uuid(), n2 = uuid();
+  await a.push([op('visit', 'create', v2, { company_id: f.f1, status: 'planned' }), op('note', 'create', n2, { visit_id: v2, kind: 'text', body: 'x' })]);
+  await a.push([op('visit', 'update', v2, { status: 'cancelled' }, 1)]);
+  assert.equal(await locked(op('note', 'update', n2, { body: 'y' })), 'locked_status');
+});
+
+test('actions : créées depuis une visite et seulement une fois le compte rendu validé', async () => {
+  const a = await f.login('c1@x.fr');
+  const act = (company: string, visitId: string | undefined, title = 'Manuelle') => op('action', 'create', uuid(), { company_id: company, ...(visitId ? { visit_id: visitId } : {}), title, origin: 'manual' });
+  const r1 = async (o: Record<string, unknown>) => (await a.push([o])).body.results[0];
+  // sans visite : refusé
+  assert.equal((await r1(act(f.f1, undefined))).code, 'validation_failed');
+  // visite dont le compte rendu n'est pas validé : refusé (draft ou absent)
+  const v = uuid(), r = uuid();
+  await a.push([op('visit', 'create', v, { company_id: f.f1, status: 'done' }), op('report', 'create', r, { visit_id: v, language: 'fr', summary: 'Résumé' })]);
+  assert.equal((await r1(act(f.f1, v))).code, 'locked_status');
+  const noReport = uuid(); await a.push([op('visit', 'create', noReport, { company_id: f.f1, status: 'in_progress' })]);
+  assert.equal((await r1(act(f.f1, noReport))).code, 'locked_status');
+  // compte rendu validé : ajout manuel possible
+  assert.equal((await a.push([op('report', 'update', r, { status: 'validated' }, 1)])).body.results[0].result, 'applied');
+  assert.equal((await r1(act(f.f1, v))).result, 'applied');
+  // client qui ne correspond pas à la visite ; autre auteur
+  assert.equal((await r1(act(uuid(), v))).code, 'validation_failed');
+  assert.equal((await (await f.login('mgr1@x.fr')).push([act(f.f1, v)])).body.results[0].code, 'forbidden');
+  // une fois remis en brouillon, la création directe est de nouveau refusée
+  assert.equal((await a.push([op('report', 'update', r, { status: 'draft' }, 2)])).body.results[0].result, 'applied');
+  assert.equal((await r1(act(f.f1, v))).code, 'locked_status');
 });
 
 test('migration : une base existante reçoit le statut « organisée » et l\'historique, sans perdre de données', async () => {
@@ -140,7 +207,7 @@ test('migration : une base existante reçoit le statut « organisée » et l\'hi
   try {
     assert.deepEqual(await migrate(pool), [], 'base vide : schéma complet, migrations marquées appliquées');
     // on fait revenir la base à l'état d'avant la migration 001, avec une visite existante
-    await pool.query(`DROP FUNCTION can_read_internal_note(uuid, uuid); DROP TABLE internal_note; DROP VIEW crm_visit_history; DROP TABLE visit_history; DELETE FROM schema_migrations;
+    await pool.query(`ALTER TABLE visit_report DROP COLUMN draft_actions; DROP FUNCTION can_read_internal_note(uuid, uuid); DROP TABLE internal_note; DROP VIEW crm_visit_history; DROP TABLE visit_history; DELETE FROM schema_migrations;
       ALTER TABLE visit DROP CONSTRAINT visit_status_check;
       ALTER TABLE visit ADD CONSTRAINT visit_status_check CHECK (status IN ('planned','in_progress','done','cancelled'))`);
     const u = (await pool.query(`INSERT INTO app_user(email, display_name, role, password_hash) VALUES ('m@x.fr','M','commercial','h') RETURNING id`)).rows[0].id;
@@ -148,7 +215,7 @@ test('migration : une base existante reçoit le statut « organisée » et l\'hi
     await pool.query(`INSERT INTO visit(id, company_id, author_id, location_text) VALUES ($1,$2,$3,'ancienne')`, [uuid(), co, u]);
     await assert.rejects(pool.query(`UPDATE visit SET status = 'organized'`), /visit_status_check/);
 
-    assert.deepEqual(await migrate(pool), ['001_visite_organisee_et_historique.sql', '002_visite_validee.sql', '003_notes_internes.sql']);
+    assert.deepEqual(await migrate(pool), ['001_visite_organisee_et_historique.sql', '002_visite_validee.sql', '003_notes_internes.sql', '004_actions_depuis_compte_rendu.sql']);
     await pool.query(`UPDATE visit SET status = 'organized'`);                    // maintenant accepté
     assert.equal((await pool.query(`SELECT count(*)::int n FROM visit WHERE location_text = 'ancienne'`)).rows[0].n, 1, 'données conservées');
     assert.equal((await pool.query(`SELECT count(*)::int n FROM visit_history`)).rows[0].n, 0);

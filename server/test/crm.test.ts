@@ -1,6 +1,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { setup, fixture, op, uuid, createServiceKey, Api, type TestEnv, type Fixture } from './helpers.js';
+import { setup, fixture, op, uuid, createServiceKey, insertAction, Api, type TestEnv, type Fixture } from './helpers.js';
 import { importCrm } from '../src/crm-import.js';
 
 let env: TestEnv; let f: Fixture; let key: string; let crm: (p: string) => Promise<{ status: number; body: any }>;
@@ -30,10 +30,10 @@ test('API CRM : comptes rendus validés seulement ; suppressions logiques visibl
   const v = uuid(), draft = uuid(), valid = uuid(), v2 = uuid(), n = uuid(), act = uuid();
   await a.push([
     op('visit', 'create', v, { company_id: f.f1 }), op('report', 'create', draft, { visit_id: v, language: 'fr', summary: 'brouillon' }),
-    op('visit', 'create', v2, { company_id: f.f1 }), op('report', 'create', valid, { visit_id: v2, language: 'fr', summary: 'validé', status: 'validated' }),
+    op('visit', 'create', v2, { company_id: f.f1, status: 'done' }), op('report', 'create', valid, { visit_id: v2, language: 'fr', summary: 'validé', status: 'validated' }),
     op('note', 'create', n, { visit_id: v, kind: 'text', body: 'à supprimer' }),
-    op('action', 'create', act, { company_id: f.f1, title: 'À annuler' }),
   ]);
+  await insertAction(env.pool, { id: act, company: f.f1, visit: v, author: f.c1, title: 'À annuler' });
   await a.push([op('note', 'delete', n, {}), op('action', 'update', act, { status: 'cancelled' }, 1)]);
 
   const reports = (await crm('/reports')).body.items.map((r: any) => r.id);

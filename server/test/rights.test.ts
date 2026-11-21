@@ -9,12 +9,13 @@ before(async () => {
   const c1 = await f.login('c1@x.fr');
   visit = uuid(); privNote = uuid();
   const r = await c1.push([
-    op('visit', 'create', visit, { company_id: f.f1, status: 'done' }),
-    op('report', 'create', uuid(), { visit_id: visit, language: 'fr', summary: 'Résumé public', status: 'validated' }),
+    op('visit', 'create', visit, { company_id: f.f1, status: 'in_progress' }),
     op('note', 'create', uuid(), { visit_id: visit, kind: 'text', body: 'Note publique' }),
     op('private_note', 'create', privNote, { visit_id: visit, body: SECRET }),
+    op('visit', 'update', visit, { status: 'done' }, 1),                                    // les notes ne se modifient plus après
+    op('report', 'create', uuid(), { visit_id: visit, language: 'fr', summary: 'Résumé public', status: 'validated' }),
   ]);
-  assert.deepEqual(r.body.results.map((x: any) => x.result), ['applied', 'applied', 'applied', 'applied']);
+  assert.deepEqual(r.body.results.map((x: any) => x.result), ['applied', 'applied', 'applied', 'applied', 'applied']);
 });
 after(async () => { await env.close(); });
 
@@ -98,8 +99,9 @@ test('scénario 4 : retrait d\'une affectation : l\'appareil reçoit les retrait
   assert.ok(kinds.includes(`company:${f.f1}`), 'client retiré');
   assert.ok(kinds.includes(`visit:${visit}`), 'visite retirée');
   // et c3 ne peut plus rien écrire sur ce client
-  const w = await c3.push([op('action', 'create', uuid(), { company_id: f.f1, title: 'Interdit' })]);
-  assert.equal(w.body.results[0].code, 'forbidden');
+  const w = await c3.push([op('action', 'create', uuid(), { company_id: f.f1, visit_id: visit, title: 'Interdit' })]);
+  assert.equal(w.body.results[0].result, 'rejected');   // la visite n'est plus visible pour c3 : inconnue
+  assert.equal(w.body.results[0].code, 'not_found');
   // rétablir pour les tests suivants
   await admin.call('PUT', `/api/admin/v1/companies/${f.f1}/assignments`, { user_ids: [f.c1, f.c3] });
   await setMode(env.pool, 2);

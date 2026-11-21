@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { Pool, Client } from '../db.js';
 import { tx } from '../db.js';
 import { HttpError } from '../errors.js';
-import { LONG_TEXT_FIELDS, VERSIONED, VISIT_HISTORY_FIELDS, canEditVisitAddress, canEditVisitDate, canTransition } from '@visites/sync-core';
+import { LONG_TEXT_FIELDS, VERSIONED, VISIT_HISTORY_FIELDS, canEditVisitAddress, canEditVisitDate, canEditVisitNotes, canTransition, canValidateReport } from '@visites/sync-core';
 import type { UserRole, VisitStatus } from '@visites/sync-core';
 import type { Operation, OperationResult, ConflictField, EntityName } from '@visites/sync-core';
 
@@ -19,7 +19,9 @@ const VISIT_FIELDS = {
   started_at: ts.nullable(), ended_at: ts.nullable(), location_text: z.string().max(500).nullable(),
   status: z.enum(['planned', 'organized', 'in_progress', 'done', 'validated', 'cancelled']),
 };
+const DRAFT_ACTION = z.object({ id: uuid, title: z.string().trim().min(1).max(200), due_date: date.nullable(), origin: z.enum(['ai', 'manual']) });
 const REPORT_FIELDS = {
+  draft_actions: z.array(DRAFT_ACTION).max(30),
   summary: nstr, needs: nstr, objections: nstr, competitors: nstr, decisions: nstr, next_step: nstr,
   opportunity_temperature: z.enum(['cold', 'warm', 'hot']).nullable(), status: z.enum(['draft', 'validated']),
 };
@@ -103,7 +105,7 @@ async function updateVersioned(
   let version = row.version as number;
   if (cols.length) {
     const sets = cols.map((k, i) => `${k} = $${i + 2}`).join(', ');
-    const r = await c.query(`UPDATE ${table} SET ${sets}, version = version + 1 WHERE id = $1 RETURNING version`, [op.entity_id, ...cols.map(k => toApply[k])]);
+    const r = await c.query(`UPDATE ${table} SET ${sets}, version = version + 1 WHERE id = $1 RETURNING version`, [op.entity_id, ...cols.map(k => jsonParam(toApply[k]))]);
     version = r.rows[0].version;
     if (after) await after(toApply);
   }
@@ -131,10 +133,22 @@ async function companyReadable(c: Client, userId: string, id: string) {
   if (!ok) throw new Reject('forbidden', 'Client non accessible');
 }
 
+/** Les objets et tableaux sont envoyés en JSON (colonnes jsonb) ; pg les prendrait sinon pour des tableaux SQL. */
+const jsonParam = (x: unknown) => (x !== null && typeof x === 'object' && !(x instanceof Date) ? JSON.stringify(x) : x);
+
+/** Actions prévues dans le compte rendu : créées à la validation, par le serveur, dans la même transaction. */
+async function createActionsFromDraft(c: Client, row: { visit_id: string; company_id: string; author_id: string }, drafts: any[]) {
+  for (const a of drafts) {
+    await c.query(
+      `INSERT INTO action_item(id, company_id, visit_id, author_id, owner_id, title, due_date, origin) VALUES ($1,$2,$3,$4,$4,$5,$6,$7) ON CONFLICT (id) DO NOTHING`,
+      [a.id, row.company_id, row.visit_id, row.author_id, a.title, a.due_date ?? null, a.origin === 'ai' ? 'ai' : 'manual']);
+  }
+}
+
 async function insert(c: Client, table: string, data: Record<string, unknown>) {
   const cols = Object.keys(data);
   try {
-    await c.query(`INSERT INTO ${table}(${cols.join(',')}) VALUES (${cols.map((_, i) => `$${i + 1}`).join(',')})`, cols.map(k => data[k]));
+    await c.query(`INSERT INTO ${table}(${cols.join(',')}) VALUES (${cols.map((_, i) => `$${i + 1}`).join(',')})`, cols.map(k => jsonParam(data[k])));
   } catch (e: any) {
     if (e.code === '23505') throw new Reject('already_exists', 'Existe déjà');
     if (e.code === '23503') throw new Reject('not_found', 'Référence inconnue');
@@ -203,38 +217,57 @@ async function handle(ctx: Ctx): Promise<Applied> {
     case 'report': {
       if (op.op === 'create') {
         const p = parse(S.reportCreate, op.payload);
-        await visitRow(c, userId, p.visit_id, true);
+        const vr = await visitRow(c, userId, p.visit_id, true);
+        if (p.status === 'validated' && !canValidateReport(vr.status)) throw new Reject('locked_status', 'La visite doit être terminée pour valider le compte rendu');
         if (p.status === 'validated' && !(p.summary ?? '').trim()) throw new Reject('validation_failed', 'summary requis pour valider');
         const extra = p.status === 'validated' ? { validated_at: new Date().toISOString(), validated_by: userId } : {};
         await insert(c, 'visit_report', { id, ...p, ...extra });
-        if (p.status === 'validated') await autoValidate(c, p.visit_id);
+        if (p.status === 'validated') { await createActionsFromDraft(c, { visit_id: p.visit_id, company_id: vr.company_id, author_id: userId }, p.draft_actions ?? []); await c.query(`UPDATE visit_report SET draft_actions = '[]' WHERE id = $1`, [id]); await autoValidate(c, p.visit_id); }
         return { version: 1, fields: Object.keys(p) };
       }
       if (op.op === 'update') {
-        const { rows } = await c.query(`SELECT r.*, v.author_id FROM visit_report r JOIN visit v ON v.id = r.visit_id WHERE r.id = $1 FOR UPDATE OF r`, [id]);
+        const { rows } = await c.query(`SELECT r.*, v.author_id, v.status AS visit_status, v.company_id FROM visit_report r JOIN visit v ON v.id = r.visit_id WHERE r.id = $1 FOR UPDATE OF r`, [id]);
         const row = rows[0];
         if (!row || !(await c.query(`SELECT can_read_visit($1,$2) AS ok`, [userId, row.visit_id])).rows[0].ok) throw new Reject('not_found', 'Compte rendu inconnu');
         if (row.author_id !== userId) throw new Reject('forbidden', "Réservé à l'auteur");
         const fields = parse(S.reportUpdate, op.payload);
-        if (row.status === 'validated' && fields.status === 'draft') throw new Reject('locked_status', 'Un compte rendu validé ne revient pas en brouillon');
+        const keys = Object.keys(fields);
+        // Un compte rendu validé n'est plus modifiable ; seule sa remise en brouillon est possible.
+        if (row.status === 'validated' && !(keys.length === 1 && fields.status === 'draft')) {
+          throw new Reject('locked_status', 'Compte rendu validé : remettez-le en brouillon pour le modifier');
+        }
+        let pending: any[] = [];
         return updateVersioned(ctx, 'visit_report', row, fields, (merged, toApply) => {
-          if (merged.status === 'validated' && !String(merged.summary ?? '').trim()) throw new Reject('validation_failed', 'summary requis pour valider');
-          if (row.status !== 'validated' && merged.status === 'validated') { toApply.validated_at = new Date().toISOString(); toApply.validated_by = userId; }
-        }, async applied => { if (applied.status === 'validated') await autoValidate(c, row.visit_id); });
+          if (row.status === 'validated' && merged.status === 'draft') { toApply.validated_at = null; toApply.validated_by = null; return; }
+          if (row.status !== 'validated' && merged.status === 'validated') {
+            if (!canValidateReport(row.visit_status)) throw new Reject('locked_status', 'La visite doit être terminée pour valider le compte rendu');
+            if (!String(merged.summary ?? '').trim()) throw new Reject('validation_failed', 'summary requis pour valider');
+            toApply.validated_at = new Date().toISOString(); toApply.validated_by = userId;
+            pending = Array.isArray(merged.draft_actions) ? merged.draft_actions : [];
+            toApply.draft_actions = [];                      // les actions prévues deviennent de vraies actions (ci-dessous)
+          }
+        }, async applied => {
+          if (applied.status === 'validated') { await createActionsFromDraft(c, row, pending); await autoValidate(c, row.visit_id); }
+          if (applied.status === 'draft' && row.status === 'validated') {   // remise en brouillon : la visite redevient « terminée »
+            await c.query(`UPDATE visit SET status = 'done', version = version + 1 WHERE id = $1 AND status = 'validated'`, [row.visit_id]);
+          }
+        });
       }
       throw new Reject('validation_failed', 'Un compte rendu ne se supprime pas');
     }
     case 'note': {
       if (op.op === 'create') {
         const p = parse(S.noteCreate, op.payload);
-        await visitRow(c, userId, p.visit_id, true);
+        const vn = await visitRow(c, userId, p.visit_id, true);
+        if (!canEditVisitNotes(vn.status)) throw new Reject('locked_status', 'La visite est terminée : les notes ne sont plus modifiables');
         await insert(c, 'visit_note', { id, author_id: userId, ...p });
         return { fields: Object.keys(p) };
       }
-      const { rows } = await c.query(`SELECT * FROM visit_note WHERE id = $1 FOR UPDATE`, [id]);
+      const { rows } = await c.query(`SELECT n.*, v.status AS visit_status FROM visit_note n JOIN visit v ON v.id = n.visit_id WHERE n.id = $1 FOR UPDATE OF n`, [id]);
       const n = rows[0];
       if (!n) throw new Reject('not_found', 'Note inconnue');
       if (n.author_id !== userId) throw new Reject('forbidden', "Réservé à l'auteur");
+      if (!canEditVisitNotes(n.visit_status)) throw new Reject('locked_status', 'La visite est terminée : les notes ne sont plus modifiables');
       if (op.op === 'update') {
         const p = parse(S.noteUpdate, op.payload);
         await c.query(`UPDATE visit_note SET body = $2 WHERE id = $1`, [id, p.body]);
@@ -276,9 +309,14 @@ async function handle(ctx: Ctx): Promise<Applied> {
     }
     case 'action': {
       if (op.op === 'create') {
+        // Les actions naissent d'une visite : jamais seules, et seulement une fois le compte rendu validé (création automatique à la validation,
+        // ou ajout manuel ensuite). Avant, elles ne sont que des « actions prévues » dans le brouillon du compte rendu.
         const p = parse(S.actionCreate, op.payload);
-        await companyReadable(c, userId, p.company_id);
-        if (p.visit_id) await visitRow(c, userId, p.visit_id, false);
+        if (!p.visit_id) throw new Reject('validation_failed', 'Une action est créée depuis une visite (visit_id requis)');
+        const va = await visitRow(c, userId, p.visit_id, true);
+        if (va.company_id !== p.company_id) throw new Reject('validation_failed', 'Le client ne correspond pas à la visite');
+        const validated = (await c.query(`SELECT 1 FROM visit_report WHERE visit_id = $1 AND status = 'validated'`, [p.visit_id])).rows[0];
+        if (!validated) throw new Reject('locked_status', 'Les actions ne sont créées qu\'une fois le compte rendu validé');
         await insert(c, 'action_item', { id, author_id: userId, owner_id: userId, ...p });
         return { version: 1, fields: Object.keys(p) };
       }
