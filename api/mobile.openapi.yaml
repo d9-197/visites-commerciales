@@ -356,6 +356,9 @@ paths:
           content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}
         '403': {$ref: 'common.yaml#/components/responses/Forbidden'}
         '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+        '409':
+          description: Génération impossible à ce moment : visite pas encore commencée, annulée, ou compte rendu déjà validé (ai_not_available).
+          content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}
         '429': {$ref: 'common.yaml#/components/responses/TooManyRequests'}
         '502':
           description: Le service d'IA a échoué ou sa réponse n'a pas le format attendu (ai_failed). Le message ne contient jamais le texte des notes.
@@ -490,6 +493,10 @@ components:
             visit_history: {type: array, items: {$ref: '#/components/schemas/VisitHistory'}}
             reports: {type: array, items: {$ref: '#/components/schemas/Report'}}
             notes: {type: array, items: {$ref: '#/components/schemas/Note'}}
+            internal_notes:
+              type: array
+              description: Notes internes lisibles par l'utilisateur (les siennes et celles de sa descendance). Jamais exposées au CRM ni à l'IA.
+              items: {$ref: '#/components/schemas/InternalNote'}
             private_notes: {type: array, items: {$ref: '#/components/schemas/PrivateNote'}}
             attachments: {type: array, items: {$ref: '#/components/schemas/Attachment'}}
             actions: {type: array, items: {$ref: '#/components/schemas/Action'}}
@@ -612,6 +619,17 @@ components:
         recording_id: {oneOf: [{$ref: 'common.yaml#/components/schemas/Uuid'}, {type: 'null'}]}
         attachment_id: {oneOf: [{$ref: 'common.yaml#/components/schemas/Uuid'}, {type: 'null'}]}
         noted_at: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+        updated_at: {$ref: 'common.yaml#/components/schemas/Timestamp'}
+        deleted_at: {oneOf: [{$ref: 'common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]}
+    InternalNote:
+      type: object
+      required: [id, visit_id, author_id, author_name, body, updated_at]
+      properties:
+        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        visit_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        author_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        author_name: {type: string}
+        body: {type: string}
         updated_at: {$ref: 'common.yaml#/components/schemas/Timestamp'}
         deleted_at: {oneOf: [{$ref: 'common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]}
     PrivateNote:
@@ -774,7 +792,7 @@ components:
         id: {$ref: 'common.yaml#/components/schemas/Uuid'}
         entity:
           type: string
-          enum: [visit, visit_contact, report, note, private_note, action, recording, attachment, glossary_term]
+          enum: [visit, visit_contact, report, note, internal_note, private_note, action, recording, attachment, glossary_term]
         entity_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
         op:
           type: string

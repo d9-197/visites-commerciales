@@ -44,7 +44,7 @@ export class SyncEngine {
   async create(entity: EntityName, payload: Row, id = this.ids.newId()): Promise<string> {
     const table = this.tableOf(entity);
     const base: Row = { id, version: 1, updated_at: this.now() };
-    if (entity === 'visit' || entity === 'note') base.author_id = this.ids.userId;
+    if (entity === 'visit' || entity === 'note' || entity === 'internal_note') base.author_id = this.ids.userId;
     if (entity === 'action') { base.author_id = this.ids.userId; base.owner_id = this.ids.userId; base.status = 'todo'; base.reminder = 'none'; }
     await this.store.upsert(table, [{ ...base, ...payload }]);
     await this.store.enqueue({ id: this.ids.newId(), entity, entity_id: id, op: 'create', payload });
@@ -142,8 +142,9 @@ export class SyncEngine {
       for (const t of ['contacts', 'assignments'] as ChangeKey[]) for (const r of await this.store.list(t)) if (r.company_id === id) await this.store.remove(t, rowKey(t, r));
     } else if (entity === 'visit') {
       await this.store.remove('visits', id);
-      for (const t of ['reports', 'notes', 'private_notes', 'actions', 'visit_contacts', 'visit_history'] as ChangeKey[])
+      for (const t of ['reports', 'notes', 'internal_notes', 'private_notes', 'actions', 'visit_contacts', 'visit_history'] as ChangeKey[])
         for (const r of await this.store.list(t)) if (r.visit_id === id && (t !== 'actions')) await this.store.remove(t, rowKey(t, r));
     } else if (entity === 'action') await this.store.remove('actions', id);
+    else if (entity === 'internal_note') await this.store.remove('internal_notes', id);
   }
 }

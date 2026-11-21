@@ -1,6 +1,6 @@
 // Types et règles partagés entre le back et l'application (voir docs/API.md §3).
 
-export type EntityName = 'visit' | 'visit_contact' | 'report' | 'note' | 'private_note' | 'action'
+export type EntityName = 'visit' | 'visit_contact' | 'report' | 'note' | 'internal_note' | 'private_note' | 'action'
   | 'recording' | 'attachment' | 'glossary_term';
 
 export type OpKind = 'create' | 'update' | 'delete';
@@ -42,11 +42,11 @@ export interface PullResponse {
 export type Row = Record<string, any>;
 
 export type ChangeKey = 'companies' | 'contacts' | 'assignments' | 'colleagues' | 'visits' | 'visit_contacts'
-  | 'reports' | 'notes' | 'private_notes' | 'attachments' | 'actions' | 'recordings' | 'ai_proposals' | 'glossary_terms' | 'visit_history';
+  | 'reports' | 'notes' | 'internal_notes' | 'private_notes' | 'attachments' | 'actions' | 'recordings' | 'ai_proposals' | 'glossary_terms' | 'visit_history';
 
 /** Entité de l'API -> clé du tableau renvoyé par pull. */
 export const CHANGE_KEY: Partial<Record<EntityName, ChangeKey>> = {
-  visit: 'visits', visit_contact: 'visit_contacts', report: 'reports', note: 'notes',
+  visit: 'visits', visit_contact: 'visit_contacts', report: 'reports', note: 'notes', internal_note: 'internal_notes',
   private_note: 'private_notes', action: 'actions',
 };
 

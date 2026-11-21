@@ -71,7 +71,8 @@ sequenceDiagram
 | `visit` | Sur un client que l'utilisateur peut lire | `location_text` (adresse) : voir ci-dessous ; tout le reste : auteur seul ; `base_version` requis ; `planned_start` seulement tant que la visite n'est pas commencée | Non : statut `cancelled` | `author_id`, version, historique |
 | `visit_contact` | Le contact doit appartenir au client de la visite | — | Oui (logique) | |
 | `report` | Un seul par visite, par l'auteur de la visite | Auteur seul ; `base_version` requis ; passage à `validated` : `summary` non vide **[à valider]** | Non | `validated_at`, `validated_by`, version |
-| `note` | Par l'auteur de la visite | Champ `body` seulement | Oui (logique) | `author_id` |
+| `note` (notes durant visite) | Par l'auteur de la visite | Champ `body` seulement, par l'auteur | Oui (logique), par l'auteur | `author_id` |
+| `internal_note` | Par un **commercial** qui voit la visite | `body`, par l'auteur seul | Oui (logique), par l'auteur | `author_id`, `author_name` ; lecture : l'auteur et sa hiérarchie (lecture seule) |
 | `private_note` | Une par visite et par auteur | Auteur seul ; `base_version` requis | Oui (logique) | `author_id` |
 | `action` | Sur un client que l'utilisateur peut lire | `title`, `due_date`, `reminder`, `status` ; `base_version` requis | Non : statut `cancelled` | `author_id`, `owner_id` (= auteur dans le MVP), `completed_at`, version |
 | `recording` | Métadonnées ; l'audio est envoyé séparément | — | Non | `status`, `purge_after` |
@@ -110,6 +111,7 @@ sequenceDiagram
 ```
 
 - La proposition arrive par `pull` (`ai_proposals`) avec le texte source, les passages modifiés et les avertissements du contrôle automatique (nombre ou nom absent de la dictée).
+- **Moment autorisé** : la génération n'est acceptée que si la visite est **en cours ou terminée** et que le **compte rendu n'est pas validé** ; sinon 409 `ai_not_available`.
 - **Implémenté (première tranche, voir `IA_MISTRAL.md`)** : `POST /reports/{id}/ai-proposals` avec `source_text` renvoie **tout de suite** la proposition et ses avertissements (réponse 200, pas de traitement asynchrone, entrée texte seulement). Réponses : 402 `quota_exceeded`, 403 si l'appelant n'est pas l'auteur, 429, 502 `ai_failed`, 503 `ai_unavailable` (pas de clé). Le traitement asynchrone à partir de l'audio reste à faire ; `GET /usage` aussi.
 - **L'IA ne crée rien directement** : les actions proposées ne deviennent des actions qu'après validation par l'utilisateur, via `push`.
 - **Implémenté (première tranche vocale)** : `POST /visits/{id}/transcriptions` reçoit l'audio brut (25 Mo au plus) et renvoie le texte transcrit par Voxtral, **sans conserver l'audio ni le texte** ; en ligne seulement. Ce n'est pas encore le circuit prévu (enregistrements créés hors-ligne, envoi différé par morceaux, traitement asynchrone).

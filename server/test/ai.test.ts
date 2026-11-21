@@ -30,11 +30,12 @@ const svcCfg = () => ({ apiKey: 'cle-de-test', baseUrl: fake.url, model: 'mistra
 const svc = () => new MistralService(svcCfg());
 
 before(async () => {
+  process.env.AI_RATE_PER_MIN = '1000';   // la limite de débit est testée à part
   fake = await fakeMistral();
   env = await setup({}, { ai: { service: svc(), transcriber: new VoxtralService(svcCfg()), prices: true, transcribePrice: undefined } });
   f = await fixture(env);
   const a = await f.login('c1@x.fr'); const v = uuid(); report = uuid();
-  await a.push([op('visit', 'create', v, { company_id: f.f1 }), op('report', 'create', report, { visit_id: v, language: 'fr' })]);
+  await a.push([op('visit', 'create', v, { company_id: f.f1, status: 'in_progress' }), op('report', 'create', report, { visit_id: v, language: 'fr' })]);
 });
 after(async () => { await env.close(); await fake.close(); });
 
@@ -85,6 +86,24 @@ test('IA : réponse illisible, hors format ou erreur du fournisseur : 502 neutre
   assert.equal((await env.pool.query(`SELECT count(*)::int n FROM ai_proposal`)).rows[0].n, before);
 });
 
+test('IA : moment autorisé : visite en cours ou terminée tant que le compte rendu n\'est pas validé ; refusé avant le début et après validation', async () => {
+  fake.reply(200, completion(GOOD));
+  const a = await f.login('c1@x.fr');
+  const mk = async (status: string, reportStatus?: string) => {
+    const v = uuid(), r = uuid();
+    await a.push([op('visit', 'create', v, { company_id: f.f1, status }), op('report', 'create', r, { visit_id: v, language: 'fr', ...(reportStatus ? { summary: 'Résumé', status: reportStatus } : {}) })]);
+    return r;
+  };
+  const planned = await ask('c1@x.fr', undefined, await mk('planned'));
+  assert.equal(planned.status, 409); assert.equal(planned.body.code, 'ai_not_available');
+  assert.equal((await ask('c1@x.fr', undefined, await mk('organized'))).status, 409);
+  assert.equal((await ask('c1@x.fr', undefined, await mk('in_progress'))).status, 200, 'en cours : possible');
+  assert.equal((await ask('c1@x.fr', undefined, await mk('done'))).status, 200, 'terminée, compte rendu en brouillon : possible');
+  const validated = await ask('c1@x.fr', undefined, await mk('in_progress', 'validated'));
+  assert.equal(validated.status, 409, 'compte rendu validé : refusé'); assert.equal(validated.body.code, 'ai_not_available');
+  assert.equal((await ask('c1@x.fr', undefined, await mk('cancelled'))).status, 409);
+});
+
 test('IA : un refus du fournisseur est journalisé sans le texte des notes', async () => {
   const logs: string[] = [];
   const s = new MistralService(svcCfg(), fetch, (e, d) => logs.push(`${e} ${JSON.stringify(d)}`));
@@ -124,12 +143,14 @@ test('IA : plafond mensuel : 402 une fois atteint (tarifs connus) ; surcharge pa
 
 test('IA : limitation de débit : 429 au-delà de 10 demandes par minute et par utilisateur', async () => {
   fake.reply(200, completion(GOOD));
+  process.env.AI_RATE_PER_MIN = '10';
   const a = await f.login('c2@x.fr');
   const v = uuid(), rr = uuid();   // c2 n'a pas de client : on utilise un compte rendu inexistant, la limite s'applique avant
   void v; void rr;
   let last = 0;
   for (let i = 0; i < 12; i++) last = (await a.call('POST', `${M}/reports/${uuid()}/ai-proposals`, { source_text: 'x' })).status;
   assert.equal(last, 429);
+  process.env.AI_RATE_PER_MIN = '1000';
 });
 
 test('IA : sans clé configurée : 503 ai_unavailable', async () => {

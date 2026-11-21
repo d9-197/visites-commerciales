@@ -57,6 +57,10 @@ erDiagram
 - `visit_history` : une ligne par modification de la date prévue ou de l'adresse (ancienne valeur, nouvelle valeur, nom de la personne copié au moment de la modification, date). Écrite par le serveur seulement ; lue par ceux qui voient la visite ; exposée au CRM par la vue `crm_visit_history`.
 - Les bases existantes sont mises à niveau par `db/migrations/001_visite_organisee_et_historique.sql`, appliquée automatiquement au démarrage (table `schema_migrations`).
 
+## 2 ter. Notes internes (migration 003)
+
+`internal_note` : id, visite, auteur, **nom de l'auteur copié à la création**, texte, dates, suppression logique. **Lisible par l'auteur et par sa hiérarchie** (fonction `can_read_internal_note`, fermeture de hiérarchie), **indépendamment du mode de visibilité** des comptes rendus. Aucune vue du CRM ne l'expose ; elle n'entre ni dans le compte rendu ni dans la génération par IA. Un changement de supérieur produit des retraits d'accès pour l'ancienne hiérarchie.
+
 ## 3. Hiérarchie
 
 `app_user.manager_id` donne le supérieur direct. `user_hierarchy` est la **fermeture transitive** (ancêtre, descendant, profondeur, avec la profondeur 0 pour l'utilisateur lui-même), reconstruite par `rebuild_hierarchy()` à chaque changement de rattachement. Elle évite des requêtes récursives à chaque lecture. Garde-fou : profondeur limitée à 10 pour éviter une boucle si un cycle est saisi par erreur.

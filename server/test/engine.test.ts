@@ -121,4 +121,34 @@ test(`[${kind}] moteur : retrait d\'accès côté serveur : l\'appareil supprime
   await setMode(env.pool, 2);
 });
 
+test(`[${kind}] moteur : notes modifiées puis supprimées ; note interne vue par la hiérarchie, retirée à sa suppression`, async () => {
+  const c1 = await device(kind, 'c1@x.fr', f.c1), mgr = await device(kind, 'mgr1@x.fr', f.mgr1);
+  await c1.engine.sync();
+  const company = (await c1.store.list('companies'))[0]!;
+  const v = await c1.engine.create('visit', { company_id: company.id, status: 'in_progress' });
+  const n = await c1.engine.create('note', { visit_id: v, kind: 'text', body: 'Première version' });
+  const inn = await c1.engine.create('internal_note', { visit_id: v, body: 'Info interne' });
+  await c1.engine.update('note', n, { body: 'Deuxième version' });            // fusionnée dans l'opération de création en attente
+  await c1.engine.update('internal_note', inn, { body: 'Info interne corrigée' });
+  assert.equal(await c1.store.pendingCount(), 3, 'visite, note et note interne : une opération chacune');
+  await c1.engine.sync(); await mgr.engine.sync();
+  assert.equal((await mgr.store.get('notes', n))!.body, 'Deuxième version');
+  assert.equal((await mgr.store.get('internal_notes', inn))!.body, 'Info interne corrigée', 'la hiérarchie reçoit la note interne');
+  assert.equal((await mgr.store.get('internal_notes', inn))!.author_name, 'c1');
+  // modification d'une note déjà envoyée, puis suppression avec propagation
+  await c1.engine.update('note', n, { body: 'Troisième version' });
+  await c1.engine.sync(); await mgr.engine.sync();
+  assert.equal((await mgr.store.get('notes', n))!.body, 'Troisième version');
+  await c1.engine.remove('note', n); await c1.engine.remove('internal_note', inn);
+  assert.equal(await c1.store.get('notes', n), undefined, 'disparaît tout de suite chez l\'auteur');
+  await c1.engine.sync(); await mgr.engine.sync();
+  assert.equal(await mgr.store.get('notes', n), undefined, 'suppression reçue par la hiérarchie');
+  assert.equal(await mgr.store.get('internal_notes', inn), undefined);
+  // une note créée puis supprimée avant tout envoi ne part jamais
+  const tmp = await c1.engine.create('note', { visit_id: v, kind: 'text', body: 'éphémère' });
+  const before = await c1.store.pendingCount();
+  await c1.engine.remove('note', tmp);
+  assert.equal(await c1.store.pendingCount(), before - 1);
+});
+
 }

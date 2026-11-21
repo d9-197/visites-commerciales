@@ -114,10 +114,38 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   assert.equal(await page.getByLabel('Nouvelle note').count(), 0, 'plus de champ de note permanent : écran allégé');
   assert.ok(await page.getByText('Notes durant visite', { exact: true }).first().isVisible(), 'libellé « Notes durant visite »');
   assert.ok(await page.getByRole('button', { name: /🎤 Dicter une note/ }).isVisible(), 'icône micro sur le bouton dicter');
-  await page.getByRole('button', { name: '+ Ajouter une note' }).click();
+  await page.getByRole('button', { name: '+ Ajouter une note', exact: true }).click();
   await page.getByLabel('Nouvelle note').fill('M. Martin intéressé par l\'offre B');
   await page.getByRole('button', { name: 'Ajouter', exact: true }).click();
   await page.getByText('M. Martin intéressé par l\'offre B').first().waitFor();
+
+  // 2 sexies bis bis. Notes modifiables ; suppression avec confirmation ; notes internes (distinctes, partagées avec la hiérarchie)
+  await page.getByRole('button', { name: 'Modifier la note', exact: true }).first().click();
+  await page.getByLabel('Texte de la note').fill('M. Martin intéressé par l\'offre B (corrigé)');
+  await page.getByRole('button', { name: 'Enregistrer' }).last().click();
+  await page.getByText('M. Martin intéressé par l\'offre B (corrigé)').first().waitFor();
+  await page.getByRole('button', { name: '+ Ajouter une note', exact: true }).click();
+  await page.getByLabel('Nouvelle note').fill('À supprimer');
+  await page.getByRole('button', { name: 'Ajouter', exact: true }).click();
+  await page.locator('textarea[aria-label^="Nouvelle note"]').waitFor({ state: 'detached' });
+  await page.getByText('À supprimer', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Modifier la note', exact: true }).last().click();
+  await page.getByRole('button', { name: 'Supprimer la note' }).click();
+  await page.getByText('Supprimer cette note ?').waitFor();                       // confirmation demandée
+  assert.ok(await page.getByText('La suppression est définitive.').isVisible());
+  await page.getByRole('button', { name: 'Annuler' }).last().click();               // annuler la confirmation : retour à l'édition, rien supprimé
+  await page.getByLabel('Texte de la note').waitFor();
+  await page.getByRole('button', { name: 'Supprimer la note' }).click();
+  await page.getByRole('button', { name: 'Confirmer la suppression' }).click();
+  await page.getByText('Supprimer cette note ?').waitFor({ state: 'detached' });
+  await page.getByText('À supprimer', { exact: true }).waitFor({ state: 'detached' });
+  assert.ok(await page.getByText('Notes internes', { exact: true }).first().isVisible(), 'section « Notes internes » distincte');
+  await page.getByRole('button', { name: '+ Ajouter une note interne' }).click();
+  await page.getByLabel('Nouvelle note interne').fill('Budget réel plus élevé, ne pas communiquer au client');
+  await page.getByRole('button', { name: 'Ajouter', exact: true }).click();
+  await page.locator('textarea[aria-label^="Nouvelle note"]').waitFor({ state: 'detached' });
+  await page.getByText('Budget réel plus élevé, ne pas communiquer au client').waitFor();
+  assert.ok(await page.getByText('Vous', { exact: true }).first().isVisible(), 'note interne signée');
 
   // 2 sexies ter. Dictée vocale (faux Voxtral) : enregistrement réel avec le faux micro, transcription à relire, note créée après relecture
   await page.getByRole('button', { name: 'Dicter une note' }).click();
@@ -137,8 +165,15 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   assert.ok(tr[0].bytes > 1000, `audio reçu (${tr[0].bytes} octets)`);
   await shot(page, '3h-dictee');
 
-  // 2 sexies bis. Synthèse par IA (faux Mistral) : proposition à relire, avertissements, application, action créée
-  await page.getByRole('button', { name: 'Synthétiser avec l\'IA' }).click();
+  // 2 sexies bis. Écran dédié au compte rendu ; génération par IA (faux Mistral) : proposition à relire, avertissements, application, action créée
+  assert.equal(await page.getByLabel('Résumé du compte rendu').count(), 0, 'le compte rendu n\'est plus sur l\'écran de visite');
+  await page.getByRole('button', { name: 'Ouvrir le compte rendu' }).click();
+  await page.getByRole('heading', { name: 'Compte rendu' }).waitFor();
+  await page.goBack();                                                             // bouton retour du téléphone : revient à la visite
+  await page.getByRole('heading', { name: 'Dupont SA' }).waitFor();
+  await page.goForward();
+  await page.getByRole('heading', { name: 'Compte rendu' }).waitFor();
+  await page.getByRole('button', { name: 'Générer à partir des notes (IA)' }).click();
   await page.getByText('Proposition de l\'IA').waitFor();
   assert.ok(await page.getByText('Nombre absent des notes : 50000', { exact: false }).first().isVisible(), 'nombre qui ne figure pas dans les notes : signalé');
   assert.ok(await page.getByText(/Échéance calculée à partir d'une date relative/).first().isVisible(), 'échéance relative signalée');
@@ -152,7 +187,9 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   assert.match(await page.getByRole('textbox', { name: 'Besoins', exact: true }).inputValue(), /atelier/, 'champs détaillés appliqués');
   const sent = await (await fetch('http://127.0.0.1:4010/__requests')).json();
   assert.equal(sent.length, 1); assert.equal(sent[0].auth, 'Bearer cle-de-test');
-  assert.ok(sent[0].body.messages[1].content.includes('M. Martin intéressé par l\'offre B'), 'les notes sont envoyées');
+  assert.ok(sent[0].body.messages[1].content.includes('M. Martin intéressé par l\'offre B (corrigé)'), 'les notes (corrigées) sont envoyées');
+  assert.ok(!sent[0].body.messages[1].content.includes('Budget réel plus élevé'), 'les notes internes ne sont JAMAIS envoyées à l\'IA');
+  assert.ok(!sent[0].body.messages[1].content.includes('À supprimer'), 'une note supprimée n\'est pas envoyée');
   assert.ok(sent[0].body.messages[1].content.includes('Dictée relue'), 'la note dictée (relue) est incluse dans la synthèse');
   assert.ok(!JSON.stringify(sent[0].body).includes('Dupont'), 'le nom du client n\'est pas envoyé');
   // Dictée directement dans un champ du compte rendu (micro à côté du libellé) : le texte est ajouté à la fin du champ
@@ -167,7 +204,11 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   assert.equal(besoinsApres, `${besoinsAvant} Dictée simulée : le client confirme un budget de 40 000 euros.`, 'texte ajouté à la suite du champ, sans écraser');
   await page.getByLabel('Besoins', { exact: true }).fill(besoinsAvant);
   await page.getByLabel('Résumé du compte rendu').fill('Intéressé par l\'offre B, budget à confirmer.');
-  await page.getByRole('button', { name: 'Valider' }).click();
+  await page.getByRole('button', { name: 'Valider le compte rendu' }).click();
+  await page.getByText('Validé', { exact: true }).first().waitFor();
+  await page.getByRole('button', { name: '‹ Retour' }).click();
+  await page.getByRole('heading', { name: 'Dupont SA' }).waitFor();
+  await page.getByText('Validé', { exact: true }).first().waitFor();            // compte rendu validé, visible depuis la visite
   await page.getByRole('button', { name: 'Terminer la visite' }).click();
   await page.getByText('Validée', { exact: true }).first().waitFor();      // compte rendu déjà validé : la visite terminée devient validée
   await shot(page, '3c-terminee');
@@ -249,6 +290,12 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await p1.getByRole('button', { name: 'Clients' }).click();
   await p1.getByText('Atelier Roux').click();
   await p1.getByText('À organiser', { exact: true }).first().waitFor();
+  await p1.getByText('Le compte rendu sera disponible une fois la visite commencée.').waitFor();
+  await p1.getByRole('button', { name: '+ Ajouter une note interne' }).click();
+  await p1.getByLabel('Nouvelle note interne').fill('Le client hésite, voir avec la direction');
+  await p1.getByRole('button', { name: 'Ajouter', exact: true }).click();
+  await p1.locator('textarea[aria-label^="Nouvelle note"]').waitFor({ state: 'detached' });
+  await p1.getByText('Le client hésite, voir avec la direction').waitFor();
   assert.equal(await borderOf(p1.getByText('À organiser', { exact: true }).first()), 'rgb(168, 104, 10)', 'statut « à organiser » en ambre');
   assert.equal(await p1.getByText('En retard', { exact: true }).count(), 0, 'visite créée à l\'instant : pas en retard');
   await p1.getByRole('button', { name: 'Modifier la date prévue' }).click();
@@ -265,6 +312,10 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await mp.getByRole('radio', { name: 'Par date' }).click();           // une ligne par visite, avec le nom du client
   await mp.getByText('Atelier Roux').first().click();
   assert.equal(await mp.getByRole('button', { name: 'Modifier la date prévue' }).count(), 0, 'le manager ne modifie pas la date');
+  await mp.getByText('Le client hésite, voir avec la direction').waitFor();                      // note interne : partagée avec la hiérarchie
+  await mp.getByText('Commercial Un', { exact: true }).waitFor();
+  assert.equal(await mp.getByRole('button', { name: 'Modifier la note interne' }).count(), 0, 'le manager lit la note interne sans pouvoir la modifier');
+  assert.equal(await mp.getByRole('button', { name: '+ Ajouter une note interne' }).count(), 0, 'le manager n\'écrit pas de note interne');
   await mp.getByRole('button', { name: 'Modifier l\'adresse de la visite' }).click();
   await mp.getByLabel('Adresse de la visite', { exact: true }).fill('Entrée B, 8 quai Jean Moulin, Villeurbanne');
   await mp.getByRole('button', { name: 'Enregistrer' }).last().click();
@@ -305,6 +356,11 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   assert.match(await np.getByLabel('Texte dicté').inputValue(), /Dictée simulée/);
   assert.equal((await (await fetch('http://127.0.0.1:4010/__transcriptions')).json()).length, 3, 'le fichier choisi est transcrit');
   await np.getByRole('button', { name: 'Annuler' }).click();
+  // même repli sur l'écran du compte rendu (visite démarrée pour y accéder)
+  await np.getByRole('button', { name: 'Démarrer la visite' }).click();
+  await np.getByText('En cours', { exact: true }).first().waitFor();
+  await np.getByRole('button', { name: 'Ouvrir le compte rendu' }).click();
+  await np.getByRole('heading', { name: 'Compte rendu' }).waitFor();
   // même repli pour un champ du compte rendu : icône micro qui ouvre le choix du fichier, texte ajouté au champ
   await np.getByLabel('Fichier audio : Objections', { exact: true }).setInputFiles({ name: 'dictee.webm', mimeType: 'audio/webm', buffer: Buffer.alloc(3000, 5) });
   await np.waitForFunction(() => /Dictée simulée/.test(document.querySelector('[aria-label="Objections"]').value));

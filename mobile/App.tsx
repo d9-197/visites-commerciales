@@ -43,8 +43,8 @@ const voiceErrorMessage = (e: unknown): string => {
     ai_failed: 'Le service de transcription n\'a pas pu répondre. Réessayez.', payload_too_large: 'Enregistrement trop long.', forbidden: 'Seul l\'auteur de la visite peut dicter.' } as Record<string, string>)[code] ?? 'La transcription a échoué. Réessayez.';
 };
 
-type Screen = { name: 'today' } | { name: 'visit'; id: string } | { name: 'clients' } | { name: 'actions' } | { name: 'action'; id?: string } | { name: 'settings' };
-interface Data { visits: Row[]; companies: Row[]; actions: Row[]; reports: Row[]; notes: Row[]; history: Row[]; pending: number }
+type Screen = { name: 'today' } | { name: 'visit'; id: string } | { name: 'report'; id: string } | { name: 'clients' } | { name: 'actions' } | { name: 'action'; id?: string } | { name: 'settings' };
+interface Data { visits: Row[]; companies: Row[]; actions: Row[]; reports: Row[]; notes: Row[]; internalNotes: Row[]; history: Row[]; pending: number }
 interface Ctx { store: SqliteStore; engine: SyncEngine; client: ApiClient; userId: string; role: UserRole; lang: string }
 type Act = (f: () => Promise<unknown>) => Promise<void>;
 
@@ -154,7 +154,7 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
   const [group, setGroup] = useState<'client' | 'date'>('client');
   const [showValidated, setShowValidated] = useState(false);       // visites validées : masquées par défaut
   const [showFinished, setShowFinished] = useState(false);         // actions terminées ou annulées : masquées par défaut
-  const [data, setData] = useState<Data>({ visits: [], companies: [], actions: [], reports: [], notes: [], history: [], pending: 0 });
+  const [data, setData] = useState<Data>({ visits: [], companies: [], actions: [], reports: [], notes: [], internalNotes: [], history: [], pending: 0 });
   const [status, setStatus] = useState<{ offline: boolean; msg?: string }>({ offline: false });
   const syncing = useRef(false);
 
@@ -162,7 +162,7 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
     const { store } = ctx;
     setData({
       visits: await store.list('visits'), companies: await store.list('companies'), actions: await store.list('actions'),
-      reports: await store.list('reports'), notes: await store.list('notes'), history: await store.list('visit_history'), pending: await store.pendingCount(),
+      reports: await store.list('reports'), notes: await store.list('notes'), internalNotes: await store.list('internal_notes'), history: await store.list('visit_history'), pending: await store.pendingCount(),
     });
   }, [ctx]);
 
@@ -229,7 +229,8 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
                 const id = await ctx.engine.create('visit', { company_id: c.id, status: 'planned', planned_start: ceilTo15(new Date()).toISOString(), ...(addr ? { location_text: addr } : {}) }); navigate({ name: 'visit', id }); })} />
           ))}
         </>}
-        {screen.name === 'visit' && <VisitScreen key={screen.id} visitId={screen.id} data={data} ctx={ctx} act={act} back={goBack} companyName={companyName} offline={status.offline} />}
+        {screen.name === 'visit' && <VisitScreen key={screen.id} visitId={screen.id} data={data} ctx={ctx} act={act} back={goBack} companyName={companyName} offline={status.offline} openReport={() => navigate({ name: 'report', id: screen.id })} />}
+        {screen.name === 'report' && <ReportScreen key={screen.id} visitId={screen.id} data={data} ctx={ctx} act={act} back={goBack} companyName={companyName} offline={status.offline} />}
         {screen.name === 'actions' && <>
           <View style={s.rowBetween}><Text style={s.h1}>Actions</Text><Btn small title="+ Nouvelle" onPress={() => navigate({ name: 'action' })} /></View>
           <View style={s.rowBetween}>
@@ -281,21 +282,16 @@ function VisitRow({ v, client, onPress }: { v: Row; client?: string; onPress: ()
     title={client ?? w.main} sub={client ? w.main : (w.sub ? `${w.sub}${v.objective ? ' · ' + v.objective : ''}` : v.objective ?? undefined)} />;
 }
 
-function VisitScreen({ visitId, data, ctx, act, back, companyName, offline }: { visitId: string; data: Data; ctx: Ctx; act: Act; back: () => void; companyName: (id: string) => string; offline: boolean }) {
+function VisitScreen({ visitId, data, ctx, act, back, companyName, offline, openReport }: { visitId: string; data: Data; ctx: Ctx; act: Act; back: () => void; companyName: (id: string) => string; offline: boolean; openReport: () => void }) {
   const { s, c } = useTheme();
   const v: Row | undefined = data.visits.find(x => x.id === visitId);
   const report: Row | undefined = data.reports.find(r => r.visit_id === visitId);
-  const [f, setF] = useState<Record<string, string>>(() => pickFields(report));
-  const [aiBusy, setAiBusy] = useState(false);
-  const [aiErr, setAiErr] = useState<string>();
-  const [ai, setAi] = useState<AiProposalResponse>();
   const [dictating, setDictating] = useState<string | null>(null);          // dictée en cours : une seule à la fois
   const [dictErr, setDictErr] = useState<{ id: string; msg: string }>();
-  const [noteOpen, setNoteOpen] = useState(false);
-  const setDictError = (id: string, msg?: string) => setDictErr(msg ? { id, msg } : undefined);
-  const appendTo = (k: string, text: string) => setF(cur => ({ ...cur, [k]: cur[k] && cur[k]!.trim() ? `${cur[k]!.trimEnd()} ${text}` : text }));
-  const [note, setNote] = useState('');
+  const [noteSheet, setNoteSheet] = useState<'none' | 'note' | 'internal'>('none');
+  const [editing, setEditing] = useState<{ entity: 'note' | 'internal_note'; row: Row } | null>(null);
   const [sheet, setSheet] = useState<'none' | 'date' | 'address' | 'history' | 'nav'>('none');
+  const setDictError = (id: string, msg?: string) => setDictErr(msg ? { id, msg } : undefined);
   const company: Row | undefined = data.companies.find(co => co.id === v?.company_id);
   // L'adresse appartient à la visite : copiée du client à la création, elle ne suit pas ensuite les changements du client.
   // (Visites créées avant cette règle, sans adresse : on affiche celle du client en repli.)
@@ -306,33 +302,10 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName, offline }: { 
   const canDate = canEditVisitDate(v.status, mine);
   const canAddress = canEditVisitAddress(v.status, ctx.role);
   const setStatus = (status: string, extra: Row = {}) => act(() => ctx.engine.update('visit', v.id, { status, ...extra }));
-  const saveReport = (validate: boolean, values: Record<string, string> = f) => act(async () => {
-    const st = validate ? 'validated' : 'draft';
-    if (!report) await ctx.engine.create('report', { visit_id: visitId, language: ctx.lang, ...values, status: st });
-    else await ctx.engine.update('report', report.id, { ...values, ...(validate ? { status: st } : {}) });
-  });
-  const notesText = data.notes.filter(n => n.visit_id === visitId && n.body).map(n => n.body).join('\n');
-  // Synthèse par IA : le compte rendu doit exister sur le serveur ; on le crée en brouillon et on synchronise d'abord.
-  const synthesize = async () => {
-    setAiBusy(true); setAiErr(undefined);
-    try {
-      let rid = report?.id as string | undefined;
-      if (!rid) rid = await ctx.engine.create('report', { visit_id: visitId, language: ctx.lang, status: 'draft' });
-      const rep = await ctx.engine.sync();
-      if (rep.offline) throw new NetworkError();
-      setAi(await ctx.client.aiPropose(rid, notesText, dateToStr(new Date())));
-    } catch (e) { setAiErr(aiErrorMessage(e)); }
-    finally { setAiBusy(false); }
-  };
-  const applyAi = (fields: Record<string, string>, actions: { title: string; due_date: string | null }[]) => {
-    const merged = { ...f, ...Object.fromEntries(Object.entries(fields).filter(([, v]) => v.trim())) };   // un champ vide proposé n'efface rien
-    setF(merged); setAi(undefined);
-    void act(async () => {
-      if (report) await ctx.engine.update('report', report.id, merged);
-      else await ctx.engine.create('report', { visit_id: visitId, language: ctx.lang, ...merged, status: 'draft' });
-      for (const a of actions) await ctx.engine.create('action', { company_id: v!.company_id, visit_id: visitId, title: a.title, origin: 'ai', ...(a.due_date ? { due_date: a.due_date } : {}) });
-    });
-  };
+  const visitNotes = data.notes.filter(n => n.visit_id === visitId);
+  const internal = data.internalNotes.filter(n => n.visit_id === visitId);
+  const reportOpen = ['in_progress', 'done', 'validated'].includes(v.status);
+  const reportState = !report ? { text: 'Non rédigé', color: c.stDone } : report.status === 'validated' ? { text: 'Validé', color: c.stValidated } : { text: 'Brouillon', color: c.stPlanned };
   const Icon = ({ label, onPress }: { label: string; onPress: () => void }) => (
     <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={label} style={s.iconBtn}><Text style={s.iconText}>✎</Text></Pressable>);
   return <>
@@ -360,22 +333,126 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName, offline }: { 
     {mine && v.status === 'planned' && <Btn title="Visite organisée avec le client" onPress={() => setStatus('organized')} />}
     {mine && (v.status === 'planned' || v.status === 'organized') && <Btn title="Démarrer la visite" onPress={() => setStatus('in_progress', { started_at: new Date().toISOString() })} />}
     {mine && v.status === 'in_progress' && <Btn title="Terminer la visite" onPress={() => setStatus('done', { ended_at: new Date().toISOString() })} />}
+
     <Label>Notes durant visite</Label>
-    {data.notes.filter(n => n.visit_id === visitId).map(n => <Text key={n.id} style={s.note}>{n.body}</Text>)}
+    {visitNotes.map(n => n.author_id === ctx.userId
+      ? <Pressable key={n.id} onPress={() => setEditing({ entity: 'note', row: n })} accessibilityRole="button" accessibilityLabel="Modifier la note" style={[s.note, { flexDirection: 'row', gap: 8 }]}>
+          <Text style={{ color: c.text, flex: 1 }}>{n.body}</Text><Text style={s.iconText}>✎</Text></Pressable>
+      : <Text key={n.id} style={s.note}>{n.body}</Text>)}
     {mine && <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
       <DictationControl id="notes" label="Notes durant visite" review active={dictating} setActive={setDictating} ctx={ctx} visitId={visitId} offline={offline}
         onText={text => act(() => ctx.engine.create('note', { visit_id: visitId, kind: 'voice', body: text }))} onError={setDictError} />
-      {dictating !== 'notes' && <Btn small title="+ Ajouter une note" onPress={() => setNoteOpen(true)} />}
+      {dictating !== 'notes' && <Btn small title="+ Ajouter une note" onPress={() => setNoteSheet('note')} />}
     </View>}
     {dictErr?.id === 'notes' && <Text style={s.err}>{dictErr.msg}</Text>}
+
+    <Label>Notes internes</Label>
+    <Text style={s.muted}>Partagées avec votre hiérarchie. Elles n'apparaissent pas dans le compte rendu et ne sont jamais envoyées à l'IA.</Text>
+    {internal.map(n => (
+      <Pressable key={n.id} disabled={n.author_id !== ctx.userId} onPress={() => setEditing({ entity: 'internal_note', row: n })} accessibilityRole="button" accessibilityLabel={n.author_id === ctx.userId ? 'Modifier la note interne' : 'Note interne'}
+        style={[s.note, { borderLeftWidth: 5, borderLeftColor: c.stPlanned, gap: 2 }]}>
+        <View style={{ flexDirection: 'row', gap: 8 }}><Text style={{ color: c.text, flex: 1 }}>{n.body}</Text>{n.author_id === ctx.userId && <Text style={s.iconText}>✎</Text>}</View>
+        <Text style={s.muted}>{n.author_id === ctx.userId ? 'Vous' : n.author_name}</Text>
+      </Pressable>))}
+    {ctx.role === 'commercial' && <View style={{ flexDirection: 'row' }}><Btn small title="+ Ajouter une note interne" onPress={() => setNoteSheet('internal')} /></View>}
+
+    <Label>Compte rendu</Label>
+    {reportOpen
+      ? <Pressable onPress={openReport} accessibilityRole="button" accessibilityLabel="Ouvrir le compte rendu" style={s.rowCard}>
+          <View style={{ flex: 1, gap: 4 }}>
+            <Text style={s.t}>{mine && report?.status !== 'validated' ? (report ? 'Rédiger / corriger le compte rendu' : 'Rédiger le compte rendu') : 'Voir le compte rendu'}</Text>
+            <Pill text={reportState.text} color={reportState.color} />
+          </View><Text style={s.muted}>›</Text></Pressable>
+      : <Text style={s.muted}>Le compte rendu sera disponible une fois la visite commencée.</Text>}
+
+    <AddNoteSheet visible={noteSheet !== 'none'} title={noteSheet === 'internal' ? 'Note interne' : 'Note durant la visite'} label={noteSheet === 'internal' ? 'Nouvelle note interne' : 'Nouvelle note'}
+      placeholder={noteSheet === 'internal' ? 'Information importante pour l\'équipe' : 'Ce qui se dit pendant la visite'}
+      hint={noteSheet === 'internal' ? 'Partagée avec votre hiérarchie. Absente du compte rendu, jamais envoyée à l\'IA.' : 'Ces notes servent à rédiger le compte rendu (génération par IA comprise).'}
+      onClose={() => setNoteSheet('none')}
+      onAdd={text => { const k = noteSheet; setNoteSheet('none'); void act(() => k === 'internal'
+        ? ctx.engine.create('internal_note', { visit_id: visitId, body: text })
+        : ctx.engine.create('note', { visit_id: visitId, kind: 'text', body: text })); }} />
+    <NoteEditSheet target={editing} onClose={() => setEditing(null)}
+      onSave={text => { const t = editing!; setEditing(null); void act(() => ctx.engine.update(t.entity, t.row.id, { body: text })); }}
+      onDelete={() => { const t = editing!; setEditing(null); void act(() => ctx.engine.remove(t.entity, t.row.id)); }} />
+    <EditDateSheet visible={sheet === 'date'} initial={v.planned_start} onClose={() => setSheet('none')}
+      onSave={d => { setSheet('none'); void act(() => ctx.engine.update('visit', v.id, { planned_start: d ? d.toISOString() : null })); }} />
+    <EditAddressSheet visible={sheet === 'address'} initial={address} onClose={() => setSheet('none')}
+      onSave={t => { setSheet('none'); void act(() => ctx.engine.update('visit', v.id, { location_text: t.trim() || null })); }} />
+    <HistorySheet visible={sheet === 'history'} entries={entries} onClose={() => setSheet('none')} />
+    <NavChooser address={address} visible={sheet === 'nav'} onClose={() => setSheet('none')} />
+  </>;
+}
+
+/**
+ * Écran du compte rendu : rédigé après (ou en fin de) visite, à part de la prise de notes. Génération par IA à partir des notes
+ * durant visite (jamais des notes internes), puis correction et complément à la main ou à la voix, enfin validation.
+ */
+function ReportScreen({ visitId, data, ctx, act, back, companyName, offline }: { visitId: string; data: Data; ctx: Ctx; act: Act; back: () => void; companyName: (id: string) => string; offline: boolean }) {
+  const { s, c } = useTheme();
+  const v: Row | undefined = data.visits.find(x => x.id === visitId);
+  const report: Row | undefined = data.reports.find(r => r.visit_id === visitId);
+  const [f, setF] = useState<Record<string, string>>(() => pickFields(report));
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiErr, setAiErr] = useState<string>();
+  const [ai, setAi] = useState<AiProposalResponse>();
+  const [dictating, setDictating] = useState<string | null>(null);
+  const [dictErr, setDictErr] = useState<{ id: string; msg: string }>();
+  const setDictError = (id: string, msg?: string) => setDictErr(msg ? { id, msg } : undefined);
+  const appendTo = (k: string, text: string) => setF(cur => ({ ...cur, [k]: cur[k] && cur[k]!.trim() ? `${cur[k]!.trimEnd()} ${text}` : text }));
+  useEffect(() => { if (report) setF(cur => (Object.values(cur).some(x => x) ? cur : pickFields(report))); }, [report?.id]);
+  if (!v) return <><Btn small title="‹ Retour" onPress={back} /><Text style={s.muted}>Visite introuvable (supprimée ou plus accessible).</Text></>;
+  const mine = v.author_id === ctx.userId;
+  const validated = report?.status === 'validated';
+  const notesText = data.notes.filter(n => n.visit_id === visitId && n.body).map(n => n.body).join('\n');   // notes durant visite seulement
+  const inEndPhase = v.status === 'in_progress' || v.status === 'done';
+  const canGenerate = mine && inEndPhase && !validated && !!notesText.trim() && !offline;
+  const whyNot = !mine ? undefined : !inEndPhase && !validated ? 'La génération est possible une fois la visite commencée.' : validated ? 'Le compte rendu est validé.' : offline ? 'Hors-ligne : la génération par IA demande une connexion.' : !notesText.trim() ? 'Ajoutez des notes durant visite pour pouvoir générer le compte rendu.' : undefined;
+  const hasContent = Object.values(f).some(x => x.trim());
+  const state = !report ? { text: 'Non rédigé', color: c.stDone } : validated ? { text: 'Validé', color: c.stValidated } : { text: 'Brouillon', color: c.stPlanned };
+
+  const saveReport = (validate: boolean, values: Record<string, string> = f) => act(async () => {
+    const st = validate ? 'validated' : 'draft';
+    if (!report) await ctx.engine.create('report', { visit_id: visitId, language: ctx.lang, ...values, status: st });
+    else await ctx.engine.update('report', report.id, { ...values, ...(validate ? { status: st } : {}) });
+  });
+  // Génération par IA : le compte rendu doit exister sur le serveur ; on le crée en brouillon et on synchronise d'abord.
+  const generate = async () => {
+    setAiBusy(true); setAiErr(undefined);
+    try {
+      let rid = report?.id as string | undefined;
+      if (!rid) rid = await ctx.engine.create('report', { visit_id: visitId, language: ctx.lang, status: 'draft' });
+      const rep = await ctx.engine.sync();
+      if (rep.offline) throw new NetworkError();
+      setAi(await ctx.client.aiPropose(rid, notesText, dateToStr(new Date())));
+    } catch (e) { setAiErr(aiErrorMessage(e)); }
+    finally { setAiBusy(false); }
+  };
+  const applyAi = (fields: Record<string, string>, actions: { title: string; due_date: string | null }[]) => {
+    const merged = { ...f, ...Object.fromEntries(Object.entries(fields).filter(([, x]) => x.trim())) };   // un champ vide proposé n'efface rien
+    setF(merged); setAi(undefined);
+    void act(async () => {
+      if (report) await ctx.engine.update('report', report.id, merged);
+      else await ctx.engine.create('report', { visit_id: visitId, language: ctx.lang, ...merged, status: 'draft' });
+      for (const a of actions) await ctx.engine.create('action', { company_id: v.company_id, visit_id: visitId, title: a.title, origin: 'ai', ...(a.due_date ? { due_date: a.due_date } : {}) });
+    });
+  };
+
+  return <>
+    <View style={s.headerRow}>
+      <Pressable onPress={back} accessibilityRole="button" style={s.backBtn}><Text style={s.link}>‹ Retour</Text></Pressable>
+      <Text style={s.titleCenter} numberOfLines={1} accessibilityRole="header">Compte rendu</Text>
+      <View style={s.backBtn} />
+    </View>
+    <View style={[s.rowCard, { flexDirection: 'column', alignItems: 'stretch', gap: 6 }]}>
+      <View style={s.fact}><Text style={s.muted}>Visite</Text><Text style={s.t}>{companyName(v.company_id)}</Text></View>
+      <View style={s.fact}><Text style={s.muted}>Statut du compte rendu</Text><Pill text={state.text} color={state.color} /></View>
+    </View>
     {mine && <>
-      <Btn small title={aiBusy ? 'Synthèse en cours…' : 'Synthétiser avec l\'IA'} disabled={aiBusy || !notesText.trim() || offline} onPress={synthesize} />
-      <Text style={s.muted}>À partir des notes durant visite.</Text>
-      {offline && <Text style={s.muted}>Hors-ligne : la synthèse par IA demande une connexion.</Text>}
-      {!notesText.trim() && <Text style={s.muted}>Ajoutez des notes durant visite pour pouvoir les synthétiser.</Text>}
+      <Btn title={aiBusy ? 'Génération en cours…' : 'Générer à partir des notes (IA)'} disabled={aiBusy || !canGenerate} onPress={generate} />
+      <Text style={s.muted}>{whyNot ?? 'Utilise les notes durant visite, jamais les notes internes. Vous relisez avant d\'appliquer.'}</Text>
       {aiErr && <Text style={s.err}>{aiErr}</Text>}
     </>}
-    <Label>Compte rendu {report?.status === 'validated' ? '(validé)' : ''}</Label>
     {REPORT_FIELDS.map(([k, label]) => (
       <View key={k} style={{ gap: 4 }}>
         <View style={s.rowBetween}>
@@ -388,31 +465,49 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName, offline }: { 
           value={f[k] ?? ''} onChangeText={t => setF(cur => ({ ...cur, [k]: t }))} multiline editable={mine} />
       </View>))}
     {mine && <View style={s.rowBetween}>
-      <Btn small title="Enregistrer" onPress={() => saveReport(false)} />
-      <Btn small title="Valider" disabled={!(f.summary ?? '').trim() || report?.status === 'validated'} onPress={() => saveReport(true)} />
+      <Btn small title="Enregistrer" disabled={!hasContent && !report} onPress={() => saveReport(false)} />
+      <Btn small title="Valider le compte rendu" disabled={!(f.summary ?? '').trim() || validated} onPress={() => saveReport(true)} />
     </View>}
-    <AddNoteSheet visible={noteOpen} onClose={() => setNoteOpen(false)} onAdd={text => { setNoteOpen(false); void act(() => ctx.engine.create('note', { visit_id: visitId, kind: 'text', body: text })); }} />
+    {!mine && <Text style={s.muted}>Seul l'auteur de la visite modifie le compte rendu.</Text>}
     <AiSheet result={ai} onClose={() => setAi(undefined)} onApply={applyAi} />
-
-    <EditDateSheet visible={sheet === 'date'} initial={v.planned_start} onClose={() => setSheet('none')}
-      onSave={d => { setSheet('none'); void act(() => ctx.engine.update('visit', v.id, { planned_start: d ? d.toISOString() : null })); }} />
-    <EditAddressSheet visible={sheet === 'address'} initial={address} onClose={() => setSheet('none')}
-      onSave={t => { setSheet('none'); void act(() => ctx.engine.update('visit', v.id, { location_text: t.trim() || null })); }} />
-    <HistorySheet visible={sheet === 'history'} entries={entries} onClose={() => setSheet('none')} />
-    <NavChooser address={address} visible={sheet === 'nav'} onClose={() => setSheet('none')} />
   </>;
 }
 
-function AddNoteSheet({ visible, onClose, onAdd }: { visible: boolean; onClose: () => void; onAdd: (text: string) => void }) {
+/** Ajout d'une note (durant visite ou interne) dans une fenêtre, pour garder l'écran léger. */
+function AddNoteSheet({ visible, title, label, placeholder, hint, onClose, onAdd }: { visible: boolean; title: string; label: string; placeholder: string; hint: string; onClose: () => void; onAdd: (text: string) => void }) {
   const { s, c } = useTheme();
   const [text, setText] = useState('');
   useEffect(() => { if (visible) setText(''); }, [visible]);
   return (
-    <Sheet title="Note durant la visite" visible={visible} onClose={onClose}>
-      <TextInput accessibilityLabel="Nouvelle note" placeholderTextColor={c.muted} style={[s.input, { minHeight: 110 }]} value={text} onChangeText={setText} placeholder="Ce qui se dit pendant la visite" multiline />
-      <Text style={s.muted}>Ces notes servent à rédiger le compte rendu (synthèse par IA comprise).</Text>
+    <Sheet title={title} visible={visible} onClose={onClose}>
+      <TextInput accessibilityLabel={label} placeholderTextColor={c.muted} style={[s.input, { minHeight: 110 }]} value={text} onChangeText={setText} placeholder={placeholder} multiline />
+      <Text style={s.muted}>{hint}</Text>
       <Btn title="Ajouter" disabled={!text.trim()} onPress={() => onAdd(text.trim())} />
       <Btn small title="Annuler" onPress={onClose} />
+    </Sheet>
+  );
+}
+
+/** Modification d'une note ; suppression en deux temps (confirmation dans la fenêtre : les boîtes de dialogue du système ne servent pas sur le web). */
+function NoteEditSheet({ target, onClose, onSave, onDelete }: { target: { entity: 'note' | 'internal_note'; row: Row } | null; onClose: () => void; onSave: (text: string) => void; onDelete: () => void }) {
+  const { s, c } = useTheme();
+  const [text, setText] = useState('');
+  const [confirming, setConfirming] = useState(false);
+  useEffect(() => { if (target) { setText((target.row.body as string) ?? ''); setConfirming(false); } }, [target]);
+  const internalNote = target?.entity === 'internal_note';
+  return (
+    <Sheet title={confirming ? 'Supprimer cette note ?' : internalNote ? 'Modifier la note interne' : 'Modifier la note'} visible={!!target} onClose={onClose}>
+      {confirming ? <>
+        <Text style={s.t}>{text.length > 120 ? `${text.slice(0, 120)}…` : text}</Text>
+        <Text style={s.muted}>La suppression est définitive.</Text>
+        <Btn title="Confirmer la suppression" danger onPress={onDelete} />
+        <Btn small title="Annuler" onPress={() => setConfirming(false)} />
+      </> : <>
+        <TextInput accessibilityLabel="Texte de la note" placeholderTextColor={c.muted} style={[s.input, { minHeight: 110 }]} value={text} onChangeText={setText} multiline />
+        <Btn title="Enregistrer" disabled={!text.trim() || text.trim() === ((target?.row.body as string) ?? '').trim()} onPress={() => onSave(text.trim())} />
+        <Btn small title="Supprimer la note" danger onPress={() => setConfirming(true)} />
+        <Btn small title="Annuler" onPress={onClose} />
+      </>}
     </Sheet>
   );
 }
@@ -542,7 +637,7 @@ function AiSheet({ result, onClose, onApply }: { result?: AiProposalResponse; on
   }, [result]);
   return (
     <Sheet title="Proposition de l'IA" visible={!!result} onClose={onClose}>
-      <Text style={s.muted}>Proposé par l'IA : relisez et corrigez avant d'appliquer. Rien n'est enregistré tant que vous n'appliquez pas.</Text>
+      <Text style={s.muted}>Proposé par l'IA : relisez et corrigez avant d'appliquer. Rien n'est enregistré tant que vous n'appliquez pas. Les champs proposés remplacent ceux du compte rendu ; un champ proposé vide n'efface rien.</Text>
       {result && result.warnings.length > 0 && (
         <View style={[s.rowCard, { flexDirection: 'column', alignItems: 'stretch', gap: 4, borderLeftWidth: 6, borderLeftColor: c.stPlanned }]}>
           <Text style={s.t}>À vérifier</Text>
@@ -600,9 +695,9 @@ function Seg<T extends string>({ value, onChange, options }: { value: T; onChang
       <Text style={[s.segText, value === k && s.segTextOn]}>{l}</Text></Pressable>))}</View>;
 }
 const Label = ({ children }: { children: React.ReactNode }) => { const { s } = useTheme(); return <Text style={s.label}>{children}</Text>; };
-const Btn = ({ title, onPress, disabled, small }: { title: string; onPress: () => void; disabled?: boolean; small?: boolean }) => {
-  const { s } = useTheme();
-  return <Pressable onPress={onPress} disabled={disabled} accessibilityRole="button" style={[s.btn, small && s.btnSmall, disabled && s.btnOff]}><Text style={s.btnText}>{title}</Text></Pressable>;
+const Btn = ({ title, onPress, disabled, small, danger }: { title: string; onPress: () => void; disabled?: boolean; small?: boolean; danger?: boolean }) => {
+  const { s, c } = useTheme();
+  return <Pressable onPress={onPress} disabled={disabled} accessibilityRole="button" style={[s.btn, small && s.btnSmall, danger && { backgroundColor: c.late }, disabled && s.btnOff]}><Text style={s.btnText}>{title}</Text></Pressable>;
 };
 const Pill = ({ text, color }: { text: string; color: string }) => {
   const { s } = useTheme();

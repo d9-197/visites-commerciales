@@ -140,7 +140,7 @@ test('migration : une base existante reçoit le statut « organisée » et l\'hi
   try {
     assert.deepEqual(await migrate(pool), [], 'base vide : schéma complet, migrations marquées appliquées');
     // on fait revenir la base à l'état d'avant la migration 001, avec une visite existante
-    await pool.query(`DROP VIEW crm_visit_history; DROP TABLE visit_history; DELETE FROM schema_migrations;
+    await pool.query(`DROP FUNCTION can_read_internal_note(uuid, uuid); DROP TABLE internal_note; DROP VIEW crm_visit_history; DROP TABLE visit_history; DELETE FROM schema_migrations;
       ALTER TABLE visit DROP CONSTRAINT visit_status_check;
       ALTER TABLE visit ADD CONSTRAINT visit_status_check CHECK (status IN ('planned','in_progress','done','cancelled'))`);
     const u = (await pool.query(`INSERT INTO app_user(email, display_name, role, password_hash) VALUES ('m@x.fr','M','commercial','h') RETURNING id`)).rows[0].id;
@@ -148,7 +148,7 @@ test('migration : une base existante reçoit le statut « organisée » et l\'hi
     await pool.query(`INSERT INTO visit(id, company_id, author_id, location_text) VALUES ($1,$2,$3,'ancienne')`, [uuid(), co, u]);
     await assert.rejects(pool.query(`UPDATE visit SET status = 'organized'`), /visit_status_check/);
 
-    assert.deepEqual(await migrate(pool), ['001_visite_organisee_et_historique.sql', '002_visite_validee.sql']);
+    assert.deepEqual(await migrate(pool), ['001_visite_organisee_et_historique.sql', '002_visite_validee.sql', '003_notes_internes.sql']);
     await pool.query(`UPDATE visit SET status = 'organized'`);                    // maintenant accepté
     assert.equal((await pool.query(`SELECT count(*)::int n FROM visit WHERE location_text = 'ancienne'`)).rows[0].n, 1, 'données conservées');
     assert.equal((await pool.query(`SELECT count(*)::int n FROM visit_history`)).rows[0].n, 0);

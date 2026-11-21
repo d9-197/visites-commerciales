@@ -126,10 +126,14 @@ export function mobileRouter(pool: Pool, cfg: Config, ai?: AiServices) {
     if (recent.length >= Number(process.env.AI_RATE_PER_MIN ?? 10)) throw new HttpError(429, 'rate_limited', 'Trop de demandes de synthèse, réessayez dans une minute');
     aiCalls.set(userId, [...recent, now]);
 
-    const rep = (await pool.query(`SELECT r.id, r.language, r.visit_id, v.author_id FROM visit_report r JOIN visit v ON v.id = r.visit_id WHERE r.id = $1`, [req.params.id])).rows[0];
+    const rep = (await pool.query(`SELECT r.id, r.language, r.visit_id, r.status AS report_status, v.status AS visit_status, v.author_id FROM visit_report r JOIN visit v ON v.id = r.visit_id WHERE r.id = $1`, [req.params.id])).rows[0];
     const readable = rep && (await pool.query(`SELECT can_read_visit($1,$2) AS ok`, [userId, rep.visit_id])).rows[0].ok;
     if (!rep || !readable) throw new HttpError(404, 'not_found', 'Compte rendu inconnu');
     if (rep.author_id !== userId) throw new HttpError(403, 'forbidden', 'Réservé à l\'auteur de la visite');
+    // Génération possible en fin de visite : visite en cours, ou terminée tant que le compte rendu n'est pas validé.
+    if (!['in_progress', 'done'].includes(rep.visit_status) || rep.report_status === 'validated') {
+      throw new HttpError(409, 'ai_not_available', rep.report_status === 'validated' ? 'Le compte rendu est validé' : 'La génération est possible une fois la visite commencée');
+    }
 
     if (ai.prices) {   // plafond mensuel : appliqué seulement si les tarifs sont connus (sinon le coût est enregistré à 0)
       const q = (await pool.query(

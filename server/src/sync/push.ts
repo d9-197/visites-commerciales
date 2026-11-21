@@ -39,6 +39,8 @@ const S = {
   reportUpdate: z.object(optional(REPORT_FIELDS)).strict(),
   noteCreate: z.object({ visit_id: uuid, kind: z.enum(['text', 'voice', 'photo']), body: nstr.optional(), noted_at: ts.optional() }).strict(),
   noteUpdate: z.object({ body: nstr }).strict(),
+  internalCreate: z.object({ visit_id: uuid, body: z.string().trim().min(1).max(10000) }).strict(),
+  internalUpdate: z.object({ body: z.string().trim().min(1).max(10000) }).strict(),
   privateCreate: z.object({ visit_id: uuid, body: z.string().min(1) }).strict(),
   privateUpdate: z.object({ body: z.string().min(1) }).strict(),
   actionCreate: z.object({
@@ -239,6 +241,23 @@ async function handle(ctx: Ctx): Promise<Applied> {
         return { fields: ['body'] };
       }
       await c.query(`UPDATE visit_note SET deleted_at = now() WHERE id = $1`, [id]);
+      return { fields: ['deleted_at'] };
+    }
+    case 'internal_note': {
+      // Écriture : les commerciaux qui voient la visite. Lecture : l'auteur et sa hiérarchie (lecture seule pour elle).
+      if (op.op === 'create') {
+        const p = parse(S.internalCreate, op.payload);
+        const me = (await c.query(`SELECT role, display_name FROM app_user WHERE id = $1`, [userId])).rows[0];
+        await visitRow(c, userId, p.visit_id, false);
+        if (me.role !== 'commercial') throw new Reject('forbidden', 'Les notes internes sont écrites par les commerciaux');
+        await insert(c, 'internal_note', { id, author_id: userId, author_name: me.display_name, ...p });
+        return { fields: Object.keys(p) };
+      }
+      const n = (await c.query(`SELECT * FROM internal_note WHERE id = $1 FOR UPDATE`, [id])).rows[0];
+      if (!n || !(await c.query(`SELECT can_read_internal_note($1,$2) AS ok`, [userId, id])).rows[0].ok) throw new Reject('not_found', 'Note interne inconnue');
+      if (n.author_id !== userId) throw new Reject('forbidden', "Réservé à l'auteur de la note");
+      if (op.op === 'update') { const p = parse(S.internalUpdate, op.payload); await c.query(`UPDATE internal_note SET body = $2 WHERE id = $1`, [id, p.body]); return { fields: ['body'] }; }
+      await c.query(`UPDATE internal_note SET deleted_at = now() WHERE id = $1`, [id]);
       return { fields: ['deleted_at'] };
     }
     case 'private_note': {
