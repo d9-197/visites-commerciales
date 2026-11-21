@@ -1,6 +1,6 @@
 import type { Row } from '@visites/sync-core';
 
-export const VISIT_STATUS: Record<string, string> = { planned: 'À organiser', organized: 'Organisée', in_progress: 'En cours', done: 'Terminée', validated: 'Validée', cancelled: 'Annulée' };
+export const VISIT_STATUS: Record<string, string> = { planned: 'À organiser', organized: 'Organisée', in_progress: 'En cours', done: 'Terminée', validated: 'Validée', cancelled: 'Annulée', deleted: 'Supprimée' };
 
 /** « ven. 20 nov. 2026, 10:30 » dans la langue du téléphone ; repli simple si Intl est indisponible. */
 export function fmtDateTime(iso: string): string {
@@ -16,6 +16,7 @@ export function visitWhen(v: Row): { main: string; sub?: string } {
   if (v.status === 'done' || v.status === 'validated') return { main: `Réalisée ${fmtDateTime(v.ended_at ?? v.started_at ?? v.updated_at)}`, sub: v.planned_start ? planned : undefined };
   if (v.status === 'in_progress') return { main: `Commencée ${fmtDateTime(v.started_at ?? v.updated_at)}`, sub: v.planned_start ? planned : undefined };
   if (v.status === 'cancelled') return { main: `Annulée · ${planned}` };
+  if (v.status === 'deleted') return { main: `Supprimée · ${planned}` };
   return { main: planned };
 }
 

@@ -196,6 +196,36 @@ test('actions : créées depuis une visite et seulement une fois le compte rendu
   assert.equal((await r1(act(f.f1, v))).code, 'locked_status');
 });
 
+test('suppression : auteur commercial ou directeur ; refus manager et autre commercial ; refus tant que des actions sont à faire ; visite figée ensuite', async () => {
+  await setMode(env.pool, 1);
+  // l'auteur supprime sa visite
+  const { a, v } = await newVisit();
+  assert.equal((await upd('mgr1@x.fr', v, { status: 'deleted' })).code, 'forbidden');
+  assert.equal((await upd('c3@x.fr', v, { status: 'deleted' })).code, 'forbidden');
+  const del = await upd('c1@x.fr', v, { status: 'deleted' });
+  assert.equal(del.result, 'applied');
+  // la visite supprimée reste lisible (synchronisée) et ne bouge plus
+  assert.equal((await upd('c1@x.fr', v, { status: 'planned' }, del.version)).code, 'locked_status');
+  assert.equal((await upd('c1@x.fr', v, { location_text: 'x' }, del.version)).code, 'locked_status');
+  const pulled = (await a.pullAll()).changes.visits.find((x: any) => x.id === v);
+  assert.equal(pulled.status, 'deleted');
+  // un directeur peut supprimer la visite d'un autre ; il ne peut rien modifier d'autre
+  const n = await newVisit();
+  assert.equal((await upd('dir@x.fr', n.v, { status: 'in_progress', started_at: '2026-11-26T10:00:00Z' })).code, 'forbidden');
+  assert.equal((await upd('dir@x.fr', n.v, { status: 'deleted' })).result, 'applied');
+  // visite validée avec une action à faire : suppression refusée ; une fois l'action terminée, acceptée
+  const vv = await validatedVisit(await f.login('c1@x.fr'), f.f1, [{ id: uuid(), title: 'Rappeler' }]);
+  const todo = (await env.pool.query(`SELECT id, version FROM action_item WHERE visit_id = $1`, [vv.visit])).rows[0];
+  const vVersion = (await env.pool.query(`SELECT version FROM visit WHERE id = $1`, [vv.visit])).rows[0].version;
+  assert.equal((await upd('c1@x.fr', vv.visit, { status: 'deleted' }, vVersion)).code, 'locked_status');
+  const c1 = await f.login('c1@x.fr');
+  assert.equal((await c1.push([op('action', 'update', todo.id, { status: 'done' }, todo.version)])).body.results[0].result, 'applied');
+  assert.equal((await upd('c1@x.fr', vv.visit, { status: 'deleted' }, vVersion)).result, 'applied');
+  // plus de notes internes, d'actions ni de compte rendu sur une visite supprimée
+  const bad = (await c1.push([op('internal_note', 'create', uuid(), { visit_id: vv.visit, body: 'x' }), op('action', 'create', uuid(), { company_id: f.f1, visit_id: vv.visit, title: 'x', origin: 'manual' })])).body.results;
+  assert.deepEqual(bad.map((x: any) => x.code), ['locked_status', 'locked_status']);
+});
+
 test('migration : une base existante reçoit le statut « organisée » et l\'historique, sans perdre de données', async () => {
   const admin = new pg.Client({ connectionString: process.env.TEST_DATABASE_URL ?? 'postgres://postgres@127.0.0.1:54329/postgres' });
   await admin.connect();
@@ -215,7 +245,7 @@ test('migration : une base existante reçoit le statut « organisée » et l\'hi
     await pool.query(`INSERT INTO visit(id, company_id, author_id, location_text) VALUES ($1,$2,$3,'ancienne')`, [uuid(), co, u]);
     await assert.rejects(pool.query(`UPDATE visit SET status = 'organized'`), /visit_status_check/);
 
-    assert.deepEqual(await migrate(pool), ['001_visite_organisee_et_historique.sql', '002_visite_validee.sql', '003_notes_internes.sql', '004_actions_depuis_compte_rendu.sql']);
+    assert.deepEqual(await migrate(pool), ['001_visite_organisee_et_historique.sql', '002_visite_validee.sql', '003_notes_internes.sql', '004_actions_depuis_compte_rendu.sql', '005_visite_supprimee.sql']);
     await pool.query(`UPDATE visit SET status = 'organized'`);                    // maintenant accepté
     assert.equal((await pool.query(`SELECT count(*)::int n FROM visit WHERE location_text = 'ancienne'`)).rows[0].n, 1, 'données conservées');
     assert.equal((await pool.query(`SELECT count(*)::int n FROM visit_history`)).rows[0].n, 0);

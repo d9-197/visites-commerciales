@@ -46,6 +46,14 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   assert.equal(await page.getByText('Groupe Bernard').count(), 0, 'commercial1 ne voit pas le client de commercial2');
   await shot(page, '2-clients');
   await page.getByText('Dupont SA').click();
+  // Fiche client : informations, visites précédentes, actions ; aucune visite n'est créée au simple clic
+  await page.getByRole('heading', { name: 'Dupont SA' }).waitFor();
+  await page.getByText(/^Visites \(/).waitFor();
+  await page.getByText(/^Actions associées \(/).waitFor();
+  assert.equal(await page.getByText('Statut', { exact: true }).count(), 0, 'on est sur la fiche client, pas sur une visite');
+  await shot(page, '2b-fiche-client');
+  await page.getByRole('button', { name: '+ Planifier une visite' }).click();
+  await page.getByText('Statut', { exact: true }).waitFor();
 
   // 2 bis. En-tête : « Retour » et nom du client sur la même ligne, nom centré
   const back = await page.getByRole('button', { name: '‹ Retour' }).boundingBox();
@@ -350,6 +358,7 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await login(p1, 'commercial1@exemple.invalid');
   await p1.getByRole('button', { name: 'Clients', exact: true }).click();
   await p1.getByText('Atelier Roux').click();
+  await p1.getByRole('button', { name: '+ Planifier une visite' }).click();
   await p1.getByText('À organiser', { exact: true }).first().waitFor();
   await p1.getByText('Le compte rendu sera disponible une fois la visite commencée.').waitFor();
   await p1.getByRole('button', { name: '+ Ajouter une note interne' }).click();
@@ -402,14 +411,46 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await mp.getByText(/1 en retard/).waitFor();
   await shot(mp, '3f-liste-retard');
   assert.equal(await mp.getByRole('button', { name: 'Modifier l\'adresse de la visite' }).count(), 0, 'manager : plus de modification d\'adresse une fois la visite organisée');
+  // 7 ter. Suppression d'une visite : le manager ne peut pas ; le commercial confirme ; elle est masquée par défaut
+  assert.equal(await mp.getByRole('button', { name: 'Supprimer la visite' }).count(), 0, 'liste : pas de bouton ici');
+  await mp.getByText('Organisée', { exact: true }).first().click();
+  await mp.getByText('Statut', { exact: true }).waitFor();
+  assert.equal(await mp.getByRole('button', { name: 'Supprimer la visite' }).count(), 0, 'le manager ne supprime pas une visite');
+  await mp.getByRole('button', { name: '‹ Retour' }).click();
+  await p1.getByRole('button', { name: 'Supprimer la visite' }).click();
+  await p1.getByText('Supprimer cette visite ?').waitFor();                 // confirmation demandée
+  await p1.getByRole('button', { name: 'Annuler', exact: true }).last().click();
+  await p1.getByText('Supprimer cette visite ?').waitFor({ state: 'detached' });
+  assert.equal(await p1.getByText('Organisée', { exact: true }).count() > 0, true, 'annuler ne supprime rien');
+  await p1.getByRole('button', { name: 'Supprimer la visite' }).click();
+  await p1.getByRole('button', { name: 'Supprimer la visite' }).last().click();
+  await p1.getByText('Supprimer cette visite ?').waitFor({ state: 'detached' });
+  await p1.getByText(/visite supprimée masquée/).waitFor();                  // retour sur la fiche client : visite masquée
+  await shot(p1, '3g-visite-supprimee-masquee');
+  await p1.getByRole('button', { name: 'Visites', exact: true }).click();
+  await p1.getByText('Supprimée', { exact: true }).waitFor({ state: 'detached' }).catch(() => {});
+  await p1.getByRole('switch', { name: 'Afficher les visites supprimées' }).click();
+  await p1.getByText('Supprimée', { exact: true }).first().waitFor();
+  await p1.getByText('Supprimée', { exact: true }).first().click();
+  await p1.getByText('Cette visite est supprimée').waitFor();
+  assert.equal(await p1.getByRole('button', { name: 'Modifier la date prévue' }).count(), 0, 'visite supprimée : plus modifiable');
+  assert.equal(await p1.getByRole('button', { name: 'Supprimer la visite' }).count(), 0, 'déjà supprimée');
+  await shot(p1, '3h-visite-supprimee');
+  await p1.getByRole('button', { name: 'Synchroniser' }).click();
+  await p1.getByText('Synchronisé').waitFor();
+  for (let i = 0; i < 8 && await mp.getByText('Organisée', { exact: true }).count() > 0; i++) {      // le push du commercial peut ne pas être terminé : on relit
+    await mp.waitForTimeout(500); await mp.getByRole('button', { name: 'Synchroniser' }).click(); await mp.getByText('Synchronisé').waitFor();
+  }
+  assert.equal(await mp.getByText('Atelier Roux').count(), 0, 'le manager ne voit plus la visite supprimée (masquée par défaut)');
   await c1.close(); await mctx.close();
 
   // 7 bis. Page en HTTP sur le réseau local : pas de micro du navigateur (contexte non sécurisé) -> repli par choix d'un fichier audio
   const nctx = await newPhone(browser); await nctx.addInitScript(() => { Object.defineProperty(navigator, 'mediaDevices', { value: undefined }); });
   const np = await nctx.newPage(); np.on('pageerror', e => errors.push(e.message));
   await login(np, 'commercial1@exemple.invalid');
-  await np.getByRole('radio', { name: 'Par date' }).click();
-  await np.getByText('Atelier Roux').first().click();
+  await np.getByRole('button', { name: 'Clients', exact: true }).click();         // la visite précédente est supprimée : on en planifie une nouvelle
+  await np.getByText('Atelier Roux').click();
+  await np.getByRole('button', { name: '+ Planifier une visite' }).click();
   await np.getByText(/Le micro du navigateur demande une connexion sécurisée/).waitFor();
   assert.equal(await np.getByRole('button', { name: 'Dicter une note' }).count(), 0, 'pas de bouton micro sans contexte sécurisé');
   await np.getByLabel('Fichier audio', { exact: true }).setInputFiles({ name: 'dictee.webm', mimeType: 'audio/webm', buffer: Buffer.alloc(3000, 5) });

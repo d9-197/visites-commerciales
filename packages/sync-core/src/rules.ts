@@ -1,16 +1,17 @@
 // Règles métier partagées entre le back (qui les impose) et l'application (qui les reflète dans l'interface).
 
-export type VisitStatus = 'planned' | 'organized' | 'in_progress' | 'done' | 'validated' | 'cancelled';
+export type VisitStatus = 'planned' | 'organized' | 'in_progress' | 'done' | 'validated' | 'cancelled' | 'deleted';
 export type UserRole = 'commercial' | 'manager' | 'directeur';
 
 /** « planned » = à organiser ; « organized » = organisée avec le client (rendez-vous confirmé). */
 export const VISIT_TRANSITIONS: Record<VisitStatus, readonly VisitStatus[]> = {
-  planned: ['organized', 'in_progress', 'cancelled'],
-  organized: ['planned', 'in_progress', 'cancelled'],
-  in_progress: ['done', 'cancelled'],
-  done: ['validated'],   // « validated » est attribué par le serveur quand le compte rendu est validé ; jamais envoyé par l'appareil
-  validated: [],
-  cancelled: [],
+  planned: ['organized', 'in_progress', 'cancelled', 'deleted'],
+  organized: ['planned', 'in_progress', 'cancelled', 'deleted'],
+  in_progress: ['done', 'cancelled', 'deleted'],
+  done: ['validated', 'deleted'],   // « validated » est attribué par le serveur quand le compte rendu est validé ; jamais envoyé par l'appareil
+  validated: ['deleted'],
+  cancelled: ['deleted'],
+  deleted: [],
 };
 
 export const canTransition = (from: VisitStatus, to: VisitStatus) => from === to || VISIT_TRANSITIONS[from].includes(to);
@@ -32,7 +33,15 @@ export function canEditVisitDate(status: VisitStatus, isAuthor: boolean): boolea
 
 /** Notes durant visite : plus modifiables (ajout, modification, suppression) une fois la visite terminée, validée ou annulée. */
 export function canEditVisitNotes(status: VisitStatus | string): boolean {
-  return !['done', 'validated', 'cancelled'].includes(status);
+  return !['done', 'validated', 'cancelled', 'deleted'].includes(status);
+}
+
+/**
+ * Suppression d'une visite (statut « supprimée », masquée par défaut) : le commercial auteur de la visite, ou un directeur qui la voit.
+ * Refusée tant qu'il reste des actions à faire (voir `canDeleteVisit` côté serveur et application).
+ */
+export function canDeleteVisit(role: UserRole, isAuthor: boolean): boolean {
+  return role === 'directeur' || (role === 'commercial' && isAuthor);
 }
 
 /** Le compte rendu ne se valide qu'une fois la visite terminée. */

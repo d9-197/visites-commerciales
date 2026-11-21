@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { Pool, Client } from '../db.js';
 import { tx } from '../db.js';
 import { HttpError } from '../errors.js';
-import { LONG_TEXT_FIELDS, VERSIONED, VISIT_HISTORY_FIELDS, canEditVisitAddress, canEditVisitDate, canEditVisitNotes, canTransition, canValidateReport } from '@visites/sync-core';
+import { LONG_TEXT_FIELDS, VERSIONED, VISIT_HISTORY_FIELDS, canEditVisitAddress, canEditVisitDate, canDeleteVisit, canEditVisitNotes, canTransition, canValidateReport } from '@visites/sync-core';
 import type { UserRole, VisitStatus } from '@visites/sync-core';
 import type { Operation, OperationResult, ConflictField, EntityName } from '@visites/sync-core';
 
@@ -17,7 +17,7 @@ const nstr = z.string().nullable();
 const VISIT_FIELDS = {
   visit_type: nstr, objective: nstr, planned_start: ts.nullable(), planned_end: ts.nullable(),
   started_at: ts.nullable(), ended_at: ts.nullable(), location_text: z.string().max(500).nullable(),
-  status: z.enum(['planned', 'organized', 'in_progress', 'done', 'validated', 'cancelled']),
+  status: z.enum(['planned', 'organized', 'in_progress', 'done', 'validated', 'cancelled', 'deleted']),
 };
 const DRAFT_ACTION = z.object({ id: uuid, title: z.string().trim().min(1).max(200), due_date: date.nullable(), origin: z.enum(['ai', 'manual']) });
 const REPORT_FIELDS = {
@@ -177,7 +177,13 @@ async function handle(ctx: Ctx): Promise<Applied> {
         const isAuthor = row.author_id === userId;
         const me = (await c.query(`SELECT role, display_name FROM app_user WHERE id = $1`, [userId])).rows[0];
         // L'adresse peut être modifiée par d'autres que l'auteur, selon le statut et le rôle ; tout le reste : l'auteur seul.
-        if (!isAuthor && !(keys.length > 0 && keys.every(k => k === 'location_text'))) throw new Reject('forbidden', "Réservé à l'auteur de la visite");
+        const onlyDelete = keys.length === 1 && fields.status === 'deleted';
+        if (!isAuthor && !(keys.length > 0 && keys.every(k => k === 'location_text')) && !(onlyDelete && me.role === 'directeur')) throw new Reject('forbidden', "Réservé à l'auteur de la visite");
+        if (fields.status === 'deleted' && row.status !== 'deleted') {
+          if (!canDeleteVisit(me.role as UserRole, isAuthor)) throw new Reject('forbidden', 'Seul le commercial auteur de la visite ou un directeur peut la supprimer');
+          const open = (await c.query(`SELECT count(*)::int AS n FROM action_item WHERE visit_id = $1 AND status = 'todo'`, [id])).rows[0].n;
+          if (open > 0) throw new Reject('locked_status', 'Des actions restent à faire : terminez-les ou annulez-les avant de supprimer la visite');
+        }
         if ('location_text' in fields && !canEditVisitAddress(row.status as VisitStatus, me.role as UserRole)) {
           throw new Reject('locked_status', row.status === 'organized' ? "Une fois la visite organisée, l'adresse n'est modifiable que par un commercial" : "L'adresse n'est plus modifiable une fois la visite commencée");
         }
@@ -218,6 +224,7 @@ async function handle(ctx: Ctx): Promise<Applied> {
       if (op.op === 'create') {
         const p = parse(S.reportCreate, op.payload);
         const vr = await visitRow(c, userId, p.visit_id, true);
+        if (vr.status === 'deleted') throw new Reject('locked_status', 'Visite supprimée');
         if (p.status === 'validated' && !canValidateReport(vr.status)) throw new Reject('locked_status', 'La visite doit être terminée pour valider le compte rendu');
         if (p.status === 'validated' && !(p.summary ?? '').trim()) throw new Reject('validation_failed', 'summary requis pour valider');
         const extra = p.status === 'validated' ? { validated_at: new Date().toISOString(), validated_by: userId } : {};
@@ -230,6 +237,7 @@ async function handle(ctx: Ctx): Promise<Applied> {
         const row = rows[0];
         if (!row || !(await c.query(`SELECT can_read_visit($1,$2) AS ok`, [userId, row.visit_id])).rows[0].ok) throw new Reject('not_found', 'Compte rendu inconnu');
         if (row.author_id !== userId) throw new Reject('forbidden', "Réservé à l'auteur");
+        if (row.visit_status === 'deleted') throw new Reject('locked_status', 'Visite supprimée');
         const fields = parse(S.reportUpdate, op.payload);
         const keys = Object.keys(fields);
         // Un compte rendu validé n'est plus modifiable ; seule sa remise en brouillon est possible.
@@ -281,7 +289,8 @@ async function handle(ctx: Ctx): Promise<Applied> {
       if (op.op === 'create') {
         const p = parse(S.internalCreate, op.payload);
         const me = (await c.query(`SELECT role, display_name FROM app_user WHERE id = $1`, [userId])).rows[0];
-        await visitRow(c, userId, p.visit_id, false);
+        const vi = await visitRow(c, userId, p.visit_id, false);
+        if (vi.status === 'deleted') throw new Reject('locked_status', 'Visite supprimée');
         if (me.role !== 'commercial') throw new Reject('forbidden', 'Les notes internes sont écrites par les commerciaux');
         await insert(c, 'internal_note', { id, author_id: userId, author_name: me.display_name, ...p });
         return { fields: Object.keys(p) };
@@ -314,6 +323,7 @@ async function handle(ctx: Ctx): Promise<Applied> {
         const p = parse(S.actionCreate, op.payload);
         if (!p.visit_id) throw new Reject('validation_failed', 'Une action est créée depuis une visite (visit_id requis)');
         const va = await visitRow(c, userId, p.visit_id, true);
+        if (va.status === 'deleted') throw new Reject('locked_status', 'Visite supprimée');
         if (va.company_id !== p.company_id) throw new Reject('validation_failed', 'Le client ne correspond pas à la visite');
         const validated = (await c.query(`SELECT 1 FROM visit_report WHERE visit_id = $1 AND status = 'validated'`, [p.visit_id])).rows[0];
         if (!validated) throw new Reject('locked_status', 'Les actions ne sont créées qu\'une fois le compte rendu validé');
