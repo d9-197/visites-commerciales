@@ -17,7 +17,7 @@ Bouton flottant « + » : nouvelle visite / note rapide / nouveau client.
 ### 1. Aujourd'hui
 ```
 +------------------------------+
-| Jeudi 20 nov.      ● En ligne|
+| Vendredi 20 nov.   ● En ligne|
 |------------------------------|
 | Prochaine visite       10:30 |
 | Dupont SA — M. Martin        |
@@ -77,7 +77,7 @@ Bouton flottant « + » : nouvelle visite / note rapide / nouveau client.
 | Prochaine étape  ✎           |
 |------------------------------|
 | Actions détectées            |
-|  ☐ Devis — jeudi 27/11  [ok] |
+|  ☐ Devis — jeudi 26/11  [ok] |
 |  ☐ Rappeler M. Martin   [ok] |
 |------------------------------|
 | ( 🎤 Compléter )  [ Valider ]|
@@ -89,7 +89,9 @@ Les passages modifiés par l'IA sont surlignés ; un appui montre le texte dict�
 Onglets : Infos · Contacts · Visites · Actions. Bouton « Nouvelle visite ».
 
 ### 6. Actions
-Liste filtrée (en retard / aujourd'hui / à venir), glisser pour terminer ou reporter.
+Liste triée par échéance, filtres Ouvertes / Terminées / Toutes. La case de gauche termine ou rouvre ; un appui sur le texte ouvre la fiche. Bouton « + Nouvelle » en haut.
+
+Fiche d'action : intitulé (avec dictée), client, échéance, rappel, responsable (lecture seule), statut, « Reporter de 7 jours », « Enregistrer ». Les actions proposées par l'IA apparaissent dans le compte rendu avec case, intitulé et date modifiables.
 
 ### 7. Paramètres
 Compte, mode hors-ligne (données à garder), glossaire personnel, durée de conservation de l'audio, déconnexion.

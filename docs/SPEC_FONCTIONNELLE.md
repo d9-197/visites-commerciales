@@ -23,6 +23,7 @@ données exploitable (comptes rendus structurés, actions, prochaines étapes).
 | Fournisseur transcription/IA | Non choisi, à comparer | Comparatif à produire (traitement UE, langues, coût, DPA) à partir de sources vérifiées |
 | MDM | NinjaOne | Distribution et politiques de l'appli via NinjaOne ; à vérifier : plateformes mobiles gérées (iOS/Android), mode de déploiement d'une appli privée, configuration à distance (AppConfig), effacement à distance |
 | CRM (précisions du 20/11) | CRM interne, non nommé ; clients en lecture seule dans l'appli (pas de création) ; le CRM vient **récupérer** visites et CR par API | Le back expose une API REST dédiée au CRM (authentification par clé/jeton de service, pagination, filtre « modifié depuis », identifiants stables, suppression logique) ; le back lit les clients du CRM de son côté ; pas d'écriture dans le CRM |
+| API pour le CRM : périmètre | « Tout récupérer potentiellement », actions comprises | L'API couvre toutes les entités : visites, comptes rendus, notes, actions, contacts liés, participants, rattachements, avec statut et historique de modification, y compris annulations et suppressions logiques. Exceptions à trancher : notes privées et audio brut (voir §11) |
 | Administration des comptes | L'IT, via une console d'administration | Console web (création, réinitialisation, désactivation, rôles, rattachement hiérarchique, affectation client-commerciaux) ; pas d'inscription libre-service |
 | Volume de dictée | ~10 h d'audio par commercial et par mois | Base de calcul du budget : 10 h/mois/utilisateur, à comparer au plafond de 30 € |
 | Parc | Mixte iOS + Android, géré par NinjaOne | Appli multiplateforme, tests sur les deux systèmes ; dictée native différente selon l'OS |
@@ -47,9 +48,30 @@ données exploitable (comptes rendus structurés, actions, prochaines étapes).
 4. **Compte rendu** : champs structurés (objet, participants, résumé, besoins, objections, concurrents, décisions, prochaine étape, statut/température de l'opportunité) + notes libres + photos.
 5. **Saisie vocale** : dictée dans n'importe quel champ ou dictée globale de la visite (voir §5).
 6. **Assistance IA** : structuration et correction du compte rendu dicté (voir §6).
-7. **Actions de suivi** : tâches avec échéance, liées à une visite/un client, rappels.
+7. **Actions de suivi** : voir §3 bis.
 8. **Hors-ligne** : consultation et saisie sans réseau, synchronisation automatique ensuite (voir §7).
 9. **Recherche** : clients, visites, actions.
+
+### 3 bis. Actions de suivi
+
+**Définition** : tâche avec intitulé, client, échéance facultative, rappel facultatif, statut (à faire, terminée, annulée), responsable, visite d'origine facultative.
+
+**Création**
+- Depuis le compte rendu : l'IA propose des actions (intitulé + échéance déduite de la dictée). Le commercial coche, corrige l'intitulé et la date, ajoute ou ignore des lignes. **Rien n'est créé avant la validation du compte rendu.**
+- Manuellement : « + Nouvelle » dans la liste des actions, « + Action » dans la fiche client.
+- À la voix : l'intitulé peut être dicté ; le résultat est signalé « dicté, à vérifier » et reste modifiable.
+
+**Modification** : intitulé, client, échéance, rappel (aucun, jour même 9 h, veille 17 h), statut. Report de 7 jours en un appui. Cocher la case dans la liste suffit pour terminer ou rouvrir.
+
+**Suppression** : pas de suppression ; une action est « annulée » pour garder l'historique (et la rendre récupérable par l'API).
+
+**Responsable** : l'auteur, non modifiable en v1. L'assignation à un collègue n'est pas prévue **[À VALIDER]**.
+
+**Droits** : le responsable modifie ses actions ; un manager voit celles de son équipe (lecture).
+
+**Hors-ligne** : création et modification possibles ; envoi à la reconnexion ; conflits : règle du §7.
+
+**Rappels** : notification locale sur l'appareil à l'heure choisie (fonctionne hors-ligne).
 
 ### V2 (hors MVP)
 Tournée optimisée et itinéraire, géolocalisation/check-in automatique, rappel de
@@ -107,7 +129,7 @@ Garde-fous :
 - **Visite** (id, société, contacts[], commercial, date/heure prévue, début/fin réels, type, statut, lieu)
 - **CompteRendu** (id, visite, champs structurés, texte brut dicté, texte IA, version finale, statut de validation)
 - **Note** (id, visite, type voix/texte/photo, contenu, horodatage)
-- **Action** (id, visite, société, responsable, échéance, statut)
+- **Action** (id, société, visite d'origine facultative, responsable, intitulé, échéance, rappel, statut todo/done/cancel, origine manuelle/dictée/IA, créée le, modifiée le)
 - **Enregistrement** (id, visite, fichier, durée, statut de transcription, date de purge)
 - **Glossaire** (terme, variantes, catégorie)
 
@@ -131,4 +153,6 @@ Garde-fous :
 2. Combien de niveaux hiérarchiques ? Confirmer la règle de visibilité des CR (§1 bis).
 3. Documentation de l'API du CRM : authentification, champs client/contact, quotas, identifiant de référence ?
 4. Format et contenu attendus par le CRM pour récupérer visites et CR (champs, fréquence d'appel, historique initial) ?
-5. Un client supprimé ou fusionné dans le CRM : que deviennent ses visites dans le back ?
+5. L'API destinée au CRM doit-elle exposer les notes privées et l'audio brut ? Par défaut : non, car les notes privées sont réservées à leur auteur, et un compte de service CRM les rendrait lisibles par quiconque administre le CRM **[À VALIDER]**.
+6. Assignation d'une action à un collègue : à autoriser plus tard ?
+7. Un client supprimé ou fusionné dans le CRM : que deviennent ses visites dans le back ?

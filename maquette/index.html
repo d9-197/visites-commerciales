@@ -90,8 +90,12 @@ mark{background:var(--ai-soft);color:inherit;border-radius:4px;padding:0 3px}
 .box[data-on="true"]{background:var(--ok);border-color:var(--ok)}
 .box[data-on="true"]::after{content:"";width:6px;height:11px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg) translate(-1px,-1px)}
 .done{text-decoration:line-through;color:var(--muted)}
-input[type=search],select{width:100%;border:1px solid var(--line);border-radius:12px;padding:12px;font:inherit;background:var(--surface);color:var(--ink);min-height:48px}
-.toast{position:absolute;left:16px;right:16px;bottom:78px;background:var(--ink);color:var(--bg);padding:12px 14px;border-radius:12px;font-size:13px;font-weight:500}
+input[type=search],input[type=text],input[type=date],select{width:100%;border:1px solid var(--line);border-radius:12px;padding:12px;font:inherit;background:var(--surface);color:var(--ink);min-height:48px}
+.boxbtn{border:0;background:none;padding:10px 8px 10px 0;min-height:48px;flex:none}
+.rowbtn{flex:1;border:0;background:none;text-align:left;padding:10px 0;min-width:0}
+.crrow{display:flex;gap:6px;align-items:flex-start;border-bottom:1px solid var(--line);padding:8px 0}
+.crf{flex:1;display:flex;flex-direction:column;gap:6px;min-width:0}
+.toast{pointer-events:none;position:absolute;left:16px;right:16px;bottom:78px;background:var(--ink);color:var(--bg);padding:12px 14px;border-radius:12px;font-size:13px;font-weight:500}
 .note{border-radius:12px;background:var(--bg);padding:10px 12px;font-size:14px;display:flex;flex-direction:column;gap:2px}
 .avatar{width:38px;height:38px;border-radius:50%;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;font-weight:700;flex:none;font-family:var(--display)}
 .empty{color:var(--muted);text-align:center;padding:20px 0}
@@ -129,11 +133,19 @@ const CLIENTS=[
 ];
 const AGENDA=[{t:'10:30',c:'dup',type:'Suivi offre B'},{t:'14:00',c:'rou',type:'Démonstration'},{t:'16:30',c:'ber',type:'Renouvellement'}];
 const S={screen:'today',client:'dup',tab:'Visites',off:false,rec:false,secs:0,notes:[],cr:'ia',actions:[
- {id:1,txt:'Envoyer le devis offre B',c:'dup',due:'22 nov.',late:true,done:false},
- {id:2,txt:'Rappeler Mme Roux',c:'rou',due:'20 nov.',late:false,done:false},
- {id:3,txt:'Envoyer la fiche technique',c:'ber',due:'18 nov.',late:true,done:false},
- {id:4,txt:'Confirmer le rendez-vous de décembre',c:'van',due:'2 déc.',late:false,done:true}],
- filter:'Ouvertes',q:'',toast:'',crActs:[true,true],validated:false};
+ {id:1,txt:'Envoyer le devis offre B',c:'dup',due:'2026-11-22',st:'todo'},
+ {id:2,txt:'Rappeler Mme Roux',c:'rou',due:'2026-11-20',st:'todo'},
+ {id:3,txt:'Envoyer la fiche technique',c:'ber',due:'2026-11-18',st:'todo'},
+ {id:4,txt:'Confirmer le rendez-vous de décembre',c:'van',due:'2026-12-02',st:'done'}],
+ filter:'Ouvertes',q:'',toast:'',crActs:[],form:null};
+const TODAY='2026-11-20';
+const MON=['janv.','févr.','mars','avr.','mai','juin','juil.','août','sept.','oct.','nov.','déc.'];
+const dfmt=i=>i?(+i.slice(8))+' '+MON[+i.slice(5,7)-1]:'sans échéance';
+const isLate=a=>a.st==='todo'&&a.due&&a.due<TODAY;
+const addDays=(i,n)=>{const d=new Date(i+'T12:00:00Z');d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10)};
+const mkCr=()=>[{on:true,txt:'Envoyer le devis',due:'2026-11-26',c:'dup'},{on:true,txt:'Rappeler Mme Leroy (responsable technique)',due:'',c:'dup'}];
+S.crActs=mkCr();
+const blank=c=>({id:null,txt:'',c:c||'dup',due:'',remind:'none',st:'todo',ai:false,from:S.screen});
 let timer=null,toastT=null;
 const $=s=>document.querySelector(s);
 const cl=id=>CLIENTS.find(c=>c.id===id);
@@ -141,20 +153,20 @@ const fmt=s=>String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(
 const esc=s=>s.replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
 function toast(m){S.toast=m;render();clearTimeout(toastT);toastT=setTimeout(()=>{S.toast='';render()},2600)}
 function go(s,p){if(p)Object.assign(S,p);S.screen=s;render();$('#screen').scrollTop=0}
-const SCREENS=[['today','Aujourd’hui'],['prep','Préparation de visite'],['visit','Visite en cours'],['cr','Compte rendu'],['clients','Clients'],['client','Fiche client'],['actions','Actions'],['settings','Réglages']];
-const TABS={today:'today',prep:'today',visit:'today',cr:'today',clients:'clients',client:'clients',actions:'actions',settings:'settings'};
+const SCREENS=[['today','Aujourd’hui'],['prep','Préparation de visite'],['visit','Visite en cours'],['cr','Compte rendu'],['clients','Clients'],['client','Fiche client'],['actions','Actions'],['action','Créer / modifier une action'],['settings','Réglages']];
+const TABS={today:'today',prep:'today',visit:'today',cr:'today',clients:'clients',client:'clients',actions:'actions',action:'actions',settings:'settings'};
 function netPill(){return S.off?'<span class="pill off"><i></i>Hors-ligne · 2 en attente</span>':'<span class="pill on"><i></i>Synchronisé</span>'}
 function back(to,label){return `<div class="top"><button class="back" data-go="${to}">‹ ${label}</button></div>`}
 
 const V={
 today(){return `
- <div><h2>Jeudi 20 novembre</h2><div class="sub">3 visites aujourd'hui</div></div>
+ <div><h2>Vendredi 20 novembre</h2><div class="sub">3 visites aujourd'hui</div></div>
  <div class="card hero"><div class="row"><span class="label">Prochaine visite</span><span class="time">10:30</span></div>
   <div><div class="t" style="font-size:18px">Dupont SA · M. Martin</div><div class="sub">12 rue des Lilas, Lyon · Suivi offre B</div></div>
   <div class="row"><button class="btn small" data-go="prep">Préparer</button><button class="btn primary" data-start>Démarrer la visite</button></div></div>
  <div class="label">Plus tard</div>
  <div class="list">${AGENDA.slice(1).map(a=>`<button class="item" data-client="${a.c}"><span class="time">${a.t}</span><span style="flex:1"><div class="t">${cl(a.c).name}</div><div class="sub">${a.type} · ${cl(a.c).city}</div></span><span class="sub">›</span></button>`).join('')}</div>
- <button class="card" style="text-align:left" data-go="actions"><div class="row"><span class="t">Actions en retard</span><span class="badge late">${S.actions.filter(a=>a.late&&!a.done).length}</span></div><div class="sub">Envoyer le devis offre B · Envoyer la fiche technique</div></button>`},
+ <button class="card" style="text-align:left" data-go="actions"><div class="row"><span class="t">Actions en retard</span><span class="badge late">${S.actions.filter(isLate).length}</span></div><div class="sub">${S.actions.filter(isLate).map(a=>esc(a.txt)).join(' · ')||'Aucune'}</div></button>`},
 prep(){const c=cl('dup');return back('today','Aujourd’hui')+`
  <div><h2>${c.name}</h2><div class="sub">Dernière visite : ${c.last} · Suivi offre B</div></div>
  <div class="card"><div class="row"><span class="label">Résumé de la dernière visite</span><span class="badge ai">IA · à vérifier</span></div>
@@ -182,12 +194,12 @@ cr(){
  <div class="card">
   <div class="field"><span class="label">Résumé</span><span>M. Martin est intéressé par l'<mark>offre B</mark>. Le budget n'est pas confirmé (<mark>environ 40 k€</mark>).</span></div>
   <div class="field"><span class="label">Besoins</span><span>Offre B pour son atelier de Lyon.</span></div>
-  <div class="field"><span class="label">Prochaine étape</span><span>Envoyer un devis <mark>avant jeudi 27 novembre</mark>.</span></div>
+  <div class="field"><span class="label">Prochaine étape</span><span>Envoyer un devis <mark>avant jeudi 26 novembre</mark>.</span></div>
   <div class="row"><span class="badge ai">Surligné = modifié par l'IA</span><span class="sub">Touchez pour comparer</span></div>
  </div>
- <div class="card"><span class="label">Actions détectées</span>
-  <button class="chk" data-act="0"><span class="box" data-on="${S.crActs[0]}"></span><span><div class="t">Envoyer le devis</div><div class="sub">Dupont SA · 27 nov.</div></span></button>
-  <button class="chk" data-act="1"><span class="box" data-on="${S.crActs[1]}"></span><span><div class="t">Rappeler Mme Leroy (responsable technique)</div><div class="sub">échéance à préciser</div></span></button>
+ <div class="card"><span class="label">Actions proposées</span>
+  ${S.crActs.map((a,i)=>`<div class="crrow"><button class="boxbtn" data-act="${i}" aria-label="Créer cette action"><span class="box" data-on="${a.on}"></span></button><div class="crf"><input type="text" data-crtxt="${i}" value="${esc(a.txt)}" aria-label="Intitulé de l'action" placeholder="Intitulé"><div class="row start"><input type="date" data-crdue="${i}" value="${a.due}" aria-label="Échéance" style="flex:1">${a.due?'':'<span class="badge late">à préciser</span>'}</div></div></div>`).join('')}
+  <button class="btn small" data-addcr>+ Ajouter une action</button><span class="sub">Rien n'est créé avant la validation du compte rendu. Décochez pour ignorer.</span>
  </div>
  <div class="card"><div class="row"><span class="label">Note privée</span><span class="badge">Visible par vous seul</span></div><span class="sub">Ajouter une remarque non partagée.</span></div>`
  :`<div class="card"><span class="label">Texte dicté</span>${off?'<span class="sub">En attente de transcription.</span>':raw}</div>
@@ -200,13 +212,24 @@ clients(){const q=S.q.toLowerCase();const r=CLIENTS.filter(c=>(c.name+c.city).to
 client(){const c=cl(S.client);const tabs=['Visites','Contacts','Actions'];
  const body={Visites:`<div class="note"><span class="sub">${c.last} · Suivi</span><span>Compte rendu validé. Prochaine étape : devis.</span></div><div class="note"><span class="sub">Août · Découverte</span><span>Premier rendez-vous, besoins recueillis.</span></div>`,
  Contacts:c.contacts.map(p=>`<div class="row start"><div class="avatar">${p[0].split(' ')[1][0]}</div><div><div class="t">${p[0]}</div><div class="sub">${p[1]}</div></div></div>`).join(''),
- Actions:S.actions.filter(a=>a.c===c.id).map(a=>`<div class="note"><span class="${a.done?'done':'t'}">${a.txt}</span><span class="sub">${a.due}</span></div>`).join('')||'<div class="empty">Aucune action.</div>'}[S.tab];
+ Actions:(S.actions.filter(a=>a.c===c.id).map(a=>`<button class="note" data-edit="${a.id}" style="border:0;text-align:left;width:100%"><span class="${a.st!=='todo'?'done':'t'}">${esc(a.txt)}</span><span class="sub">${dfmt(a.due)}${a.st==='cancel'?' · annulée':''}</span></button>`).join('')||'<div class="empty">Aucune action.</div>')+`<button class="btn small" data-new="${c.id}">+ Action</button>`}[S.tab];
  return back('clients','Clients')+`<div><h2>${c.name}</h2><div class="sub">${c.addr}</div></div>
  <div class="seg" role="group">${tabs.map(t=>`<button data-tab="${t}" aria-pressed="${S.tab===t}">${t}</button>`).join('')}</div>
  <div class="card">${body}</div><button class="btn primary" data-start data-for="${c.id}" style="flex:none">Nouvelle visite</button>`},
-actions(){const f=S.filter;const l=S.actions.filter(a=>f==='Toutes'||(f==='Ouvertes'?!a.done:a.done));
- return `<h2>Actions</h2><div class="seg" role="group">${['Ouvertes','Terminées','Toutes'].map(t=>`<button data-filter="${t}" aria-pressed="${f===t}">${t}</button>`).join('')}</div>
- <div class="list">${l.length?l.map(a=>`<button class="chk" data-toggle="${a.id}"><span class="box" data-on="${a.done}"></span><span style="flex:1"><div class="${a.done?'done':'t'}">${a.txt}</div><div class="sub">${cl(a.c).name} · ${a.due}</div></span>${a.late&&!a.done?'<span class="badge late">En retard</span>':''}</button>`).join(''):'<div class="empty">Rien à afficher.</div>'}</div>`},
+actions(){const f=S.filter;const l=S.actions.filter(a=>f==='Toutes'||(f==='Ouvertes'?a.st==='todo':a.st==='done')).sort((a,b)=>(a.due||'9').localeCompare(b.due||'9'));
+ return `<div class="row"><h2>Actions</h2><button class="btn primary small" data-new="">+ Nouvelle</button></div><div class="seg" role="group">${['Ouvertes','Terminées','Toutes'].map(t=>`<button data-filter="${t}" aria-pressed="${f===t}">${t}</button>`).join('')}</div>
+ <div class="list">${l.length?l.map(a=>`<div class="chk"><button class="boxbtn" data-toggle="${a.id}" aria-label="${a.st==='done'?'Remettre à faire':'Marquer terminée'}"><span class="box" data-on="${a.st==='done'}"></span></button><button class="rowbtn" data-edit="${a.id}"><div class="${a.st!=='todo'?'done':'t'}">${esc(a.txt)}</div><div class="sub">${cl(a.c).name} · ${dfmt(a.due)}</div></button>${isLate(a)?'<span class="badge late">En retard</span>':''}${a.st==='cancel'?'<span class="badge">Annulée</span>':''}</div>`).join(''):'<div class="empty">Rien à afficher.</div>'}</div>`},
+action(){const f=S.form,edit=f.id!==null;
+ return back(f.from,'Retour')+`<h2>${edit?'Modifier l\'action':'Nouvelle action'}</h2>
+ ${S.off?'<div class="banner">Hors-ligne : enregistré sur l\'appareil, envoyé à la reconnexion.</div>':''}
+ <div class="field"><div class="row"><label class="label" for="f_txt">Intitulé</label>${f.ai?'<span class="badge ai">Dicté · à vérifier</span>':''}</div>
+  <div class="row"><input type="text" id="f_txt" value="${esc(f.txt)}" placeholder="Ex. Envoyer le devis"><button class="btn small" data-fmic aria-label="Dicter l'intitulé" style="padding:8px 12px">${ic.mic.replace('<svg','<svg width="20" height="20"')}</button></div></div>
+ <div class="field"><label class="label" for="f_c">Client</label><select id="f_c">${CLIENTS.map(c=>`<option value="${c.id}" ${c.id===f.c?'selected':''}>${c.name}</option>`).join('')}</select></div>
+ <div class="field"><label class="label" for="f_due">Échéance</label><input type="date" id="f_due" value="${f.due}"></div>
+ <div class="field"><label class="label" for="f_rem">Rappel</label><select id="f_rem">${[['none','Aucun'],['day','Le jour même, 9 h'],['eve','La veille, 17 h']].map(([v,l])=>`<option value="${v}" ${v===f.remind?'selected':''}>${l}</option>`).join('')}</select></div>
+ <div class="field"><span class="label">Responsable</span><span>Vous</span><span class="sub">L'assignation à un collègue n'est pas prévue dans cette version.</span></div>
+ ${edit?`<div class="field"><span class="label">Statut</span><div class="seg" role="group">${[['todo','À faire'],['done','Terminée'],['cancel','Annulée']].map(([v,l])=>`<button data-fst="${v}" aria-pressed="${f.st===v}">${l}</button>`).join('')}</div></div>`:''}
+ <div class="row"><button class="btn primary" data-fsave>Enregistrer</button>${edit?'<button class="btn small" data-fpost>Reporter de 7 jours</button>':''}</div>`},
 settings(){return `<h2>Réglages</h2>
  <div class="card"><div class="row"><span class="t">Langue de dictée</span><span class="sub">Français (fixée par l'IT)</span></div><div class="row"><span class="t">Interface</span><span class="sub">Français</span></div></div>
  <div class="card"><span class="t">Données gardées hors-ligne</span><select id="off" aria-label="Données hors-ligne"><option>7 prochains jours + historique récent</option><option>14 prochains jours</option></select></div>
@@ -218,32 +241,46 @@ settings(){return `<h2>Réglages</h2>
 function render(){
  $('#net').innerHTML=netPill();
  $('#screen').innerHTML=V[S.screen]()+(S.screen==='today'?'<div class="ex">Données d\'exemple</div>':'');
- const hide=S.screen==='visit'||S.screen==='cr'||S.screen==='prep';
+ const hide=['visit','cr','prep','action'].includes(S.screen);
  $('#tabs').hidden=hide;
  $('#tabs').innerHTML=[['today','Aujourd’hui'],['clients','Clients'],['actions','Actions'],['settings','Réglages']].map(([k,l])=>`<button data-go="${k}" aria-current="${TABS[S.screen]===k}">${ic[k]}${l}</button>`).join('');
  $('#shortcuts').innerHTML=SCREENS.map(([k,l])=>`<button data-sc="${k}" aria-current="${S.screen===k}">${l}</button>`).join('');
  $('#offSw').setAttribute('aria-checked',S.off);
  if(S.toast){const t=document.createElement('div');t.className='toast';t.setAttribute('role','status');t.textContent=S.toast;$('#phone').appendChild(t)}
 }
-function startVisit(c){if(c)S.client=c;S.notes=[];S.secs=0;S.rec=false;go('visit')}
+function startVisit(c){if(c)S.client=c;S.crActs=mkCr();S.notes=[];S.secs=0;S.rec=false;go('visit')}
 function tick(){clearInterval(timer);timer=setInterval(()=>{S.secs++;const e=$('#tm');if(e)e.textContent=fmt(S.secs)},1000)}
 document.addEventListener('click',e=>{
- const t=e.target.closest('[data-go],[data-sc],[data-start],[data-client],[data-mic],[data-note],[data-cr],[data-act],[data-valid],[data-tab],[data-filter],[data-toggle],#offSw');
+ const t=e.target.closest('[data-go],[data-sc],[data-start],[data-client],[data-mic],[data-note],[data-cr],[data-act],[data-valid],[data-tab],[data-filter],[data-toggle],[data-new],[data-edit],[data-fmic],[data-fsave],[data-fpost],[data-fst],[data-addcr],#offSw');
  if(!t)return;
  if(t.id==='offSw'){S.off=!S.off;return render()}
- if(t.dataset.sc){const k=t.dataset.sc;if(k==='visit'&&!S.secs){S.secs=23;S.notes=[{t:'10:41',k:'Voix',x:'Budget autour de 40 k€, pas confirmé.'}]}return go(k)}
+ if(t.dataset.sc){const k=t.dataset.sc;if(k==='action'){S.form=blank('dup');S.form.from='actions';return go('action')}if(k==='visit'&&!S.secs){S.secs=23;S.notes=[{t:'10:41',k:'Voix',x:'Budget autour de 40 k€, pas confirmé.'}]}return go(k)}
  if('start' in t.dataset)return startVisit(t.dataset.for),tick();
  if(t.dataset.client){S.client=t.dataset.client;S.tab='Visites';return go('client')}
  if('mic' in t.dataset){S.rec=!S.rec;if(!S.rec){S.notes.push({t:'10:'+(41+S.notes.length*3),k:'Voix',x:S.off?'Audio enregistré, transcription en attente du réseau.':'Le client souhaite un devis pour l\'offre B avant la fin du mois.'})}return render()}
  if(t.dataset.note){const k=t.dataset.note;if(k==='text')S.notes.push({t:'10:'+(41+S.notes.length*3),k:'Texte',x:'Concurrent présent : Alpha Systèmes.'});else if(k==='photo')S.notes.push({t:'10:'+(41+S.notes.length*3),k:'Photo',x:'Tableau blanc de l\'atelier (exemple).'});else return toast('Dictée de complément (exemple)');return render()}
  if(t.dataset.cr){S.cr=t.dataset.cr;return render()}
- if(t.dataset.act!==undefined){const i=+t.dataset.act;S.crActs[i]=!S.crActs[i];return render()}
- if('valid' in t.dataset){clearInterval(timer);S.rec=false;if(!S.off)S.actions.unshift({id:Date.now(),txt:'Envoyer le devis',c:'dup',due:'27 nov.',late:false,done:false});S.screen='today';render();return toast(S.off?'Compte rendu enregistré, envoi dès la reconnexion.':'Compte rendu validé, 2 actions créées.')}
+ if(t.dataset.act!==undefined){const i=+t.dataset.act;S.crActs[i].on=!S.crActs[i].on;return render()}
+ if('valid' in t.dataset){clearInterval(timer);S.rec=false;const made=S.crActs.filter(a=>a.on&&a.txt.trim());made.forEach(a=>S.actions.unshift({id:Date.now()+Math.random(),txt:a.txt.trim(),c:'dup',due:a.due,st:'todo'}));S.screen='today';render();const n=made.length+(made.length>1?' actions créées':' action créée');return toast(S.off?'Compte rendu enregistré ('+n+'), envoi dès la reconnexion.':'Compte rendu validé, '+n+'.')}
+ if('addcr' in t.dataset){S.crActs.push({on:true,txt:'',due:'',c:'dup'});return render()}
+ if('new' in t.dataset){S.form=blank(t.dataset.new||'dup');return go('action')}
+ if(t.dataset.edit){const a=S.actions.find(x=>x.id==t.dataset.edit);S.form={...a,remind:a.remind||'none',ai:false,from:S.screen};return go('action')}
+ if('fmic' in t.dataset){if(S.off)return toast('Hors-ligne : la dictée sera transcrite plus tard.');Object.assign(S.form,{txt:'Rappeler Mme Roux',c:'rou',due:'2026-11-26',ai:true});return render()}
+ if(t.dataset.fst){S.form.st=t.dataset.fst;return render()}
+ if('fpost' in t.dataset){S.form.due=addDays(S.form.due||TODAY,7);return render()}
+ if('fsave' in t.dataset){const f=S.form;if(!f.txt.trim())return toast('Saisissez un intitulé.');const {from,ai,...a}=f;a.txt=a.txt.trim();if(a.id===null){a.id=Date.now();S.actions.unshift(a)}else Object.assign(S.actions.find(x=>x.id===a.id),a);S.screen=from;render();return toast(S.off?'Action enregistrée, envoi à la reconnexion.':'Action enregistrée.')}
  if(t.dataset.tab){S.tab=t.dataset.tab;return render()}
  if(t.dataset.filter){S.filter=t.dataset.filter;return render()}
- if(t.dataset.toggle){const a=S.actions.find(x=>x.id==t.dataset.toggle);a.done=!a.done;return render()}
+ if(t.dataset.toggle){const a=S.actions.find(x=>x.id==t.dataset.toggle);a.st=a.st==='done'?'todo':'done';return render()}
  if(t.dataset.go){if(t.dataset.go!=='visit'&&t.dataset.go!=='cr')clearInterval(timer);return go(t.dataset.go)}
 });
-document.addEventListener('input',e=>{if(e.target.id==='q'){S.q=e.target.value;const p=e.target.selectionStart;render();const q=$('#q');q.focus();q.setSelectionRange(p,p)}});
+document.addEventListener('input',e=>{const t=e.target;
+ if(t.id==='q'){S.q=t.value;const p=t.selectionStart;render();const q=$('#q');q.focus();q.setSelectionRange(p,p)}
+ else if(t.dataset.crtxt!==undefined)S.crActs[+t.dataset.crtxt].txt=t.value;
+ else if(t.dataset.crdue!==undefined)S.crActs[+t.dataset.crdue].due=t.value;
+ else if(t.id==='f_txt')S.form.txt=t.value;
+ else if(t.id==='f_c')S.form.c=t.value;
+ else if(t.id==='f_due')S.form.due=t.value;
+ else if(t.id==='f_rem')S.form.remind=t.value});
 render();
 </script>
