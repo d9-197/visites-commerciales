@@ -6,11 +6,9 @@ async function snapshot(c: Client): Promise<Snapshot> {
   const users = (await c.query(`SELECT id FROM app_user WHERE status = 'active'`)).rows;
   const snap: Snapshot = new Map();
   for (const u of users) {
-    const [co, vi, ac] = await Promise.all([
-      c.query(`SELECT id FROM company WHERE can_read_company($1, id)`, [u.id]),
-      c.query(`SELECT id FROM visit WHERE can_read_visit($1, id)`, [u.id]),
-      c.query(`SELECT id FROM action_item WHERE can_read_action($1, id)`, [u.id]),
-    ]);
+    const co = await c.query(`SELECT id FROM company WHERE can_read_company($1, id)`, [u.id]);
+    const vi = await c.query(`SELECT id FROM visit WHERE can_read_visit($1, id)`, [u.id]);
+    const ac = await c.query(`SELECT id FROM action_item WHERE can_read_action($1, id)`, [u.id]);
     snap.set(u.id, {
       company: new Set(co.rows.map(r => r.id)), visit: new Set(vi.rows.map(r => r.id)), action: new Set(ac.rows.map(r => r.id)),
     });
