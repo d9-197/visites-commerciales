@@ -112,6 +112,19 @@ test('voix : réponse illisible, sans texte, erreur du fournisseur : 502 neutre'
   }
 });
 
+test('voix : un refus du fournisseur est journalisé (statut, format, début du message), sans la clé ni le contenu', async () => {
+  const logs: string[] = [];
+  const s = new VoxtralService({ ...cfg(), baseUrl: fake.url }, fetch, (e, d) => logs.push(`${e} ${JSON.stringify(d)}`));
+  fake.reply(415, { message: 'Unsupported audio format' });
+  await assert.rejects(s.transcribe({ audio: AUDIO, mime: 'audio/webm;codecs=opus' }), /erreur \(415\)/);
+  assert.equal(logs.length, 1);
+  assert.match(logs[0]!, /transcription refusee/); assert.match(logs[0]!, /"status":415/); assert.match(logs[0]!, /Unsupported audio format/); assert.match(logs[0]!, /"format":"audio\/webm"/);
+  assert.ok(!logs[0]!.includes('cle-de-test'), 'la clé n\'est jamais journalisée');
+  fake.reply(200, { model: 'x' });
+  await assert.rejects(s.transcribe({ audio: AUDIO, mime: 'audio/webm' }));
+  assert.match(logs[1]!, /transcription hors format/);
+});
+
 test('voix : entrées invalides : corps vide, type non audio, langue inconnue, durée absurde, trop volumineux', async () => {
   fake.reply(200, OK);
   assert.equal((await send('c1@x.fr', Buffer.alloc(10))).status, 400, 'trop court');

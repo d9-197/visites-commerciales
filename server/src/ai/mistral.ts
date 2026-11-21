@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { buildMessages } from './prompt.js';
 import { checkProposal } from './guards.js';
-import { AiError, type AiService, type StructureInput, type StructureResult } from './types.js';
+import { AiError, defaultAiLog, errorSnippet, type AiLog, type AiService, type StructureInput, type StructureResult } from './types.js';
 
 export interface MistralConfig {
   apiKey: string;
@@ -39,7 +39,7 @@ const outputSchema = z.object({
 
 export class MistralService implements AiService {
   readonly provider = 'mistral';
-  constructor(private cfg: MistralConfig, private doFetch: typeof fetch = fetch) {}
+  constructor(private cfg: MistralConfig, private doFetch: typeof fetch = fetch, private log: AiLog = defaultAiLog) {}
 
   async structure(input: StructureInput): Promise<StructureResult> {
     const ctl = new AbortController();
@@ -57,14 +57,17 @@ export class MistralService implements AiService {
       });
     } catch { throw new AiError('upstream', 'Le service d\'IA est injoignable.'); }
     finally { clearTimeout(timer); }
-    if (!res.ok) throw new AiError('upstream', `Le service d'IA a répondu avec une erreur (${res.status}).`);
+    if (!res.ok) {
+      this.log('synthese refusee', { status: res.status, model: this.cfg.model, reponse: await errorSnippet(res) });
+      throw new AiError('upstream', `Le service d'IA a répondu avec une erreur (${res.status}).`);
+    }
 
     let body: any;
     try { body = await res.json(); } catch { throw new AiError('invalid_output', 'Réponse du service d\'IA illisible.'); }
     const content: unknown = body?.choices?.[0]?.message?.content;
     let parsed: z.infer<typeof outputSchema>;
     try { parsed = outputSchema.parse(JSON.parse(String(content ?? ''))); }
-    catch { throw new AiError('invalid_output', 'La réponse du service d\'IA n\'a pas le format attendu.'); }
+    catch { this.log('synthese hors format', { model: this.cfg.model, longueur: String(content ?? '').length }); throw new AiError('invalid_output', 'La réponse du service d\'IA n\'a pas le format attendu.'); }
 
     const proposal = {
       fields: parsed.fields,

@@ -25,6 +25,18 @@ export interface StructureResult {
   costCents: number;
 }
 
+/**
+ * Journal des échecs du fournisseur (statut HTTP et début du message d'erreur), pour diagnostiquer un refus de format ou de modèle.
+ * Jamais la clé, jamais le texte des notes ni l'audio : seulement ce que le fournisseur répond.
+ */
+export type AiLog = (event: string, details: Record<string, unknown>) => void;
+export const defaultAiLog: AiLog = (event, d) => console.error(`[ia] ${event}`, JSON.stringify(d));
+
+/** Début du corps d'une réponse d'erreur du fournisseur, borné et sans retour à la ligne. */
+export async function errorSnippet(res: Response, max = 300): Promise<string> {
+  try { return (await res.text()).replace(/\s+/g, ' ').slice(0, max); } catch { return ''; }
+}
+
 /** Erreurs de l'IA : le message est neutre (jamais de contenu des notes). */
 export class AiError extends Error { constructor(public kind: 'unavailable' | 'upstream' | 'invalid_output', message: string) { super(message); } }
 

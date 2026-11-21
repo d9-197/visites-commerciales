@@ -85,6 +85,15 @@ test('IA : réponse illisible, hors format ou erreur du fournisseur : 502 neutre
   assert.equal((await env.pool.query(`SELECT count(*)::int n FROM ai_proposal`)).rows[0].n, before);
 });
 
+test('IA : un refus du fournisseur est journalisé sans le texte des notes', async () => {
+  const logs: string[] = [];
+  const s = new MistralService(svcCfg(), fetch, (e, d) => logs.push(`${e} ${JSON.stringify(d)}`));
+  fake.reply(400, { message: 'model not found' });
+  await assert.rejects(s.structure({ sourceText: NOTES, language: 'fr', today: '2026-11-21', glossary: [] }), /erreur \(400\)/);
+  assert.match(logs[0]!, /synthese refusee/); assert.match(logs[0]!, /"status":400/); assert.match(logs[0]!, /model not found/);
+  assert.ok(!logs.join('').includes('Martin') && !logs.join('').includes('cle-de-test'), 'ni notes ni clé dans le journal');
+});
+
 test('IA : champs hors format ignorés ou corrigés (actions invalides écartées, date invalide annulée)', async () => {
   fake.reply(200, completion({ fields: { ...GOOD.fields, extra: 'ignoré', needs: 12 }, actions: [{ title: '', due_date: null }, { title: 'Valide', due_date: 'demain', relative_date: 'oui' }] }));
   const r = await ask();
