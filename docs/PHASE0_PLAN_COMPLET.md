@@ -102,6 +102,7 @@ Réaliser un même **petit prototype** par framework si le premier échoue (comm
 6. Une note privée n'apparaît jamais ailleurs que chez son auteur, y compris dans l'API prévue pour le CRM.
 7. Reprise après coupure réseau au milieu d'une synchro.
 8. Volume : 200 utilisateurs simulés synchronisant en même temps.
+9. Deux transactions simultanées valident dans un ordre différent de leur numéro de changement : aucune ligne ne doit être manquée par un appareil (voir `SCHEMA_DONNEES.md` §5).
 
 **Critères de réussite** : les 8 scénarios passent ; le code de synchro reste de taille et de complexité acceptables pour l'équipe. Sinon, évaluer une base répliquée clé en main sur les mêmes scénarios, en vérifiant en particulier l'hébergement UE et la visibilité par hiérarchie.
 

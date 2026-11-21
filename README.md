@@ -10,4 +10,5 @@ Statut : **phase de conception** (design + fonctions). Aucun code.
 - [Maquette cliquable](maquette/index.html) (ouvrir le fichier dans un navigateur)
 - [Plan de la phase 0 (réduit)](docs/PHASE0_PLAN.md) · [plan complet archivé](docs/PHASE0_PLAN_COMPLET.md)
 - [Architecture technique](docs/ARCHITECTURE.md)
+- [Schéma de données](docs/SCHEMA_DONNEES.md) · [schema.sql](db/schema.sql)
 - [Comparatif transcription et IA](docs/COMPARATIF_FOURNISSEURS.md)

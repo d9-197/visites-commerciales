@@ -61,7 +61,7 @@ Si un de ces points échoue avec React Native, basculer sur Flutter avant d'alle
 
 ## 6. Prototype de synchro et de droits (D)
 
-Inchangé (voir `PHASE0_PLAN_COMPLET.md` §5) : 8 scénarios automatisés rejoués sur un back minimal en conteneurs. Le scénario de volume (200 utilisateurs simulés) se fait avec des clients simulés, sans appareils.
+Voir `PHASE0_PLAN_COMPLET.md` §5, avec le scénario 9 ajouté (ordre de validation des transactions) : 9 scénarios automatisés rejoués sur un back minimal en conteneurs. Le scénario de volume (200 utilisateurs simulés) se fait avec des clients simulés, sans appareils.
 
 ## 7. Cadrage écrit (F)
 
