@@ -6,7 +6,10 @@ import type { SqliteStore } from '@visites/sync-core';
 import { openStore } from './src/expoDb';
 import { clearSession, loadSession, saveSession, saveTokens, type Session, type ThemePref } from './src/session';
 import { ThemeProvider, useTheme } from './src/theme';
-import { fmtDateTime, fromLocalInputs, toLocalInputs, visitWhen, VISIT_STATUS } from './src/dates';
+import { dateToStr, fmtDate, fmtDateTime, strToDate, visitWhen, VISIT_STATUS } from './src/dates';
+import { DateField } from './src/DateField';
+import { NavChooser } from './src/NavChooser';
+import { companyAddress } from './src/nav';
 
 // Prototype : écrans minimaux pour exercer la synchro. La dictée vocale et l'IA ne sont PAS implémentées.
 const APP_VERSION = '0.1.0';
@@ -152,7 +155,8 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
           <Text style={s.muted}>Source : CRM, lecture seule. Toucher un client crée une visite.</Text>
           {data.companies.filter(c => c.status === 'active').map(c => (
             <Row key={c.id} title={c.name} sub={[c.city, c.sector].filter(Boolean).join(' · ')}
-              onPress={() => act(async () => { const id = await ctx.engine.create('visit', { company_id: c.id, status: 'planned', planned_start: new Date().toISOString() }); setScreen({ name: 'visit', id }); })} />
+              onPress={() => act(async () => { const addr = companyAddress(c);
+                const id = await ctx.engine.create('visit', { company_id: c.id, status: 'planned', planned_start: new Date().toISOString(), ...(addr ? { location_text: addr } : {}) }); setScreen({ name: 'visit', id }); })} />
           ))}
         </>}
         {screen.name === 'visit' && <VisitScreen key={screen.id} visitId={screen.id} data={data} ctx={ctx} act={act} back={() => setScreen({ name: 'today' })} companyName={companyName} />}
@@ -163,7 +167,7 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
               <Pressable onPress={() => act(() => ctx.engine.update('action', a.id, { status: a.status === 'done' ? 'todo' : 'done' }))} accessibilityRole="checkbox" accessibilityState={{ checked: a.status === 'done' }} style={[s.box, a.status === 'done' && s.boxOn]} />
               <Pressable style={{ flex: 1 }} onPress={() => setScreen({ name: 'action', id: a.id })}>
                 <Text style={[s.t, a.status !== 'todo' && s.done]}>{a.title}</Text>
-                <Text style={s.muted}>{companyName(a.company_id)} · {a.due_date ?? 'sans échéance'}{a.status === 'cancelled' ? ' · annulée' : ''}</Text>
+                <Text style={s.muted}>{companyName(a.company_id)} · {a.due_date ? fmtDate(a.due_date) : 'sans échéance'}{a.status === 'cancelled' ? ' · annulée' : ''}</Text>
               </Pressable>
             </View>
           ))}
@@ -199,13 +203,19 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName }: { visitId: 
   const report: Row | undefined = data.reports.find(r => r.visit_id === visitId);
   const [summary, setSummary] = useState<string>(report?.summary ?? '');
   const [note, setNote] = useState('');
-  const [pd, setPd] = useState(''); const [pt, setPt] = useState('');
-  // Les champs suivent la date prévue de la visite : à l'ouverture (la visite peut arriver après l'affichage) et si elle change ailleurs.
-  const planned: string | undefined = v?.planned_start ?? undefined;
-  useEffect(() => { const i = toLocalInputs(planned); setPd(i.date); setPt(i.time); }, [planned]);
+  const company: Row | undefined = data.companies.find(co => co.id === v?.company_id);
+  const clientAddr = companyAddress(company);
+  const shownAddr: string = (v?.location_text ?? '') || clientAddr;   // adresse de la visite, sinon celle du client
+  const [planned, setPlanned] = useState<Date | undefined>();
+  const [addr, setAddr] = useState('');
+  const [navOpen, setNavOpen] = useState(false);
+  // Les champs suivent la visite : à l'ouverture (la visite peut arriver après l'affichage) et si elle change ailleurs.
+  const plannedIso: string | undefined = v?.planned_start ?? undefined;
+  useEffect(() => { setPlanned(plannedIso ? new Date(plannedIso) : undefined); }, [plannedIso]);
+  useEffect(() => { setAddr(shownAddr); }, [shownAddr]);
   if (!v) return <><Btn small title="‹ Retour" onPress={back} /><Text style={s.muted}>Visite introuvable (supprimée ou plus accessible).</Text></>;
   const mine = v.author_id === ctx.userId;
-  const newPlanned = fromLocalInputs(pd, pt);
+  const plannedChanged = (planned?.toISOString() ?? null) !== (plannedIso ?? null);
   const saveReport = (validate: boolean) => act(async () => {
     const st = validate ? 'validated' : 'draft';
     if (!report) await ctx.engine.create('report', { visit_id: visitId, language: 'fr', summary, status: st });
@@ -221,13 +231,23 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName }: { visitId: 
       <Fact k="Commencée" val={v.started_at ? fmtDateTime(v.started_at) : '—'} />
       <Fact k="Terminée" val={v.ended_at ? fmtDateTime(v.ended_at) : '—'} />
     </View>
-    {mine && v.status !== 'done' && v.status !== 'cancelled' && <>
-      <Label>Modifier la date prévue</Label>
+    <Label>Adresse</Label>
+    {shownAddr
+      ? <Pressable onPress={() => setNavOpen(true)} accessibilityRole="link" accessibilityLabel="Ouvrir l'itinéraire" style={[s.rowCard, { minHeight: 48 }]}>
+          <Text style={[s.t, { flex: 1, color: c.accent, textDecorationLine: 'underline' }]}>{shownAddr}</Text><Text style={s.muted}>Itinéraire ›</Text></Pressable>
+      : <Text style={s.muted}>Aucune adresse. Le client n'en a pas dans le CRM : saisissez-en une ci-dessous.</Text>}
+    {mine && v.status !== 'cancelled' && <>
+      <TextInput accessibilityLabel="Adresse de la visite" placeholderTextColor={c.muted} style={s.input} value={addr} onChangeText={setAddr} placeholder="Adresse de la visite" multiline />
       <View style={s.rowBetween}>
-        <TextInput accessibilityLabel="Date prévue (AAAA-MM-JJ)" placeholderTextColor={c.muted} style={[s.input, { flex: 2, minWidth: 0 }]} value={pd} onChangeText={setPd} placeholder="AAAA-MM-JJ" autoCapitalize="none" />
-        <TextInput accessibilityLabel="Heure prévue (HH:MM)" placeholderTextColor={c.muted} style={[s.input, { flex: 1, minWidth: 0 }]} value={pt} onChangeText={setPt} placeholder="HH:MM" autoCapitalize="none" />
+        <Btn small title="Enregistrer l'adresse" disabled={addr.trim() === shownAddr} onPress={() => act(() => ctx.engine.update('visit', v.id, { location_text: addr.trim() || null }))} />
+        {clientAddr && shownAddr !== clientAddr && <Btn small title="Adresse du client" onPress={() => act(async () => { await ctx.engine.update('visit', v.id, { location_text: clientAddr }); })} />}
       </View>
-      <Btn small title="Enregistrer la date" disabled={!newPlanned} onPress={() => act(() => ctx.engine.update('visit', v.id, { planned_start: newPlanned }))} />
+    </>}
+    <NavChooser address={shownAddr} visible={navOpen} onClose={() => setNavOpen(false)} />
+    {mine && v.status !== 'done' && v.status !== 'cancelled' && <>
+      <Label>Date et heure prévues</Label>
+      <DateField label="Date et heure prévues" mode="datetime" value={planned} onChange={setPlanned} clearable />
+      <Btn small title="Enregistrer la date" disabled={!plannedChanged} onPress={() => act(() => ctx.engine.update('visit', v.id, { planned_start: planned ? planned.toISOString() : null }))} />
     </>}
     {mine && <View style={s.rowBetween}>
       {v.status === 'planned' && <Btn title="Démarrer" onPress={() => act(() => ctx.engine.update('visit', v.id, { status: 'in_progress', started_at: new Date().toISOString() }))} />}
@@ -250,20 +270,20 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName }: { visitId: 
 function ActionForm({ id, data, ctx, act, back }: { id?: string; data: Data; ctx: Ctx; act: Act; back: () => void }) {
   const { s, c } = useTheme();
   const existing: Row | undefined = id ? data.actions.find(a => a.id === id) : undefined;
-  const [title, setTitle] = useState(existing?.title ?? ''); const [due, setDue] = useState(existing?.due_date ?? '');
+  const [title, setTitle] = useState(existing?.title ?? ''); const [due, setDue] = useState<Date | undefined>(strToDate(existing?.due_date));
   const [company, setCompany] = useState<string>(existing?.company_id ?? data.companies[0]?.id ?? '');
-  const valid = title.trim().length > 0 && (!due || /^\d{4}-\d{2}-\d{2}$/.test(due)) && !!company;
+  const valid = title.trim().length > 0 && !!company;
   return <>
     <Btn small title="‹ Retour" onPress={back} />
     <Text style={s.h1}>{existing ? 'Modifier l\'action' : 'Nouvelle action'}</Text>
     <Label>Intitulé</Label><TextInput accessibilityLabel="Intitulé de l'action" placeholderTextColor={c.muted} style={s.input} value={title} onChangeText={setTitle} />
     <Label>Client</Label>
     {data.companies.map(co => <Pressable key={co.id} onPress={() => !existing && setCompany(co.id)} style={[s.choice, company === co.id && s.choiceOn]}><Text style={{ color: c.text }}>{co.name}</Text></Pressable>)}
-    <Label>Échéance (AAAA-MM-JJ)</Label><TextInput accessibilityLabel="Échéance" placeholderTextColor={c.muted} style={s.input} value={due} onChangeText={setDue} placeholder="2026-11-26" autoCapitalize="none" />
+    <Label>Échéance</Label><DateField label="Échéance" mode="date" value={due} onChange={setDue} clearable />
     <Text style={s.muted}>Responsable : vous.</Text>
     <Btn title="Enregistrer" disabled={!valid} onPress={() => act(async () => {
-      if (existing) await ctx.engine.update('action', existing.id, { title: title.trim(), due_date: due || null });
-      else await ctx.engine.create('action', { company_id: company, title: title.trim(), ...(due ? { due_date: due } : {}), origin: 'manual' });
+      if (existing) await ctx.engine.update('action', existing.id, { title: title.trim(), due_date: due ? dateToStr(due) : null });
+      else await ctx.engine.create('action', { company_id: company, title: title.trim(), ...(due ? { due_date: dateToStr(due) } : {}), origin: 'manual' });
       back();
     })} />
     {existing && existing.status !== 'cancelled' && <Btn title="Annuler l'action" onPress={() => act(async () => { await ctx.engine.update('action', existing.id, { status: 'cancelled' }); back(); })} />}

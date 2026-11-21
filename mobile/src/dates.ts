@@ -35,3 +35,28 @@ export function fromLocalInputs(date: string, time: string): string | undefined 
   const d = new Date(`${date}T${time || '09:00'}:00`);
   return Number.isNaN(d.getTime()) || toLocalInputs(d.toISOString()).date !== date ? undefined : d.toISOString();
 }
+
+// --- Dates seules (échéances d'action) : chaîne AAAA-MM-JJ, sans fuseau, pour éviter tout décalage d'un jour ---
+
+/** « jeu. 26 nov. 2026 » à partir de AAAA-MM-JJ ; chaîne vide si absente. */
+export function fmtDate(s?: string | null): string {
+  if (!s) return '';
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return s;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  try { return d.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }); } catch { return s; }
+}
+export function dateToStr(d: Date): string { return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`; }
+export function strToDate(s?: string | null): Date | undefined {
+  const m = s ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(s) : null;
+  return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : undefined;
+}
+
+/** Affichage d'un sélecteur : date seule ou date et heure, dans la langue du téléphone. */
+export function fmtJsDate(d: Date, mode: 'date' | 'datetime'): string {
+  try {
+    return mode === 'date'
+      ? d.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+      : d.toLocaleString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  } catch { return d.toISOString().slice(0, mode === 'date' ? 10 : 16).replace('T', ' '); }
+}

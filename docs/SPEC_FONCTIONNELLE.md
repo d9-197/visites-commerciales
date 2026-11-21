@@ -48,6 +48,7 @@ données exploitable (comptes rendus structurés, actions, prochaines étapes).
 1. **Authentification** : comptes propres (e-mail + mot de passe, double authentification) + déverrouillage biométrique de l'appli.
 2. **Clients / contacts** : liste, recherche, fiche (société, contacts, adresse, historique des visites, actions ouvertes). Alimentés par le CRM (lecture seule dans l'appli). Pas de création de client dans l'application (décision du 20/11).
 3. **Visites** : planifier, voir l'agenda du jour/semaine, démarrer, clôturer, annuler/reporter.
+   Chaque visite a une **adresse** : celle du client (CRM) par défaut, modifiable ; en touchant l'adresse, l'utilisateur choisit l'application d'itinéraire à ouvrir. Dates et heures prévues saisies avec le sélecteur natif du système.
 4. **Compte rendu** : champs structurés (objet, participants, résumé, besoins, objections, concurrents, décisions, prochaine étape, statut/température de l'opportunité) + notes libres + photos.
 5. **Saisie vocale** : dictée dans n'importe quel champ ou dictée globale de la visite (voir §5).
 6. **Assistance IA** : structuration et correction du compte rendu dicté (voir §6).

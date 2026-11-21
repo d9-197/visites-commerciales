@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@expo/metro-runtime": "~4.0.1",
+    "@react-native-community/datetimepicker": "8.2.0",
     "@visites/sync-core": "file:../packages/sync-core",
     "expo": "~52.0.0",
     "expo-asset": "~11.0.5",

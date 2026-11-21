@@ -15,7 +15,7 @@ const nstr = z.string().nullable();
 
 const VISIT_FIELDS = {
   visit_type: nstr, objective: nstr, planned_start: ts.nullable(), planned_end: ts.nullable(),
-  started_at: ts.nullable(), ended_at: ts.nullable(), location_text: nstr,
+  started_at: ts.nullable(), ended_at: ts.nullable(), location_text: z.string().max(500).nullable(),
   status: z.enum(['planned', 'in_progress', 'done', 'cancelled']),
 };
 const REPORT_FIELDS = {

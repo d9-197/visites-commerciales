@@ -22,8 +22,8 @@ await mk('admin@exemple.invalid', 'Admin IT', 'commercial', undefined, true);
 await pool.query('SELECT rebuild_hierarchy()');
 
 await importCrm(pool, [
-  { crm_id: 'D-001', name: 'Dupont SA', city: 'Lyon', sector: 'Industrie', contacts: [{ crm_id: 'D-001-1', full_name: 'M. Martin', job_title: 'Directeur achats' }], sales_emails: ['commercial1@exemple.invalid'] },
-  { crm_id: 'D-002', name: 'Atelier Roux', city: 'Villeurbanne', contacts: [{ crm_id: 'D-002-1', full_name: 'Mme Roux', job_title: 'Gérante' }], sales_emails: ['commercial1@exemple.invalid', 'commercial2@exemple.invalid'] },
+  { crm_id: 'D-001', name: 'Dupont SA', address_line: '12 rue des Lilas', postal_code: '69003', city: 'Lyon', country: 'France', sector: 'Industrie', contacts: [{ crm_id: 'D-001-1', full_name: 'M. Martin', job_title: 'Directeur achats' }], sales_emails: ['commercial1@exemple.invalid'] },
+  { crm_id: 'D-002', name: 'Atelier Roux', address_line: '8 quai Jean Moulin', postal_code: '69100', city: 'Villeurbanne', contacts: [{ crm_id: 'D-002-1', full_name: 'Mme Roux', job_title: 'Gérante' }], sales_emails: ['commercial1@exemple.invalid', 'commercial2@exemple.invalid'] },
   { crm_id: 'D-003', name: 'Groupe Bernard', city: 'Grenoble', contacts: [], sales_emails: ['commercial2@exemple.invalid'] },
 ]);
 console.log(`Données de démonstration prêtes. Comptes : commercial1@exemple.invalid, commercial2@exemple.invalid, manager@exemple.invalid, directeur@exemple.invalid, admin@exemple.invalid ${process.env.SEED_PASSWORD ? '(mot de passe : celui de SEED_PASSWORD)' : `(mot de passe : ${pwd})`}`);

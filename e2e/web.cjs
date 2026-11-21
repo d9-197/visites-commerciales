@@ -11,6 +11,8 @@ const shot = async (page, name) => { if (SHOTS) await page.screenshot({ path: `$
   const browser = await chromium.launch();
   const ctx = await browser.newContext({ viewport: { width: 390, height: 800 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
   const page = await ctx.newPage();
+  // Les sites de cartographie ne sont pas appelés pour de vrai : on vérifie seulement l'adresse du lien ouvert.
+  await ctx.route(/^https:\/\/(www\.google\.com|waze\.com|maps\.apple\.com)\//, r => r.fulfill({ status: 200, contentType: 'text/html', body: 'ok' }));
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
   const status = () => page.getByText(/Synchronisé|Hors-ligne/).first().textContent();
@@ -38,12 +40,29 @@ const shot = async (page, name) => { if (SHOTS) await page.screenshot({ path: `$
   await shot(page, '3-visite');
 
   // 2 bis. Dates de la visite : prévue modifiable, réalisée à la fin ; regroupement par client / par date
-  assert.match(await page.getByLabel('Date prévue (AAAA-MM-JJ)').inputValue(), /^\d{4}-\d{2}-\d{2}$/, 'la date prévue est préremplie');
-  assert.match(await page.getByLabel('Heure prévue (HH:MM)').inputValue(), /^\d{2}:\d{2}$/, 'l\'heure prévue est préremplie');
-  const box = await page.getByLabel('Heure prévue (HH:MM)').boundingBox();
-  assert.ok(box && box.x + box.width <= 390, 'le champ de l\'heure ne déborde pas de l\'écran');
-  await page.getByLabel('Date prévue (AAAA-MM-JJ)').fill('2026-12-01');
-  await page.getByLabel('Heure prévue (HH:MM)').fill('14:30');
+  assert.match(await page.getByLabel('Date et heure prévues').inputValue(), /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/, 'la date prévue est préremplie');
+  assert.equal(await page.getByLabel('Date et heure prévues').getAttribute('type'), 'datetime-local', 'sélecteur natif de date et d\'heure');
+  const box = await page.getByLabel('Date et heure prévues').boundingBox();
+  assert.ok(box && box.x + box.width <= 390, 'le champ ne déborde pas de l\'écran');
+
+  // 2 ter. Adresse : celle du client par défaut, modifiable, rétablissable ; choix de l'application d'itinéraire
+  assert.equal(await page.getByLabel('Adresse de la visite').inputValue(), '12 rue des Lilas, 69003 Lyon, France', 'adresse du client par défaut');
+  await page.getByRole('link', { name: 'Ouvrir l\'itinéraire' }).click();
+  await page.getByText('Ouvrir l\'itinéraire avec…').waitFor();
+  const labels = await page.getByRole('button').allTextContents();
+  assert.ok(labels.includes('Google Maps') && labels.includes('Waze'), 'choix de l\'application proposé');
+  const popup = page.waitForEvent('popup');
+  await page.getByRole('button', { name: 'Google Maps' }).click();
+  const url = (await popup).url();
+  assert.ok(url.startsWith('https://www.google.com/maps/dir/?api=1&destination=12%20rue%20des%20Lilas'), `lien Google Maps : ${url}`);
+  await page.getByLabel('Adresse de la visite').fill('3 place Bellecour, 69002 Lyon');
+  await page.getByRole('button', { name: 'Enregistrer l\'adresse' }).click();
+  await page.getByText('3 place Bellecour, 69002 Lyon', { exact: true }).first().waitFor();
+  await page.getByRole('button', { name: 'Adresse du client' }).click();
+  await page.getByText('12 rue des Lilas, 69003 Lyon, France', { exact: true }).first().waitFor();
+  await page.getByLabel('Adresse de la visite').fill('3 place Bellecour, 69002 Lyon');
+  await page.getByRole('button', { name: 'Enregistrer l\'adresse' }).click();
+  await page.getByLabel('Date et heure prévues').fill('2026-12-01T14:30');
   await page.getByRole('button', { name: 'Enregistrer la date' }).click();
   await page.getByText(/déc\.? 2026.*14:30/).first().waitFor();
   await page.getByRole('button', { name: 'Terminer' }).click();
@@ -62,9 +81,11 @@ const shot = async (page, name) => { if (SHOTS) await page.screenshot({ path: `$
   await page.getByRole('button', { name: 'Actions' }).click();
   await page.getByRole('button', { name: '+ Nouvelle' }).click();
   await page.getByLabel('Intitulé de l\'action').fill('Envoyer le devis');
+  assert.equal(await page.getByLabel('Échéance').getAttribute('type'), 'date', 'sélecteur natif de date');
   await page.getByLabel('Échéance').fill('2026-11-26');
   await page.getByRole('button', { name: 'Enregistrer' }).click();
   await page.getByText('Envoyer le devis').waitFor();
+  assert.ok(await page.getByText(/jeu\.? 26 nov\.? 2026/).first().isVisible(), 'échéance affichée en clair, pas en AAAA-MM-JJ');
   await shot(page, '4-actions');
 
   // 4. Hors-ligne : saisie locale, file en attente, puis reconnexion

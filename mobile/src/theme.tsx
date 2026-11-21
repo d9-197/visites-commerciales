@@ -53,7 +53,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     return { c, s: makeStyles(c), pref, dark: dk, setPref: p => { setPrefState(p); void saveTheme(p); } };
   }, [dk, pref]);
   useEffect(() => {
-    if (Platform.OS === 'web') { document.body.style.backgroundColor = value.c.bg; document.documentElement.style.colorScheme = dk ? 'dark' : 'light'; }
+    if (Platform.OS === 'web') { document.documentElement.lang = 'fr'; document.body.style.backgroundColor = value.c.bg; document.documentElement.style.colorScheme = dk ? 'dark' : 'light'; }
   }, [value.c, dk]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
