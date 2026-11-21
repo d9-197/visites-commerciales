@@ -1,0 +1,10 @@
+{
+  "name": "visites-commerciales",
+  "private": true,
+  "description": "Prototype : back, cœur de synchronisation partagé, application mobile minimale",
+  "workspaces": ["server", "packages/*"],
+  "scripts": {
+    "test": "npm -w server test",
+    "typecheck": "npm -w server run typecheck && npm -w packages/sync-core run typecheck"
+  }
+}
