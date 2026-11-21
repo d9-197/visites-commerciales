@@ -4,6 +4,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { setup, fixture, op, uuid, M, type TestEnv, type Fixture } from './helpers.js';
 import { MistralService } from '../src/ai/mistral.js';
+import { VoxtralService } from '../src/ai/voxtral.js';
 import { checkProposal, numbersIn, properNamesIn } from '../src/ai/guards.js';
 import { buildMessages, weekdayOf } from '../src/ai/prompt.js';
 
@@ -25,11 +26,12 @@ const GOOD = { fields: { summary: 'M. Martin est intéressé par l\'offre B.', n
 const NOTES = 'alors euh monsieur Martin est intéressé par l\'offre B mais budget pas confirmé 40000 euros il faut envoyer le devis jeudi prochain et rappeler monsieur Martin';
 
 let env: TestEnv; let f: Fixture; let fake: Fake; let report: string;
-const svc = () => new MistralService({ apiKey: 'cle-de-test', baseUrl: fake.url, model: 'mistral-small-test', timeoutMs: 2000, priceInEurPerM: 1, priceOutEurPerM: 3 });
+const svcCfg = () => ({ apiKey: 'cle-de-test', baseUrl: fake.url, model: 'mistral-small-test', timeoutMs: 2000, priceInEurPerM: 1, priceOutEurPerM: 3, transcribeModel: 'voxtral-test', transcribeTimeoutMs: 2000 });
+const svc = () => new MistralService(svcCfg());
 
 before(async () => {
   fake = await fakeMistral();
-  env = await setup({}, { ai: { service: svc(), prices: true } });
+  env = await setup({}, { ai: { service: svc(), transcriber: new VoxtralService(svcCfg()), prices: true, transcribePrice: undefined } });
   f = await fixture(env);
   const a = await f.login('c1@x.fr'); const v = uuid(); report = uuid();
   await a.push([op('visit', 'create', v, { company_id: f.f1 }), op('report', 'create', report, { visit_id: v, language: 'fr' })]);
@@ -132,7 +134,7 @@ test('IA : sans clé configurée : 503 ai_unavailable', async () => {
 
 test('IA : délai dépassé : 502 sans bloquer', async () => {
   const slow = http.createServer(() => { /* ne répond jamais */ }).listen(0);
-  const s = new MistralService({ apiKey: 'k', baseUrl: `http://127.0.0.1:${(slow.address() as AddressInfo).port}`, model: 'm', timeoutMs: 150 });
+  const s = new MistralService({ apiKey: 'k', baseUrl: `http://127.0.0.1:${(slow.address() as AddressInfo).port}`, model: 'm', timeoutMs: 150, transcribeModel: 't', transcribeTimeoutMs: 150 });
   const t0 = Date.now();
   await assert.rejects(s.structure({ sourceText: 'x', language: 'fr', today: '2026-11-21', glossary: [] }), /injoignable/);
   assert.ok(Date.now() - t0 < 2000);

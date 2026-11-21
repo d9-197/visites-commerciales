@@ -262,6 +262,63 @@ paths:
             image/jpeg: {schema: {type: string, format: binary}}
             image/png: {schema: {type: string, format: binary}}
         '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+  /visits/{visit_id}/transcriptions:
+    post:
+      tags: [IA et qualité]
+      summary: Transcrire une dictée (Voxtral)
+      description: |
+        Corps : l'audio brut (`Content-Type: audio/webm`, `audio/mp4`, `audio/mpeg`, `audio/wav`…), 25 Mo au plus. Le back transmet l'audio à Voxtral (API Mistral) et renvoie le texte, que l'application fait relire avant d'en faire une note.
+        **L'audio et le texte ne sont pas conservés côté serveur** ; seule la consommation est enregistrée (durée, coût). Réservé à l'auteur de la visite. Nécessite le réseau.
+        Les formats réellement acceptés par Voxtral sont à vérifier avec une clé.
+      parameters:
+        - name: visit_id
+          in: path
+          required: true
+          schema: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        - name: language
+          in: query
+          schema: {$ref: 'common.yaml#/components/schemas/LanguageCode'}
+          description: Langue de dictée du profil. Absente, le modèle détecte la langue.
+        - name: duration_s
+          in: query
+          schema: {type: number, minimum: 0, maximum: 1800}
+          description: Durée annoncée par l'application, utilisée pour le coût si le fournisseur n'indique pas la durée.
+      requestBody:
+        required: true
+        content:
+          audio/webm: {schema: {type: string, format: binary}}
+          audio/mp4: {schema: {type: string, format: binary}}
+          audio/mpeg: {schema: {type: string, format: binary}}
+          audio/wav: {schema: {type: string, format: binary}}
+      responses:
+        '200':
+          description: Texte transcrit.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [text]
+                properties:
+                  text: {type: string}
+                  language: {type: [string, 'null']}
+                  duration_s: {type: [number, 'null']}
+        '400': {$ref: 'common.yaml#/components/responses/BadRequest'}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '402':
+          description: Plafond mensuel atteint (quota_exceeded), commun à la transcription et à la synthèse.
+          content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}
+        '403': {$ref: 'common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+        '413':
+          description: Enregistrement trop volumineux (payload_too_large).
+          content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}
+        '429': {$ref: 'common.yaml#/components/responses/TooManyRequests'}
+        '502':
+          description: Le service de transcription a échoué ou sa réponse est inattendue (ai_failed).
+          content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}
+        '503':
+          description: Transcription non configurée sur ce serveur (ai_unavailable).
+          content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}
   /reports/{report_id}/ai-proposals:
     post:
       tags: [IA et qualité]

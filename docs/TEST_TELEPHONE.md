@@ -48,6 +48,8 @@ Chaque appareil/navigateur garde ses données dans le stockage du site : vider l
 
 **Synthèse par IA (facultatif)** : si `MISTRAL_API_KEY` est renseignée dans `.env`, le bouton « Synthétiser les notes avec l'IA » de la visite envoie les notes à Mistral et affiche une proposition à relire. Sans clé, le bouton affiche « La synthèse par IA n'est pas activée sur ce serveur ». **Ne mettez pas de vraies notes de clients tant que le contrat de sous-traitance et le traitement dans l'UE ne sont pas confirmés** (voir `docs/IA_MISTRAL.md`).
 
+**Dictée vocale (facultatif, même clé Mistral)** : « Dicter une note » enregistre la voix, la transcrit avec Voxtral et affiche le texte à relire avant d'ajouter la note. **Important pour votre essai sur le réseau local** : le micro du navigateur exige **HTTPS** ; sur une page en HTTP simple, le bouton est remplacé par « Choisir un enregistrement audio » (enregistreur du téléphone sur Android, sinon fichier). Pour tester le micro direct, servez l'application en HTTPS (hors périmètre ici). Cela demande le réseau : pas de dictée hors-ligne pour l'instant.
+
 ## 3. Limites propres à la version web sur HTTP
 
 - Page servie en **HTTP simple** : pas d'installation sur l'écran d'accueil ni de fonctionnement après rechargement hors-ligne (cela exige HTTPS et un service worker, non faits). Le mode hors-ligne se teste **sans recharger la page** (mode avion après ouverture).

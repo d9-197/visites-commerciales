@@ -7,9 +7,9 @@ import { errorHandler, HttpError } from './errors.js';
 import { mobileRouter } from './routes/mobile.js';
 import { crmRouter } from './routes/crm.js';
 import { adminRouter } from './routes/admin.js';
-import type { AiService } from './ai/index.js';
+import type { AiServices } from './ai/index.js';
 
-export function createApp(pool: Pool, cfg: Config = defaultConfig, opts: { webDir?: string; ai?: { service: AiService; prices: boolean } } = {}) {
+export function createApp(pool: Pool, cfg: Config = defaultConfig, opts: { webDir?: string; ai?: AiServices } = {}) {
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ limit: '5mb' }));

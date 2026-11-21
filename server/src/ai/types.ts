@@ -32,3 +32,24 @@ export interface AiService {
   readonly provider: string;
   structure(input: StructureInput): Promise<StructureResult>;
 }
+
+// --- Transcription vocale (voix vers texte) ---
+
+export interface TranscribeInput {
+  audio: Buffer;
+  mime: string;                          // audio/webm, audio/mp4, audio/mpeg, audio/wav…
+  language?: string;                     // code ISO 639-1 ; absent : détection automatique par le modèle
+}
+
+export interface TranscribeResult {
+  text: string;
+  language: string | null;               // langue détectée ou demandée
+  provider: string;
+  model: string;
+  audioSeconds: number | null;           // si le fournisseur l'indique
+}
+
+export interface TranscriptionService {
+  readonly provider: string;
+  transcribe(input: TranscribeInput): Promise<TranscribeResult>;
+}

@@ -11,6 +11,8 @@ import { ceilTo15, dateToStr, fmtDate, fmtDateTime, strToDate, visitWhen, VISIT_
 import { Sheet } from './src/Sheet';
 import { DateField } from './src/DateField';
 import { NavChooser } from './src/NavChooser';
+import { createRecorder, RecorderError, type Recorder, type RecordedAudio } from './src/recorder';
+import { AudioFilePicker } from './src/AudioFilePicker';
 import { companyAddress } from './src/nav';
 
 // Prototype : écrans minimaux pour exercer la synchro. La dictée vocale et l'IA ne sont PAS implémentées.
@@ -30,9 +32,18 @@ const aiErrorMessage = (e: unknown): string => {
     ai_failed: 'Le service d\'IA n\'a pas pu répondre. Réessayez.', forbidden: 'Seul l\'auteur de la visite peut lancer la synthèse.' } as Record<string, string>)[code] ?? 'La synthèse a échoué. Réessayez.';
 };
 
+const MAX_DICTATION_S = 300;   // arrêt automatique d'une dictée
+const voiceErrorMessage = (e: unknown): string => {
+  if (e instanceof RecorderError) return e.kind === 'permission' ? 'Accès au micro refusé : autorisez-le dans les réglages du téléphone ou du navigateur.' : e.kind === 'unavailable' ? 'Le micro n\'est pas disponible.' : 'L\'enregistrement a échoué.';
+  if (e instanceof NetworkError) return 'Hors-ligne : la transcription demande une connexion.';
+  const code = e instanceof ApiError ? e.code : '';
+  return ({ ai_unavailable: 'La transcription vocale n\'est pas activée sur ce serveur.', quota_exceeded: 'Plafond mensuel d\'IA atteint.', rate_limited: 'Trop de demandes : réessayez dans une minute.',
+    ai_failed: 'Le service de transcription n\'a pas pu répondre. Réessayez.', payload_too_large: 'Enregistrement trop long.', forbidden: 'Seul l\'auteur de la visite peut dicter.' } as Record<string, string>)[code] ?? 'La transcription a échoué. Réessayez.';
+};
+
 type Screen = { name: 'today' } | { name: 'visit'; id: string } | { name: 'clients' } | { name: 'actions' } | { name: 'action'; id?: string } | { name: 'settings' };
 interface Data { visits: Row[]; companies: Row[]; actions: Row[]; reports: Row[]; notes: Row[]; history: Row[]; pending: number }
-interface Ctx { store: SqliteStore; engine: SyncEngine; client: ApiClient; userId: string; role: UserRole }
+interface Ctx { store: SqliteStore; engine: SyncEngine; client: ApiClient; userId: string; role: UserRole; lang: string }
 type Act = (f: () => Promise<unknown>) => Promise<void>;
 
 export default function App() {
@@ -51,8 +62,12 @@ function Root() {
     const client = new ApiClient(sess.server, APP_VERSION, sess.tokens, t => { void saveTokens(t); onTokens(t); });
     const engine = new SyncEngine(store, client, { newId: uuidv4, userId: sess.userId });
     let role: UserRole = sess.role ?? 'commercial';
-    if (!sess.role) { try { role = (await client.me()).role; await saveSession({ ...sess, role }); } catch { /* hors-ligne : droits de commercial par défaut, corrigés à la prochaine connexion */ } }
-    setCtx({ store, engine, client, userId: sess.userId, role });
+    let lang = sess.lang ?? 'fr';          // langue de dictée du profil : transcription et langue des comptes rendus
+    try {   // profil à jour quand le réseau est disponible ; sinon valeurs conservées (hors-ligne : commercial et français par défaut)
+      const me = await client.me();
+      if (me.role !== role || me.dictation_language !== lang) { role = me.role; lang = me.dictation_language; await saveSession({ ...sess, role, lang }); }
+    } catch { /* hors-ligne */ }
+    setCtx({ store, engine, client, userId: sess.userId, role, lang });
     setBoot('ready');
   }, []);
 
@@ -84,7 +99,7 @@ function Login({ onDone }: { onDone: (s: Session) => Promise<void> }) {
       const client = new ApiClient(server, APP_VERSION, undefined);
       const tokens = await client.login(email.trim(), password, PLATFORM);
       const me = await client.me();
-      await onDone({ server, userId: me.id, role: me.role, tokens });
+      await onDone({ server, userId: me.id, role: me.role, lang: me.dictation_language, tokens });
     } catch (e: any) {
       setErr(e.code === 'invalid_credentials' ? 'Identifiants incorrects.' : e.code === 'account_locked' ? 'Compte verrouillé, réessayez plus tard.'
         : e.code === 'upgrade_required' ? 'Mettez l\'application à jour.' : 'Connexion impossible. Vérifiez le réseau et l\'adresse du serveur.');
@@ -286,7 +301,7 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName, offline }: { 
   const setStatus = (status: string, extra: Row = {}) => act(() => ctx.engine.update('visit', v.id, { status, ...extra }));
   const saveReport = (validate: boolean, values: Record<string, string> = f) => act(async () => {
     const st = validate ? 'validated' : 'draft';
-    if (!report) await ctx.engine.create('report', { visit_id: visitId, language: 'fr', ...values, status: st });
+    if (!report) await ctx.engine.create('report', { visit_id: visitId, language: ctx.lang, ...values, status: st });
     else await ctx.engine.update('report', report.id, { ...values, ...(validate ? { status: st } : {}) });
   });
   const notesText = data.notes.filter(n => n.visit_id === visitId && n.body).map(n => n.body).join('\n');
@@ -295,7 +310,7 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName, offline }: { 
     setAiBusy(true); setAiErr(undefined);
     try {
       let rid = report?.id as string | undefined;
-      if (!rid) rid = await ctx.engine.create('report', { visit_id: visitId, language: 'fr', status: 'draft' });
+      if (!rid) rid = await ctx.engine.create('report', { visit_id: visitId, language: ctx.lang, status: 'draft' });
       const rep = await ctx.engine.sync();
       if (rep.offline) throw new NetworkError();
       setAi(await ctx.client.aiPropose(rid, notesText, dateToStr(new Date())));
@@ -307,7 +322,7 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName, offline }: { 
     setF(merged); setAi(undefined);
     void act(async () => {
       if (report) await ctx.engine.update('report', report.id, merged);
-      else await ctx.engine.create('report', { visit_id: visitId, language: 'fr', ...merged, status: 'draft' });
+      else await ctx.engine.create('report', { visit_id: visitId, language: ctx.lang, ...merged, status: 'draft' });
       for (const a of actions) await ctx.engine.create('action', { company_id: v!.company_id, visit_id: visitId, title: a.title, origin: 'ai', ...(a.due_date ? { due_date: a.due_date } : {}) });
     });
   };
@@ -340,6 +355,7 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName, offline }: { 
     {mine && v.status === 'in_progress' && <Btn title="Terminer la visite" onPress={() => setStatus('done', { ended_at: new Date().toISOString() })} />}
     <Label>Notes</Label>
     {data.notes.filter(n => n.visit_id === visitId).map(n => <Text key={n.id} style={s.note}>{n.body}</Text>)}
+    {mine && <Dictation ctx={ctx} visitId={visitId} offline={offline} onNote={text => act(() => ctx.engine.create('note', { visit_id: visitId, kind: 'voice', body: text }))} />}
     {mine && <><TextInput accessibilityLabel="Nouvelle note" placeholderTextColor={c.muted} style={s.input} value={note} onChangeText={setNote} placeholder="Nouvelle note" multiline />
       <Btn small title="Ajouter" disabled={!note.trim()} onPress={() => act(async () => { await ctx.engine.create('note', { visit_id: visitId, kind: 'text', body: note.trim() }); setNote(''); })} /></>}
     {mine && <>
@@ -412,6 +428,64 @@ function HistorySheet({ visible, entries, onClose }: { visible: boolean; entries
         </View>))}
       <Btn small title="Fermer" onPress={onClose} />
     </Sheet>
+  );
+}
+
+/**
+ * Dictée : enregistre, envoie l'audio au back pour transcription (Voxtral), puis affiche le texte à relire. La note n'est créée
+ * qu'après relecture. En ligne seulement : l'audio n'est pas conservé sur l'appareil en attendant le réseau.
+ */
+function Dictation({ ctx, visitId, offline, onNote }: { ctx: Ctx; visitId: string; offline: boolean; onNote: (text: string) => void }) {
+  const { s, c } = useTheme();
+  const rec = useRef<Recorder>();
+  rec.current ??= createRecorder();
+  const [state, setState] = useState<'idle' | 'recording' | 'sending' | 'review'>('idle');
+  const [secs, setSecs] = useState(0);
+  const [text, setText] = useState('');
+  const [err, setErr] = useState<string>();
+  const timer = useRef<ReturnType<typeof setInterval>>();
+  useEffect(() => () => { clearInterval(timer.current); void rec.current?.cancel(); }, []);
+
+  const send = async (audio: RecordedAudio) => {
+    setState('sending'); setErr(undefined);
+    try { const r = await ctx.client.transcribe(visitId, audio.body, audio.mime, ctx.lang, audio.durationS); setText(r.text); setState('review'); }
+    catch (e) { setErr(voiceErrorMessage(e)); setState('idle'); }
+  };
+  const start = async () => {
+    setErr(undefined);
+    try { await rec.current!.start(); setSecs(0); setState('recording'); timer.current = setInterval(() => setSecs(x => x + 1), 1000); }
+    catch (e) { setErr(voiceErrorMessage(e)); }
+  };
+  const stop = async () => {
+    clearInterval(timer.current);
+    try { await send(await rec.current!.stop()); } catch (e) { setErr(voiceErrorMessage(e)); setState('idle'); }
+  };
+  useEffect(() => { if (state === 'recording' && secs >= MAX_DICTATION_S) void stop(); }, [secs, state]);
+
+  if (state === 'review') return (
+    <View style={{ gap: 8 }}>
+      <Label>Note dictée : relisez et corrigez</Label>
+      <TextInput accessibilityLabel="Texte dicté" placeholderTextColor={c.muted} style={[s.input, { minHeight: 90 }]} value={text} onChangeText={setText} multiline />
+      <Text style={s.muted}>Texte transcrit automatiquement : des erreurs sont possibles (noms, nombres).</Text>
+      <View style={s.rowBetween}>
+        <Btn small title="Ajouter la note" disabled={!text.trim()} onPress={() => { onNote(text.trim()); setText(''); setState('idle'); }} />
+        <Btn small title="Annuler" onPress={() => { setText(''); setState('idle'); }} />
+      </View>
+    </View>);
+  const mm = String(Math.floor(secs / 60)).padStart(2, '0') + ':' + String(secs % 60).padStart(2, '0');
+  return (
+    <View style={{ gap: 6 }}>
+      {state === 'recording'
+        ? <Btn title={`Arrêter la dictée · ${mm}`} onPress={stop} />
+        : rec.current.available
+          ? <Btn small title={state === 'sending' ? 'Transcription en cours…' : 'Dicter une note'} disabled={state === 'sending' || offline} onPress={start} />
+          : <>
+              <AudioFilePicker disabled={state === 'sending' || offline} onFile={send} />
+              <Text style={s.muted}>Le micro du navigateur demande une connexion sécurisée (HTTPS). En attendant, enregistrez avec le téléphone puis choisissez le fichier.</Text>
+            </>}
+      {offline && <Text style={s.muted}>Hors-ligne : la dictée demande une connexion.</Text>}
+      {err && <Text style={s.err}>{err}</Text>}
+    </View>
   );
 }
 

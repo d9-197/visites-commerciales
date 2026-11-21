@@ -10,6 +10,9 @@ export interface MistralConfig {
   timeoutMs: number;
   priceInEurPerM?: number;       // euros par million de jetons ; sans tarif, le coût est enregistré à 0 et le plafond n'est pas appliqué
   priceOutEurPerM?: number;
+  transcribeModel: string;       // transcription vocale (Voxtral)
+  transcribeTimeoutMs: number;
+  priceTranscribeEurPerMin?: number;
 }
 
 export function mistralConfigFromEnv(env: NodeJS.ProcessEnv = process.env): MistralConfig | undefined {
@@ -21,6 +24,9 @@ export function mistralConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Mist
     model: env.MISTRAL_MODEL ?? 'mistral-small-latest',          // nom à vérifier dans la documentation Mistral au moment du déploiement
     timeoutMs: Number(env.MISTRAL_TIMEOUT_MS ?? 30000),
     priceInEurPerM: num(env.MISTRAL_PRICE_IN_EUR_PER_M), priceOutEurPerM: num(env.MISTRAL_PRICE_OUT_EUR_PER_M),
+    transcribeModel: env.MISTRAL_TRANSCRIBE_MODEL ?? 'voxtral-mini-latest',      // l'alias a changé de cible selon les pages de la documentation : à vérifier
+    transcribeTimeoutMs: Number(env.MISTRAL_TRANSCRIBE_TIMEOUT_MS ?? 60000),
+    priceTranscribeEurPerMin: num(env.MISTRAL_PRICE_TRANSCRIBE_EUR_PER_MIN),
   };
 }
 

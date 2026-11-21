@@ -14,7 +14,7 @@ Branche `ccr-bf3049f2-b95bh3`. Objectif : éprouver la synchro hors-ligne, les d
 
 ## 2. Résultats vérifiés
 
-**74 tests automatisés passent** (`npm test`), sur un vrai PostgreSQL 16 : un serveur HTTP réel, des clients HTTP réels, une base neuve par fichier de test.
+**83 tests automatisés passent** (`npm test`), sur un vrai PostgreSQL 16 : un serveur HTTP réel, des clients HTTP réels, une base neuve par fichier de test.
 
 | Scénario (`PHASE0_PLAN_COMPLET.md` §5) | Résultat |
 |---|---|
@@ -44,7 +44,7 @@ L'application mobile : le code passe le contrôle de types, et le paquet JavaScr
 
 Non implémentés :
 - double authentification ;
-- transcription vocale (la synthèse par IA existe en entrée texte : `IA_MISTRAL.md`) ;
+- dictée hors-ligne et transcription asynchrone (la dictée en ligne et la synthèse par IA existent : `IA_MISTRAL.md`) ;
 - enregistrements audio, pièces jointes, glossaire, propositions de l'IA, `/usage`, `/reports/{id}/quality`, `/error-reports` (réponse `not_implemented` pour les entités) ;
 - fenêtre hors-ligne (la synchro initiale envoie tout ce qui est visible) ;
 - limitation de débit ;

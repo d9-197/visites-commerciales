@@ -18,10 +18,11 @@ async function login(page, email) {
 const pad = n => String(n).padStart(2, '0');
 const daysAgo = n => { const d = new Date(Date.now() - n * 864e5); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
 const borderOf = async (loc) => loc.evaluate(el => getComputedStyle(el.parentElement).borderTopColor);
-const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width: 390, height: 800 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, ...extra });
+const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width: 390, height: 800 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, permissions: ['microphone'], ...extra });
 
 (async () => {
-  const browser = await chromium.launch();
+  // Faux micro du navigateur (un signal de test) : la vraie chaîne d'enregistrement et d'envoi est exercée, sans matériel.
+  const browser = await chromium.launch({ args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] });
   const ctx = await newPhone(browser);
   const page = await ctx.newPage();
   // Les sites de cartographie ne sont pas appelés pour de vrai : on vérifie seulement l'adresse du lien ouvert.
@@ -113,6 +114,24 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await page.getByLabel('Nouvelle note').fill('M. Martin intéressé par l\'offre B');
   await page.getByRole('button', { name: 'Ajouter' }).click();
 
+  // 2 sexies ter. Dictée vocale (faux Voxtral) : enregistrement réel avec le faux micro, transcription à relire, note créée après relecture
+  await page.getByRole('button', { name: 'Dicter une note' }).click();
+  await page.getByRole('button', { name: /Arrêter la dictée/ }).waitFor();
+  await page.waitForTimeout(1500);
+  await page.getByRole('button', { name: /Arrêter la dictée/ }).click();
+  await page.getByLabel('Texte dicté').waitFor();
+  assert.equal(await page.getByLabel('Texte dicté').inputValue(), 'Dictée simulée : le client confirme un budget de 40 000 euros.');
+  assert.equal(await page.getByText('Dictée simulée', { exact: false }).count() >= 1, true);
+  await page.getByLabel('Texte dicté').fill('Dictée relue : le client confirme un budget de 40 000 euros.');
+  await page.getByRole('button', { name: 'Ajouter la note' }).click();
+  await page.getByText('Dictée relue : le client confirme un budget de 40 000 euros.').waitFor();
+  const tr = await (await fetch('http://127.0.0.1:4010/__transcriptions')).json();
+  assert.equal(tr.length, 1); assert.equal(tr[0].auth, 'Bearer cle-de-test');
+  assert.match(tr[0].contentType, /^multipart\/form-data/); assert.equal(tr[0].language, 'fr', 'langue de dictée du profil');
+  assert.equal(tr[0].fileType.trim(), 'audio/webm', 'format enregistré par le navigateur');
+  assert.ok(tr[0].bytes > 1000, `audio reçu (${tr[0].bytes} octets)`);
+  await shot(page, '3h-dictee');
+
   // 2 sexies bis. Synthèse par IA (faux Mistral) : proposition à relire, avertissements, application, action créée
   await page.getByRole('button', { name: 'Synthétiser les notes avec l\'IA' }).click();
   await page.getByText('Proposition de l\'IA').waitFor();
@@ -129,6 +148,7 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   const sent = await (await fetch('http://127.0.0.1:4010/__requests')).json();
   assert.equal(sent.length, 1); assert.equal(sent[0].auth, 'Bearer cle-de-test');
   assert.ok(sent[0].body.messages[1].content.includes('M. Martin intéressé par l\'offre B'), 'les notes sont envoyées');
+  assert.ok(sent[0].body.messages[1].content.includes('Dictée relue'), 'la note dictée (relue) est incluse dans la synthèse');
   assert.ok(!JSON.stringify(sent[0].body).includes('Dupont'), 'le nom du client n\'est pas envoyé');
   await page.getByLabel('Résumé du compte rendu').fill('Intéressé par l\'offre B, budget à confirmer.');
   await page.getByRole('button', { name: 'Valider' }).click();
@@ -255,6 +275,21 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await shot(mp, '3f-liste-retard');
   assert.equal(await mp.getByRole('button', { name: 'Modifier l\'adresse de la visite' }).count(), 0, 'manager : plus de modification d\'adresse une fois la visite organisée');
   await c1.close(); await mctx.close();
+
+  // 7 bis. Page en HTTP sur le réseau local : pas de micro du navigateur (contexte non sécurisé) -> repli par choix d'un fichier audio
+  const nctx = await newPhone(browser); await nctx.addInitScript(() => { Object.defineProperty(navigator, 'mediaDevices', { value: undefined }); });
+  const np = await nctx.newPage(); np.on('pageerror', e => errors.push(e.message));
+  await login(np, 'commercial1@exemple.invalid');
+  await np.getByRole('radio', { name: 'Par date' }).click();
+  await np.getByText('Atelier Roux').first().click();
+  await np.getByText(/Le micro du navigateur demande une connexion sécurisée/).waitFor();
+  assert.equal(await np.getByRole('button', { name: 'Dicter une note' }).count(), 0, 'pas de bouton micro sans contexte sécurisé');
+  await np.getByLabel('Fichier audio').setInputFiles({ name: 'dictee.webm', mimeType: 'audio/webm', buffer: Buffer.alloc(3000, 5) });
+  await np.getByLabel('Texte dicté').waitFor();
+  assert.match(await np.getByLabel('Texte dicté').inputValue(), /Dictée simulée/);
+  assert.equal((await (await fetch('http://127.0.0.1:4010/__transcriptions')).json()).length, 2, 'le fichier choisi est transcrit');
+  await np.getByRole('button', { name: 'Annuler' }).click();
+  await nctx.close();
 
   // 8. Mode sombre : suit le réglage du système par défaut, réglable, conservé après rechargement et déconnexion
   const bg = p => p.evaluate(() => getComputedStyle(document.body).backgroundColor);

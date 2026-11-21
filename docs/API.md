@@ -112,6 +112,7 @@ sequenceDiagram
 - La proposition arrive par `pull` (`ai_proposals`) avec le texte source, les passages modifiés et les avertissements du contrôle automatique (nombre ou nom absent de la dictée).
 - **Implémenté (première tranche, voir `IA_MISTRAL.md`)** : `POST /reports/{id}/ai-proposals` avec `source_text` renvoie **tout de suite** la proposition et ses avertissements (réponse 200, pas de traitement asynchrone, entrée texte seulement). Réponses : 402 `quota_exceeded`, 403 si l'appelant n'est pas l'auteur, 429, 502 `ai_failed`, 503 `ai_unavailable` (pas de clé). Le traitement asynchrone à partir de l'audio reste à faire ; `GET /usage` aussi.
 - **L'IA ne crée rien directement** : les actions proposées ne deviennent des actions qu'après validation par l'utilisateur, via `push`.
+- **Implémenté (première tranche vocale)** : `POST /visits/{id}/transcriptions` reçoit l'audio brut (25 Mo au plus) et renvoie le texte transcrit par Voxtral, **sans conserver l'audio ni le texte** ; en ligne seulement. Ce n'est pas encore le circuit prévu (enregistrements créés hors-ligne, envoi différé par morceaux, traitement asynchrone).
 - `PUT /reports/{id}/quality` n'envoie que des mesures (jamais de contenu). `POST /error-reports` reçoit les signalements des utilisateurs.
 
 ## 4. API CRM

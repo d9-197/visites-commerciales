@@ -11,7 +11,7 @@ export interface AiProposalResponse {
 }
 
 export interface Tokens { access_token: string; refresh_token: string; device_id: string }
-export type FetchLike = (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) =>
+export type FetchLike = (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string | Blob | ArrayBuffer }) =>
   Promise<{ status: number; text(): Promise<string> }>;
 
 /** Client HTTP de l'API mobile : renouvelle le jeton d'accès une fois en cas de 401 et signale les coupures réseau. */
@@ -23,26 +23,26 @@ export class ApiClient implements Transport {
     private doFetch: FetchLike = (u, i) => fetch(u, i as RequestInit),
   ) {}
 
-  private async raw(method: string, path: string, body?: unknown, auth = true) {
+  private async raw(method: string, path: string, body?: unknown, auth = true, contentType = 'application/json') {
     let res;
     try {
       res = await this.doFetch(this.baseUrl + path, {
         method,
-        headers: { 'content-type': 'application/json', 'x-app-version': this.appVersion, ...(auth && this.tokens ? { authorization: `Bearer ${this.tokens.access_token}` } : {}) },
-        body: body === undefined ? undefined : JSON.stringify(body),
+        headers: { 'content-type': contentType, 'x-app-version': this.appVersion, ...(auth && this.tokens ? { authorization: `Bearer ${this.tokens.access_token}` } : {}) },
+        body: body === undefined ? undefined : contentType === 'application/json' ? JSON.stringify(body) : (body as Blob | ArrayBuffer),
       });
     } catch { throw new NetworkError(); }
     const text = await res.text();
     return { status: res.status, body: text ? JSON.parse(text) : null };
   }
 
-  private async call(method: string, path: string, body?: unknown) {
-    let r = await this.raw(method, path, body);
+  private async call(method: string, path: string, body?: unknown, contentType = 'application/json') {
+    let r = await this.raw(method, path, body, true, contentType);
     if (r.status === 401 && this.tokens) {
       const t = await this.raw('POST', '/auth/refresh', { refresh_token: this.tokens.refresh_token }, false);
       if (t.status !== 200) { this.tokens = undefined; this.onTokens(undefined); throw new ApiError(401, 'session_expired', 'Reconnexion nécessaire'); }
       this.tokens = t.body as Tokens; this.onTokens(this.tokens);
-      r = await this.raw(method, path, body);
+      r = await this.raw(method, path, body, true, contentType);
     }
     if (r.status >= 400) throw new ApiError(r.status, r.body?.code ?? 'error', r.body?.detail);
     return r.body;
@@ -56,6 +56,12 @@ export class ApiClient implements Transport {
   }
 
   me() { return this.call('GET', '/me'); }
+
+  /** Transcription d'une dictée (Voxtral) : envoie l'audio brut, renvoie le texte à relire. Nécessite le réseau. */
+  transcribe(visitId: string, audio: Blob | ArrayBuffer, mime: string, language?: string, durationS?: number): Promise<{ text: string; language: string | null; duration_s: number | null }> {
+    const q = new URLSearchParams(); if (language) q.set('language', language); if (durationS !== undefined) q.set('duration_s', String(Math.round(durationS)));
+    return this.call('POST', `/visits/${visitId}/transcriptions?${q}`, audio, mime.split(';')[0]!.trim() === 'video/webm' ? 'audio/webm' : mime);
+  }
 
   /** Synthèse par IA des notes d'une visite. Nécessite le réseau ; la proposition n'est enregistrée nulle part côté appareil. */
   aiPropose(reportId: string, sourceText: string, today: string): Promise<AiProposalResponse> {

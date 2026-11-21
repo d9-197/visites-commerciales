@@ -20,5 +20,5 @@ if (applied.length) console.log('Migrations appliquées :', applied.join(', '));
 const webDir = resolve(process.env.WEB_DIR ?? new URL('../../mobile/dist-web', import.meta.url).pathname);
 const port = Number(process.env.PORT ?? 3000);
 const ai = aiFromEnv();
-console.log(ai ? 'Synthèse par IA : activée (Mistral).' : 'Synthèse par IA : désactivée (MISTRAL_API_KEY absente).');
+console.log(ai ? 'Synthèse par IA et transcription vocale : activées (Mistral).' : 'Synthèse par IA et transcription vocale : désactivées (MISTRAL_API_KEY absente).');
 createApp(pool, defaultConfig, { webDir, ai }).listen(port, () => console.log(`API et application web sur http://localhost:${port}`));

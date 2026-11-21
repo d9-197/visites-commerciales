@@ -7,14 +7,14 @@ import { HttpError, wrap } from '../errors.js';
 import { requireAuth, signAccess, verifyPassword, sha256, randomToken, versionLt } from '../auth.js';
 import { pull } from '../sync/pull.js';
 import { push, pushSchema } from '../sync/push.js';
-import { AiError, type AiService } from '../ai/index.js';
+import { AiError, type AiServices } from '../ai/index.js';
 
 const loginSchema = z.object({
   email: z.string().email(), password: z.string().min(1),
   device: z.object({ device_id: z.string().uuid().optional(), platform: z.enum(['ios', 'android', 'web']), os_version: z.string().optional(), app_version: z.string() }),
 });
 
-export function mobileRouter(pool: Pool, cfg: Config, ai?: { service: AiService; prices: boolean }) {
+export function mobileRouter(pool: Pool, cfg: Config, ai?: AiServices) {
   const r = express.Router();
   const aiCalls = new Map<string, number[]>();      // limitation de débit de l'IA, par utilisateur (en mémoire : une seule instance du back)
   const auth = requireAuth(pool, cfg, { checkVersion: true });
@@ -157,6 +157,53 @@ export function mobileRouter(pool: Pool, cfg: Config, ai?: { service: AiService;
       `INSERT INTO ai_usage(user_id, kind, provider, model, tokens_in, tokens_out, cost_cents) VALUES ($1,'llm',$2,$3,$4,$5,$6)`,
       [userId, result.provider, result.model, result.usage.tokensIn, result.usage.tokensOut, result.costCents]);
     res.json({ id, report_id: rep.id, source_text: b.data.source_text, proposal: result.proposal, warnings: result.warnings, provider: result.provider, model: result.model });
+  }));
+
+  const MAX_AUDIO_BYTES = Number(process.env.AUDIO_MAX_BYTES ?? 25 * 1024 * 1024);
+  const MAX_AUDIO_SECONDS = 1800;
+
+  /**
+   * Transcription vocale d'une dictée pour une visite (Voxtral). L'audio traverse le back sans être conservé ; le texte est
+   * renvoyé à l'application, qui le fait relire avant d'en faire une note. Corps : l'audio brut (Content-Type audio/*).
+   */
+  r.post('/visits/:id/transcriptions', auth, express.raw({ type: ['audio/*', 'video/webm', 'application/octet-stream'], limit: MAX_AUDIO_BYTES }), wrap(async (req, res) => {
+    const q = z.object({ language: z.enum(['fr', 'en', 'es', 'it', 'de', 'nl']).optional(), duration_s: z.coerce.number().min(0).max(MAX_AUDIO_SECONDS).optional() }).safeParse(req.query);
+    if (!q.success) throw new HttpError(400, 'validation_failed', 'language ou duration_s invalide');
+    if (!ai) throw new HttpError(503, 'ai_unavailable', 'La transcription vocale n\'est pas configurée');
+    if (!/^(audio\/|video\/webm|application\/octet-stream)/i.test(req.header('content-type') ?? '')) throw new HttpError(400, 'validation_failed', 'Content-Type audio attendu');
+    const audio = req.body as Buffer;
+    if (!Buffer.isBuffer(audio) || audio.length < 100) throw new HttpError(400, 'validation_failed', 'Enregistrement vide ou trop court');
+    const userId = req.auth!.id;
+
+    const now = Date.now();
+    const recent = (aiCalls.get(userId) ?? []).filter(t => now - t < 60_000);
+    if (recent.length >= Number(process.env.AI_RATE_PER_MIN ?? 10)) throw new HttpError(429, 'rate_limited', 'Trop de demandes, réessayez dans une minute');
+    aiCalls.set(userId, [...recent, now]);
+
+    const v = (await pool.query(`SELECT id, author_id FROM visit WHERE id = $1`, [req.params.id])).rows[0];
+    const readable = v && (await pool.query(`SELECT can_read_visit($1,$2) AS ok`, [userId, req.params.id])).rows[0].ok;
+    if (!v || !readable) throw new HttpError(404, 'not_found', 'Visite inconnue');
+    if (v.author_id !== userId) throw new HttpError(403, 'forbidden', 'Réservé à l\'auteur de la visite');
+
+    if (ai.prices || ai.transcribePrice !== undefined) {   // plafond mensuel commun à la transcription et à la synthèse, appliqué quand des tarifs sont connus
+      const qt = (await pool.query(
+        `SELECT COALESCE((SELECT sum(cost_cents) FROM ai_usage WHERE user_id = $1 AND created_at >= date_trunc('month', now())), 0) AS used,
+                COALESCE((SELECT ai_budget_cents FROM app_user WHERE id = $1), (SELECT (value #>> '{}')::int FROM app_setting WHERE key = 'ai_monthly_budget_cents')) AS budget`, [userId])).rows[0];
+      if (Number(qt.used) >= Number(qt.budget)) throw new HttpError(402, 'quota_exceeded', 'Plafond mensuel d\'IA atteint');
+    }
+
+    let result;
+    try { result = await ai.transcriber.transcribe({ audio, mime: req.header('content-type')!, language: q.data.language }); }
+    catch (e) {
+      if (e instanceof AiError) throw new HttpError(e.kind === 'unavailable' ? 503 : 502, e.kind === 'unavailable' ? 'ai_unavailable' : 'ai_failed', e.message);
+      throw e;
+    }
+    const seconds = result.audioSeconds ?? q.data.duration_s ?? null;   // durée annoncée par le fournisseur, sinon par l'application
+    const costCents = seconds !== null && ai.transcribePrice !== undefined ? (seconds / 60) * ai.transcribePrice * 100 : 0;
+    await pool.query(
+      `INSERT INTO ai_usage(user_id, kind, provider, model, audio_seconds, cost_cents) VALUES ($1,'transcription',$2,$3,$4,$5)`,
+      [userId, result.provider, result.model, seconds, costCents]);
+    res.json({ text: result.text, language: result.language, duration_s: seconds });
   }));
 
   return r;

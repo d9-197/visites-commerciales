@@ -13,8 +13,11 @@ const TITLES: Record<number, string> = {
 };
 
 export function errorHandler(err: unknown, req: Request, res: Response, _next: NextFunction) {
-  const e = err instanceof HttpError ? err : new HttpError(500, 'internal_error', 'Erreur interne');
-  if (!(err instanceof HttpError)) console.error(err);
+  const kind = (err as any)?.type as string | undefined;
+  const known = kind === 'entity.too.large' ? new HttpError(413, 'payload_too_large', 'Contenu trop volumineux')
+    : kind === 'entity.parse.failed' ? new HttpError(400, 'validation_failed', 'Corps de requête illisible') : undefined;
+  const e = err instanceof HttpError ? err : known ?? new HttpError(500, 'internal_error', 'Erreur interne');
+  if (!(err instanceof HttpError) && !known) console.error(err);
   res.status(e.status).type('application/problem+json').json({
     type: 'about:blank', title: TITLES[e.status] ?? 'Erreur', status: e.status, code: e.code, detail: e.detail,
     instance: req.header('x-request-id') ?? undefined, ...(e.extra ?? {}),

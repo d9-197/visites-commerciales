@@ -15,7 +15,13 @@
     "plugins": [
       "expo-secure-store",
       "expo-sqlite",
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      [
+        "expo-av",
+        {
+          "microphonePermission": "L'application utilise le micro pour dicter les notes de visite."
+        }
+      ]
     ],
     "web": {
       "bundler": "metro",
