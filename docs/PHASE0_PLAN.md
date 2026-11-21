@@ -1,6 +1,6 @@
 # Phase 0 : préparation — plan réduit v0.2
 
-**Contexte (21/11/2026)** : les ressources du plan complet (volontaires pour dicter, locuteurs pour les références, appareils de test, accès IT) ne peuvent pas être mobilisées. NinjaOne et la distribution des applications sont hors périmètre de ce projet-ci. L'infrastructure sera un serveur Docker (voir `ARCHITECTURE.md` §15).
+**Contexte (21/11/2026)** : les ressources du plan complet (volontaires pour dicter, locuteurs pour les références, appareils de test, accès IT) ne peuvent pas être mobilisées. NinjaOne et la distribution des applications sont hors périmètre de ce projet-ci. L'infrastructure sera un serveur Docker interne en UE, sur le même réseau que le CRM (voir `ARCHITECTURE.md` §15).
 
 Le plan complet reste dans `PHASE0_PLAN_COMPLET.md`. Ce document garde ce qui reste faisable, et remplace les tests qui exigent des ressources par des garde-fous et une mesure en conditions réelles.
 
@@ -66,9 +66,9 @@ Inchangé (voir `PHASE0_PLAN_COMPLET.md` §5) : 8 scénarios automatisés rejou�
 ## 7. Cadrage écrit (F)
 
 Questions à envoyer, sans réunion obligatoire :
-- **CRM** : authentification, champs client/contact, quotas, identifiant de référence, format attendu pour récupérer visites et CR, identifiant du client absorbant lors d'une fusion, accès réseau entre le serveur et le CRM.
+- **CRM** : authentification, champs client/contact, quotas, identifiant de référence, format attendu pour récupérer visites et CR, identifiant du client absorbant lors d'une fusion, (le serveur et le CRM sont sur le même réseau : confirmé).
 - **Protection des données** : nécessité d'une analyse d'impact, durées de conservation, base légale, information des utilisateurs.
-- **Hébergement** : voir les questions du §15 de l'architecture.
+- **Hébergement** : administrateur du serveur, stockage de sauvegarde hors serveur, validation de l'exposition Internet par la sécurité informatique.
 
 ## 8. Calendrier indicatif
 

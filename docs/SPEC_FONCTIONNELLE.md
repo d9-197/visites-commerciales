@@ -23,7 +23,7 @@ données exploitable (comptes rendus structurés, actions, prochaines étapes).
 | Langue de dictée | Une langue par commercial, fixée dans le profil | Pas de détection automatique en v1 ; une langue de dictée passée au moteur ; la langue du CR peut différer de celle de l'interface |
 | Visibilité des CR | **Paramétrable** (décision du 21/11) entre deux modes : (1) CR visible par tous les commerciaux rattachés au client, plus leur hiérarchie ; (2) CR visible par son auteur et sa hiérarchie seulement. La note privée reste réservée à l'auteur dans les deux modes et n'est pas exposée à l'API du CRM | Réglage dans la console d'administration ; portée du réglage : **globale** pour l'instant, affinage (équipe, client) prévu plus tard, donc ne pas figer le modèle de données sur un réglage unique ; le changement de mode s'applique à l'historique existant, ce qui doit être explicite pour l'administrateur |
 | Fournisseur transcription/IA | Non choisi, à comparer | Comparatif à produire (traitement UE, langues, coût, DPA) à partir de sources vérifiées |
-| MDM | NinjaOne | Distribution et politiques de l'appli via NinjaOne ; à vérifier : plateformes mobiles gérées (iOS/Android), mode de déploiement d'une appli privée, configuration à distance (AppConfig), effacement à distance |
+| MDM | NinjaOne (**hors périmètre de ce projet depuis le 21/11**) | Distribution et politiques de l'appli via NinjaOne ; à vérifier : plateformes mobiles gérées (iOS/Android), mode de déploiement d'une appli privée, configuration à distance (AppConfig), effacement à distance |
 | CRM (précisions du 20/11) | CRM interne, non nommé ; clients en lecture seule dans l'appli (pas de création) ; le CRM vient **récupérer** visites et CR par API | Le back expose une API REST dédiée au CRM (authentification par clé/jeton de service, pagination, filtre « modifié depuis », identifiants stables, suppression logique) ; le back lit les clients du CRM de son côté ; pas d'écriture dans le CRM |
 | API pour le CRM : périmètre | « Tout récupérer potentiellement », actions comprises | L'API couvre toutes les entités : visites, comptes rendus, notes, actions, contacts liés, participants, rattachements, avec statut et historique de modification, y compris annulations et suppressions logiques. Exclus de l'API (décision du 21/11) : notes privées et audio brut |
 | Administration des comptes | L'IT, via une console d'administration | Console web (création, réinitialisation, désactivation, rôles, rattachement hiérarchique, affectation client-commerciaux) ; pas d'inscription libre-service |
@@ -136,6 +136,8 @@ Garde-fous :
 - **Glossaire** (terme, variantes, catégorie)
 
 ## 9. Architecture envisagée [À VALIDER]
+
+Détail dans `ARCHITECTURE.md`. Infrastructure : serveur Docker interne en UE (décision du 21/11).
 
 - **Client** : un seul code pour iOS/Android/tablette (React Native ou Flutter) plutôt qu'une PWA : accès micro, stockage local et biométrie sont plus fiables en natif, en particulier sur iOS.
 - **Back** : API REST, base PostgreSQL, stockage objet pour l'audio/photos, file de traitement pour transcription et IA.

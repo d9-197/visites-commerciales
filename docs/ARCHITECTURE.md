@@ -9,7 +9,7 @@ Issues de la spec (§1 bis) :
 - **> 50 utilisateurs**, 3 niveaux hiérarchiques, clients partagés entre commerciaux.
 - **Hébergement UE** pour toutes les données, y compris audio, transcription et IA.
 - **6 langues** (FR, EN, ES, IT, DE, NL), une langue de dictée par commercial.
-- Parc **iOS + Android** géré par NinjaOne ; comptes propres, **sans SSO**.
+- Parc **iOS + Android** (distribution et MDM hors périmètre de ce projet) ; comptes propres, **sans SSO**.
 - Le **CRM** envoie les clients (lecture seule) et vient **tout récupérer** par API (hors notes privées et audio).
 - Fournisseur de transcription/IA **non choisi** : il doit rester interchangeable.
 
@@ -38,7 +38,6 @@ flowchart LR
   CRM -->|lecture visites, CR, actions, REST| CRMAPI
   TR --> STT[Service de transcription UE]
   LLM --> AI[Service IA UE]
-  NINJA[NinjaOne MDM] -.déploiement, politiques.-> Appareil
 ```
 
 ## 3. Application mobile
@@ -48,7 +47,7 @@ flowchart LR
 - **React Native + TypeScript** ou **Flutter** : les deux conviennent techniquement, et l'équipe maîtrise les deux (ainsi que Node), donc la compétence ne départage pas.
 - **Choix provisoire : React Native + TypeScript**, pour une seule raison concrète : partager avec le back TypeScript les types, les schémas de validation et la logique de synchro (règles de conflit, formats d'opérations). Cela réduit le risque d'écart entre client et serveur, qui est le point délicat de ce projet.
 - **Ce que Flutter apporterait** : rendu identique sur les deux systèmes et chaîne d'outils unique ; mais le langage diffère du back, donc pas de code partagé.
-- **Ce qui reste à vérifier avant de confirmer** (phase 0, sur de vrais appareils iOS et Android) : enregistrement audio fiable en arrière-plan et après interruption, SQLite chiffré performant avec le volume prévu, notifications locales, lecture de la configuration poussée par NinjaOne. Si l'un de ces points échoue avec React Native, on bascule sur Flutter.
+- **Ce qui reste à vérifier avant de confirmer** (premier jalon, sur un iPhone et un Android de développement) : enregistrement audio fiable en arrière-plan et après interruption, SQLite chiffré performant avec le volume prévu, notifications locales. Si l'un de ces points échoue avec React Native, on bascule sur Flutter.
 
 Briques nécessaires :
 | Besoin | Approche |
@@ -57,7 +56,7 @@ Briques nécessaires :
 | Audio | enregistrement local en fichier (format compressé), reprise après interruption (appel, verrouillage) |
 | Secrets | trousseau iOS / Keystore Android pour les jetons ; déverrouillage biométrique |
 | Rappels d'actions | notifications locales (fonctionnent hors-ligne) |
-| Configuration MDM | lecture de la configuration gérée poussée par NinjaOne (URL du back, politiques) **[à vérifier : prise en charge par NinjaOne]** |
+| Configuration | écran de configuration de l'URL du back à la première connexion ; le MDM est hors périmètre |
 | i18n | catalogues de textes par langue, dès le premier écran |
 | Tablette | mise en page en deux colonnes, mêmes écrans |
 
@@ -76,9 +75,9 @@ Alternative écartée à ce stade : une base répliquée clé en main. Elle réd
 
 ## 5. Back
 
-**Choix proposé [DÉCISION]** : API REST en TypeScript (Node), PostgreSQL, stockage objet compatible S3 chez un fournisseur cloud UE, file de tâches adossée à PostgreSQL ou à un broker léger.
+**Choix proposé [DÉCISION]** : API REST en TypeScript (Node), PostgreSQL, fichiers (audio, photos) sur le serveur (volume ou stockage compatible S3 auto-hébergé), file de tâches adossée à PostgreSQL. Le tout tourne en conteneurs sur un serveur Docker (voir §15).
 - Cohérent avec la stack existante du dépôt PMA (Node, Express, PostgreSQL, Docker) ; PostgreSQL gère bien la hiérarchie (requêtes récursives) et les journaux de changements.
-- Déploiement en conteneurs, au moins deux instances (disponibilité), sauvegardes chiffrées, région UE unique.
+- Déploiement en conteneurs avec Docker Compose ; sauvegardes chiffrées ; serveur interne situé dans l'UE.
 
 **Modules**
 1. **API mobile** : authentification, synchro (push/pull), upload audio/photos, paramètres.
@@ -135,7 +134,7 @@ Alternative écartée à ce stade : une base répliquée clé en main. Elle réd
 
 - **Comptes propres** : mots de passe hachés avec un algorithme adapté (argon2id), double authentification (application d'authentification), verrouillage après échecs, réinitialisation par l'IT via la console.
 - **Jetons** : jeton d'accès court + jeton de renouvellement révocable, lié à l'appareil ; révocation immédiate côté serveur.
-- **Sur l'appareil** : base chiffrée, secrets dans le trousseau/Keystore, verrouillage biométrique, effacement à distance par le MDM et révocation du compte.
+- **Sur l'appareil** : base chiffrée, secrets dans le trousseau/Keystore, verrouillage biométrique ; révocation du compte côté serveur (l'appareil efface ses données locales à la prochaine connexion). L'effacement à distance par MDM est hors périmètre.
 - **Transport** : TLS partout ; au minimum vérification du certificat du back.
 - **Données** : chiffrement au repos (base, stockage objet), sauvegardes chiffrées, accès d'administration journalisés.
 - **RGPD** : registre des sous-traitants (cloud, transcription, IA), contrats de sous-traitance, durées de conservation, droits d'accès et d'effacement, analyse d'impact à envisager (données de prospects et audio) **[à valider avec le responsable de la protection des données]**.
@@ -144,9 +143,31 @@ Alternative écartée à ce stade : une base répliquée clé en main. Elle réd
 
 - Environnements : développement, recette, production ; données de test fictives.
 - CI : tests unitaires et d'intégration du back, tests de la synchro, build des applications.
-- **Distribution mobile** : via NinjaOne (application privée) ; chemin exact (stores en mode privé, fichiers signés, TestFlight pour la recette iOS) à vérifier avec l'IT **[à valider]**.
+- **Distribution mobile** : hors périmètre de ce projet.
 - Observabilité : journaux structurés, métriques (latence, taille de la file de synchro, échecs de transcription/IA, coûts), alertes. Aucun contenu de compte rendu dans les journaux.
 - Montée de version : l'application vérifie une version minimale exigée par le back.
+
+## 15. Infrastructure : serveur Docker interne
+
+**Décisions (21/11)** : serveur Docker hébergé chez vous, en UE ; même réseau que le CRM ; indisponibilité acceptable de quelques heures, **sans perte de données**.
+
+| Service (conteneur) | Rôle |
+|---------------------|------|
+| Reverse proxy | Terminaison TLS, certificats, limitation de débit ; seul point exposé à Internet |
+| API | API mobile, API CRM, console d'administration (fichiers statiques) |
+| Worker | Transcription, IA, import CRM, purge de l'audio |
+| PostgreSQL | Données, journal des changements, file de tâches |
+| Stockage de fichiers | Audio et photos : volume dédié ou stockage compatible S3 auto-hébergé (licence à vérifier) |
+| Supervision | Journaux et métriques (facultatif au début) |
+
+- **Exposition** : les téléphones sont hors de votre réseau ; le reverse proxy doit être joignable depuis Internet (nom de domaine, certificat valide, pare-feu fermant tous les autres ports, limites de débit). Prévoir une zone réseau isolée (DMZ) entre Internet et le réseau interne, car le serveur est sur le même réseau que le CRM. À valider avec votre sécurité informatique.
+- **Sorties réseau** : le serveur doit joindre les services de transcription et d'IA retenus ; on limite les sorties à ces destinations.
+- **« Sans perte de données »** : une sauvegarde quotidienne ne suffit pas, elle peut perdre jusqu'à 24 h de données. Il faut un archivage continu de PostgreSQL (journaux de transaction) et une copie fréquente des fichiers, chiffrés, **hors du serveur** (en UE), avec essais de restauration réguliers. Une partie des données récentes existe aussi sur les appareils tant qu'elle n'est pas synchronisée, mais cela ne remplace pas la sauvegarde. Sans second serveur, la restauration prend quelques heures, ce qui correspond à votre tolérance.
+- **Mises à jour** : images versionnées, Docker Compose, migrations automatisées avec sauvegarde préalable. L'outillage de migration PostgreSQL du dépôt PMA peut servir de modèle.
+- **Secrets** : hors dépôt et hors images.
+- **Capacité** : à dimensionner (processeur, mémoire, disque pour l'audio, bande passante) : voir §12. Disque : l'audio brut est purgé après la durée configurée.
+- **Transcription et IA** : services externes en UE ; les héberger soi-même demanderait du matériel adapté (cartes graphiques), non prévu.
+- **Questions restantes** : qui administre le serveur ? quel stockage de sauvegarde hors serveur ? quelle équipe sécurité valide l'exposition Internet ?
 
 ## 12. Dimensionnement indicatif
 
@@ -165,11 +186,12 @@ Hypothèses : 50 à 200 utilisateurs, 10 h d'audio par utilisateur et par mois.
 | API du CRM inconnue | Estimation de l'intégration impossible | Obtenir la documentation tôt ; adaptateur isolé |
 | Comptes propres sans SSO | Charge de sécurité sur le projet | Double authentification, console IT, journal d'audit ; réexaminer un SSO |
 | Dépendance à un fournisseur IA/transcription | Coût, disponibilité, conformité | Adaptateurs, double fournisseur possible, quotas |
-| Parc MDM : prise en charge non vérifiée | Déploiement bloqué | Vérifier avec l'IT et NinjaOne avant la phase 2 |
+| Pas de test de qualité avant le développement | Qualité insuffisante dans certaines langues découverte tard | Lancement langue par langue, mesure intégrée au produit, fournisseur interchangeable |
+| Serveur Docker unique | Panne = indisponibilité de la synchro, de la transcription et de l'IA (l'application continue hors-ligne) | Sauvegardes continues et restaurations testées, §15 |
 
 ## 14. Phasage proposé
 
-0. **Spikes (courts)** : test comparatif de transcription sur vrais enregistrements ; prototype de synchro et de visibilité ; essai de distribution via NinjaOne.
+0. **Préparation réduite** : prototype de synchro et de visibilité, premier jalon mobile (audio en arrière-plan), sélection documentaire des fournisseurs, mesure de qualité intégrée (voir `PHASE0_PLAN.md`).
 1. **Socle back** : modèle de données, authentification, droits, console d'administration minimale.
 2. **Application hors-ligne** : clients, visites, comptes rendus manuels, actions, synchro.
 3. **Voix et IA** : enregistrement, transcription, structuration, relecture.
