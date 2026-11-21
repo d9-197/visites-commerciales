@@ -1,7 +1,7 @@
 import React from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { useTheme } from './theme';
-import { dateToStr, strToDate, toLocalInputs } from './dates';
+import { dateToStr, roundTo15, strToDate, toLocalInputs } from './dates';
 import type { DateFieldProps } from './DateField';
 
 /** Version navigateur : champs natifs du navigateur (le téléphone affiche son sélecteur de date et d'heure). */
@@ -11,12 +11,13 @@ export function DateField({ label, value, onChange, mode, clearable }: DateField
   const parse = (v: string): Date | undefined => {
     if (!v) return undefined;
     const d = mode === 'date' ? strToDate(v) : new Date(v);
-    return d && !Number.isNaN(d.getTime()) ? d : undefined;
+    return d && !Number.isNaN(d.getTime()) ? (mode === 'datetime' ? roundTo15(d) : d) : undefined;   // pas de 15 minutes
   };
   return (
     <View style={{ gap: 6 }}>
       {React.createElement('input', {
         type: mode === 'date' ? 'date' : 'datetime-local',
+        step: mode === 'date' ? undefined : 900,   // 15 minutes
         value: str,
         'aria-label': label,
         onChange: (e: { target: { value: string } }) => onChange(parse(e.target.value)),

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { companyAddress, detectEnv, navigationOptions } from '../../mobile/src/nav.js';
-import { dateToStr, fmtDate, strToDate } from '../../mobile/src/dates.js';
+import { ceilTo15, dateToStr, fmtDate, roundTo15, strToDate } from '../../mobile/src/dates.js';
 import { isActionLate, isVisitLate, canEditVisitAddress, canEditVisitDate, canTransition } from '@visites/sync-core';
 
 test('adresse du client sur une ligne, champs manquants ignorés', () => {
@@ -65,4 +65,16 @@ test('règles partagées : adresse, date, transitions', () => {
   assert.equal(canEditVisitDate('in_progress', true), false);
   assert.equal(canTransition('planned', 'organized'), true);
   assert.equal(canTransition('done', 'planned'), false);
+});
+
+test('heures par pas de 15 minutes : arrondi au plus proche, prochain quart d\'heure par défaut', () => {
+  const m = (d: Date) => [d.getHours(), d.getMinutes(), d.getSeconds()];
+  assert.deepEqual(m(roundTo15(new Date(2026, 10, 21, 14, 37, 40))), [14, 30, 0]);
+  assert.deepEqual(m(roundTo15(new Date(2026, 10, 21, 14, 38, 0))), [14, 45, 0]);
+  assert.deepEqual(m(roundTo15(new Date(2026, 10, 21, 14, 53, 0))), [15, 0, 0], 'passe à l\'heure suivante');
+  assert.deepEqual(m(roundTo15(new Date(2026, 10, 21, 14, 15, 0))), [14, 15, 0], 'déjà sur un quart d\'heure');
+  assert.deepEqual(m(ceilTo15(new Date(2026, 10, 21, 14, 1, 5))), [14, 15, 0]);
+  assert.deepEqual(m(ceilTo15(new Date(2026, 10, 21, 14, 46, 0))), [15, 0, 0]);
+  assert.deepEqual(m(ceilTo15(new Date(2026, 10, 21, 14, 30, 0))), [14, 30, 0], 'heure pile : inchangée');
+  assert.deepEqual(m(ceilTo15(new Date(2026, 10, 21, 14, 30, 20))), [14, 45, 0]);
 });

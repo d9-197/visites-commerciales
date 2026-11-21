@@ -194,7 +194,7 @@ CREATE TABLE visit (
   started_at    timestamptz,
   ended_at      timestamptz,
   location_text text,
-  status        text NOT NULL DEFAULT 'planned' CONSTRAINT visit_status_check CHECK (status IN ('planned','organized','in_progress','done','cancelled')),
+  status        text NOT NULL DEFAULT 'planned' CONSTRAINT visit_status_check CHECK (status IN ('planned','organized','in_progress','done','validated','cancelled')),
   version       int  NOT NULL DEFAULT 1,
   created_at    timestamptz NOT NULL DEFAULT now(),
   updated_at    timestamptz NOT NULL DEFAULT now(),

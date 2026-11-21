@@ -1,6 +1,6 @@
 // Règles métier partagées entre le back (qui les impose) et l'application (qui les reflète dans l'interface).
 
-export type VisitStatus = 'planned' | 'organized' | 'in_progress' | 'done' | 'cancelled';
+export type VisitStatus = 'planned' | 'organized' | 'in_progress' | 'done' | 'validated' | 'cancelled';
 export type UserRole = 'commercial' | 'manager' | 'directeur';
 
 /** « planned » = à organiser ; « organized » = organisée avec le client (rendez-vous confirmé). */
@@ -8,7 +8,8 @@ export const VISIT_TRANSITIONS: Record<VisitStatus, readonly VisitStatus[]> = {
   planned: ['organized', 'in_progress', 'cancelled'],
   organized: ['planned', 'in_progress', 'cancelled'],
   in_progress: ['done', 'cancelled'],
-  done: [],
+  done: ['validated'],   // « validated » est attribué par le serveur quand le compte rendu est validé ; jamais envoyé par l'appareil
+  validated: [],
   cancelled: [],
 };
 

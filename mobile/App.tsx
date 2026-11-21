@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, BackHandler, Platform, Pressable, SafeAreaView, ScrollView, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, AppState, BackHandler, Platform, Pressable, SafeAreaView, ScrollView, Switch, Text, TextInput, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { ApiClient, SyncEngine, uuidv4, type Row, type SyncReport } from '@visites/sync-core';
 import type { SqliteStore } from '@visites/sync-core';
@@ -7,7 +7,7 @@ import { openStore } from './src/expoDb';
 import { clearSession, loadSession, saveSession, saveTokens, type Session, type ThemePref } from './src/session';
 import { ThemeProvider, useTheme, visitStatusColor } from './src/theme';
 import { canEditVisitAddress, canEditVisitDate, isActionLate, isVisitLate, type UserRole } from '@visites/sync-core';
-import { dateToStr, fmtDate, fmtDateTime, strToDate, visitWhen, VISIT_STATUS } from './src/dates';
+import { ceilTo15, dateToStr, fmtDate, fmtDateTime, strToDate, visitWhen, VISIT_STATUS } from './src/dates';
 import { Sheet } from './src/Sheet';
 import { DateField } from './src/DateField';
 import { NavChooser } from './src/NavChooser';
@@ -126,6 +126,8 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
     return () => sub.remove();
   }, [goBack]);
   const [group, setGroup] = useState<'client' | 'date'>('client');
+  const [showValidated, setShowValidated] = useState(false);       // visites validées : masquées par défaut
+  const [showFinished, setShowFinished] = useState(false);         // actions terminées ou annulées : masquées par défaut
   const [data, setData] = useState<Data>({ visits: [], companies: [], actions: [], reports: [], notes: [], history: [], pending: 0 });
   const [status, setStatus] = useState<{ offline: boolean; msg?: string }>({ offline: false });
   const syncing = useRef(false);
@@ -157,9 +159,11 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
   // Plus récente d'abord ; les visites sans date prévue en dernier.
   const byDateDesc = (a: Row, b: Row) => String(b.planned_start ?? '').localeCompare(String(a.planned_start ?? ''));
 
+  const shownVisits = data.visits.filter(v => showValidated || v.status !== 'validated');
+  const hiddenValidated = data.visits.length - shownVisits.length;
   const groups = (() => {
     const m = new Map<string, Row[]>();
-    for (const v of data.visits) m.set(v.company_id, [...(m.get(v.company_id) ?? []), v]);
+    for (const v of shownVisits) m.set(v.company_id, [...(m.get(v.company_id) ?? []), v]);
     return [...m.entries()].map(([id, vs]) => ({ id, name: companyName(id), visits: vs.sort(byDateDesc) })).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   })();
 
@@ -176,14 +180,19 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
         {screen.name === 'today' && <>
           <Text style={s.h1}>Visites</Text>
           <Seg value={group} onChange={setGroup} options={[['client', 'Par client'], ['date', 'Par date']]} />
-          {data.visits.length === 0 && <Text style={s.muted}>Aucune visite. Créez-en une depuis l'onglet Clients.</Text>}
+          <View style={s.rowBetween}>
+            <Text style={[s.t, { flex: 1 }]}>Afficher les visites validées</Text>
+            <Switch value={showValidated} onValueChange={setShowValidated} accessibilityLabel="Afficher les visites validées" trackColor={{ true: c.accent, false: c.line }} />
+          </View>
+          {hiddenValidated > 0 && <Text style={s.muted}>{hiddenValidated} visite{hiddenValidated > 1 ? 's' : ''} validée{hiddenValidated > 1 ? 's' : ''} masquée{hiddenValidated > 1 ? 's' : ''}.</Text>}
+          {shownVisits.length === 0 && <Text style={s.muted}>{data.visits.length === 0 ? 'Aucune visite. Créez-en une depuis l\'onglet Clients.' : 'Aucune visite à afficher.'}</Text>}
           {group === 'client'
             ? groups.map(g => (
               <View key={g.id} style={{ gap: 8 }}>
                 <View style={s.group}><Text accessibilityRole="header" style={s.h2}>{g.name}</Text><Text style={s.muted}>{g.visits.length} visite{g.visits.length > 1 ? 's' : ''}{g.visits.some(v => isVisitLate(v)) ? <Text style={{ color: c.late, fontWeight: '700' }}> · {g.visits.filter(v => isVisitLate(v)).length} en retard</Text> : null}</Text></View>
                 {g.visits.map(v => <VisitRow key={v.id} v={v} onPress={() => navigate({ name: 'visit', id: v.id })} />)}
               </View>))
-            : [...data.visits].sort(byDateDesc).map(v => <VisitRow key={v.id} v={v} client={companyName(v.company_id)} onPress={() => navigate({ name: 'visit', id: v.id })} />)}
+            : [...shownVisits].sort(byDateDesc).map(v => <VisitRow key={v.id} v={v} client={companyName(v.company_id)} onPress={() => navigate({ name: 'visit', id: v.id })} />)}
         </>}
         {screen.name === 'clients' && <>
           <Text style={s.h1}>Clients</Text>
@@ -191,13 +200,19 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
           {data.companies.filter(c => c.status === 'active').map(c => (
             <Row key={c.id} title={c.name} sub={[c.city, c.sector].filter(Boolean).join(' · ')}
               onPress={() => act(async () => { const addr = companyAddress(c);
-                const id = await ctx.engine.create('visit', { company_id: c.id, status: 'planned', planned_start: new Date().toISOString(), ...(addr ? { location_text: addr } : {}) }); navigate({ name: 'visit', id }); })} />
+                const id = await ctx.engine.create('visit', { company_id: c.id, status: 'planned', planned_start: ceilTo15(new Date()).toISOString(), ...(addr ? { location_text: addr } : {}) }); navigate({ name: 'visit', id }); })} />
           ))}
         </>}
         {screen.name === 'visit' && <VisitScreen key={screen.id} visitId={screen.id} data={data} ctx={ctx} act={act} back={goBack} companyName={companyName} />}
         {screen.name === 'actions' && <>
           <View style={s.rowBetween}><Text style={s.h1}>Actions</Text><Btn small title="+ Nouvelle" onPress={() => navigate({ name: 'action' })} /></View>
-          {[...data.actions].sort((a, b) => String(a.due_date ?? '9').localeCompare(String(b.due_date ?? '9'))).map(a => {
+          <View style={s.rowBetween}>
+            <Text style={[s.t, { flex: 1 }]}>Afficher les actions terminées ou annulées</Text>
+            <Switch value={showFinished} onValueChange={setShowFinished} accessibilityLabel="Afficher les actions terminées ou annulées" trackColor={{ true: c.accent, false: c.line }} />
+          </View>
+          {!showFinished && data.actions.some(a => a.status !== 'todo') && <Text style={s.muted}>{data.actions.filter(a => a.status !== 'todo').length} action(s) terminée(s) ou annulée(s) masquée(s).</Text>}
+          {data.actions.filter(a => showFinished || a.status === 'todo').length === 0 && <Text style={s.muted}>Aucune action à afficher.</Text>}
+          {[...data.actions].filter(a => showFinished || a.status === 'todo').sort((a, b) => String(a.due_date ?? '9').localeCompare(String(b.due_date ?? '9'))).map(a => {
             const late = isActionLate(a, todayStr());
             return (
             <View key={a.id} style={[s.rowCard, late && { borderLeftWidth: 6, borderLeftColor: c.late }]}>

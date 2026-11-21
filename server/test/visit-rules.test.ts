@@ -102,6 +102,33 @@ test('API CRM : l\'historique est exposé en lecture', async () => {
   assert.ok(r.body.items.every((x: any) => x.changed_by_name && x.field));
 });
 
+test('visite terminée + compte rendu validé => visite « validée », dans les deux ordres ; statut jamais attribué à la main', async () => {
+  const a = await f.login('c1@x.fr');
+  // ordre 1 : terminer d'abord, valider le compte rendu ensuite
+  const v1 = uuid(), r1 = uuid();
+  await a.push([op('visit', 'create', v1, { company_id: f.f1, status: 'planned' }), op('report', 'create', r1, { visit_id: v1, language: 'fr', summary: 'Résumé' })]);
+  await a.push([op('visit', 'update', v1, { status: 'in_progress' }, 1)]);
+  await a.push([op('visit', 'update', v1, { status: 'done' }, 2)]);
+  assert.equal((await env.pool.query(`SELECT status FROM visit WHERE id = $1`, [v1])).rows[0].status, 'done', 'compte rendu en brouillon : reste terminée');
+  const val = await a.push([op('report', 'update', r1, { status: 'validated' }, 1)]);
+  assert.equal(val.body.results[0].result, 'applied');
+  assert.equal((await env.pool.query(`SELECT status FROM visit WHERE id = $1`, [v1])).rows[0].status, 'validated');
+  // ordre 2 : compte rendu validé pendant la visite, puis visite terminée
+  const v2 = uuid(), r2 = uuid();
+  await a.push([op('visit', 'create', v2, { company_id: f.f1, status: 'in_progress' }), op('report', 'create', r2, { visit_id: v2, language: 'fr', summary: 'Résumé', status: 'validated' })]);
+  assert.equal((await env.pool.query(`SELECT status FROM visit WHERE id = $1`, [v2])).rows[0].status, 'in_progress', 'pas encore terminée');
+  await a.push([op('visit', 'update', v2, { status: 'done' }, 1)]);
+  assert.equal((await env.pool.query(`SELECT status FROM visit WHERE id = $1`, [v2])).rows[0].status, 'validated');
+  // l'appareil reçoit le statut ; il ne peut pas l'imposer ; une visite validée n'est plus modifiable
+  const got = (await a.pullAll()).changes.visits!.find(x => x.id === v1)!;
+  assert.equal(got.status, 'validated');
+  const manual = await a.push([op('visit', 'update', v2, { status: 'validated' }, 3)]);
+  assert.equal(manual.body.results[0].code, 'locked_status');
+  const created = await a.push([op('visit', 'create', uuid(), { company_id: f.f1, status: 'validated' })]);
+  assert.equal(created.body.results[0].code, 'validation_failed');
+  assert.equal((await upd('c1@x.fr', v1, { location_text: 'trop tard' }, got.version)).code, 'locked_status');
+});
+
 test('migration : une base existante reçoit le statut « organisée » et l\'historique, sans perdre de données', async () => {
   const admin = new pg.Client({ connectionString: process.env.TEST_DATABASE_URL ?? 'postgres://postgres@127.0.0.1:54329/postgres' });
   await admin.connect();
@@ -121,7 +148,7 @@ test('migration : une base existante reçoit le statut « organisée » et l\'hi
     await pool.query(`INSERT INTO visit(id, company_id, author_id, location_text) VALUES ($1,$2,$3,'ancienne')`, [uuid(), co, u]);
     await assert.rejects(pool.query(`UPDATE visit SET status = 'organized'`), /visit_status_check/);
 
-    assert.deepEqual(await migrate(pool), ['001_visite_organisee_et_historique.sql']);
+    assert.deepEqual(await migrate(pool), ['001_visite_organisee_et_historique.sql', '002_visite_validee.sql']);
     await pool.query(`UPDATE visit SET status = 'organized'`);                    // maintenant accepté
     assert.equal((await pool.query(`SELECT count(*)::int n FROM visit WHERE location_text = 'ancienne'`)).rows[0].n, 1, 'données conservées');
     assert.equal((await pool.query(`SELECT count(*)::int n FROM visit_history`)).rows[0].n, 0);

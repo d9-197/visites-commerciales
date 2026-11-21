@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Platform, Pressable, Text, View } from 'react-native';
 import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import { useTheme } from './theme';
-import { fmtJsDate } from './dates';
+import { fmtJsDate, roundTo15 } from './dates';
 
 export interface DateFieldProps {
   label: string;
@@ -17,8 +17,10 @@ export interface DateFieldProps {
  * NON TESTÉ SUR APPAREIL : le code compile mais n'a jamais été exécuté sur un téléphone. La version web (DateField.web.tsx)
  * est, elle, testée dans un navigateur.
  */
-export function DateField({ label, value, onChange, mode, clearable }: DateFieldProps) {
+export function DateField({ label, value, onChange: onChangeRaw, mode, clearable }: DateFieldProps) {
   const { s, c } = useTheme();
+  // Les heures se règlent par pas de 15 minutes : la valeur choisie est arrondie au quart d'heure le plus proche.
+  const onChange = (d?: Date) => onChangeRaw(d && mode === 'datetime' ? roundTo15(d) : d);
   const [iosOpen, setIosOpen] = useState(false);
 
   const openAndroid = () => {
@@ -45,7 +47,7 @@ export function DateField({ label, value, onChange, mode, clearable }: DateField
         <Text style={{ color: value ? c.text : c.muted, fontSize: 16 }}>{value ? fmtJsDate(value, mode) : 'Choisir…'}</Text>
       </Pressable>
       {Platform.OS === 'ios' && iosOpen && value && (
-        <DateTimePicker value={value} mode={mode} display={mode === 'date' ? 'inline' : 'spinner'} locale="fr-FR" onChange={(_e, d) => { if (d) onChange(d); }} />
+        <DateTimePicker value={value} mode={mode} minuteInterval={15} display={mode === 'date' ? 'inline' : 'spinner'} locale="fr-FR" onChange={(_e, d) => { if (d) onChange(d); }} />
       )}
       {clearable && value && <Pressable onPress={() => { setIosOpen(false); onChange(undefined); }} accessibilityRole="button"><Text style={s.link}>Effacer</Text></Pressable>}
     </View>

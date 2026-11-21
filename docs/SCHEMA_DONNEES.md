@@ -52,7 +52,7 @@ erDiagram
 
 ## 2 bis. Visites : statuts, adresse, historique (migration 001)
 
-- Statuts : `planned` (à organiser), `organized` (organisée avec le client), `in_progress`, `done`, `cancelled`.
+- Statuts : `planned` (à organiser), `organized` (organisée avec le client), `in_progress`, `done`, `validated` (terminée avec compte rendu validé, attribué par le serveur, migration 002), `cancelled`.
 - `visit.location_text` est l'**adresse de la visite**, copiée du client à la création : elle ne suit pas les changements du client.
 - `visit_history` : une ligne par modification de la date prévue ou de l'adresse (ancienne valeur, nouvelle valeur, nom de la personne copié au moment de la modification, date). Écrite par le serveur seulement ; lue par ceux qui voient la visite ; exposée au CRM par la vue `crm_visit_history`.
 - Les bases existantes sont mises à niveau par `db/migrations/001_visite_organisee_et_historique.sql`, appliquée automatiquement au démarrage (table `schema_migrations`).

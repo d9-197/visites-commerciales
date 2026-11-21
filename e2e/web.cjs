@@ -91,7 +91,7 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   // 2 quinquies. Date prévue : icône, sélecteur de date et d'heure, historique conservé
   await page.getByRole('button', { name: 'Modifier la date prévue' }).click();
   assert.equal(await page.getByLabel('Date et heure prévues', { exact: true }).getAttribute('type'), 'datetime-local', 'sélecteur natif de date et d\'heure');
-  await page.getByLabel('Date et heure prévues', { exact: true }).fill('2026-12-01T14:30');
+  await page.getByLabel('Date et heure prévues', { exact: true }).fill('2026-12-01T14:37');   // pas de 15 minutes : 14:37 devient 14:30
   await page.getByRole('button', { name: 'Enregistrer' }).last().click();
   await page.getByText(/déc\.? 2026.*14:30/).first().waitFor();
   assert.equal(await page.getByText('En retard').count(), 0, 'date future : pas en retard');
@@ -115,13 +115,17 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await page.getByLabel('Résumé du compte rendu').fill('Intéressé par l\'offre B, budget à confirmer.');
   await page.getByRole('button', { name: 'Valider' }).click();
   await page.getByRole('button', { name: 'Terminer la visite' }).click();
-  await page.getByText('Terminée', { exact: true }).first().waitFor();
+  await page.getByText('Validée', { exact: true }).first().waitFor();      // compte rendu déjà validé : la visite terminée devient validée
   await shot(page, '3c-terminee');
   await page.getByRole('button', { name: '‹ Retour' }).click();
   await page.getByText('Source : CRM, lecture seule').waitFor();       // « Retour » ramène à l'écran d'où l'on vient (Clients)
   await page.getByRole('button', { name: 'Visites' }).click();
 
   // 2 septies. Liste : regroupement par client / par date, dates réalisée et prévue
+  // visites validées : masquées par défaut, affichées par l'interrupteur
+  await page.getByText('Aucune visite à afficher.').waitFor();
+  await page.getByText('1 visite validée masquée.').waitFor();
+  await page.getByRole('switch', { name: 'Afficher les visites validées' }).click();
   await page.getByText('1 visite', { exact: true }).waitFor();
   await page.getByText(/^Réalisée /).waitFor();
   assert.ok(await page.getByText(/^Prévue .*déc/).first().isVisible(), 'la date prévue reste affichée sous la date réalisée');
@@ -172,6 +176,10 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
 
   // 6. Terminer une action, puis déconnexion qui efface les données de l'appareil
   await page.getByRole('checkbox').first().click();
+  await page.getByText('1 action(s) terminée(s) ou annulée(s) masquée(s).').waitFor();       // actions terminées : masquées par défaut
+  assert.equal(await page.getByText('Relancer le client (en retard)').count(), 0, 'l\'action terminée disparaît de la liste');
+  await page.getByRole('switch', { name: 'Afficher les actions terminées ou annulées' }).click();
+  await page.getByText('Relancer le client (en retard)').waitFor();
   await page.getByRole('button', { name: 'Réglages' }).click();
   await page.getByRole('button', { name: /Se déconnecter/ }).click();
   await page.getByRole('button', { name: 'Se connecter' }).waitFor();

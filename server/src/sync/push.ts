@@ -17,7 +17,7 @@ const nstr = z.string().nullable();
 const VISIT_FIELDS = {
   visit_type: nstr, objective: nstr, planned_start: ts.nullable(), planned_end: ts.nullable(),
   started_at: ts.nullable(), ended_at: ts.nullable(), location_text: z.string().max(500).nullable(),
-  status: z.enum(['planned', 'organized', 'in_progress', 'done', 'cancelled']),
+  status: z.enum(['planned', 'organized', 'in_progress', 'done', 'validated', 'cancelled']),
 };
 const REPORT_FIELDS = {
   summary: nstr, needs: nstr, objections: nstr, competitors: nstr, decisions: nstr, next_step: nstr,
@@ -117,6 +117,13 @@ async function visitRow(c: Client, userId: string, id: string, authorOnly: boole
   return v;
 }
 
+/** Une visite terminée dont le compte rendu est validé devient « validée » (dans la même transaction). */
+async function autoValidate(c: Client, visitId: string) {
+  await c.query(
+    `UPDATE visit v SET status = 'validated', version = version + 1
+     WHERE v.id = $1 AND v.status = 'done' AND EXISTS (SELECT 1 FROM visit_report r WHERE r.visit_id = v.id AND r.status = 'validated')`, [visitId]);
+}
+
 async function companyReadable(c: Client, userId: string, id: string) {
   const ok = (await c.query(`SELECT can_read_company($1,$2) AS ok`, [userId, id])).rows[0].ok;
   if (!ok) throw new Reject('forbidden', 'Client non accessible');
@@ -141,6 +148,7 @@ async function handle(ctx: Ctx): Promise<Applied> {
     case 'visit': {
       if (op.op === 'create') {
         const p = parse(S.visitCreate, op.payload);
+        if (p.status === 'validated') throw new Reject('validation_failed', 'Le statut « validée » est attribué automatiquement');
         await companyReadable(c, userId, p.company_id);
         await insert(c, 'visit', { id, author_id: userId, ...p });
         return { version: 1, fields: Object.keys(p) };
@@ -160,10 +168,12 @@ async function handle(ctx: Ctx): Promise<Applied> {
         if (('planned_start' in fields || 'planned_end' in fields) && !canEditVisitDate(row.status as VisitStatus, isAuthor)) {
           throw new Reject('locked_status', 'La date prévue n\'est plus modifiable une fois la visite commencée');
         }
+        if (fields.status === 'validated') throw new Reject('locked_status', 'Le statut « validée » est attribué automatiquement quand le compte rendu est validé');
         if (fields.status && !canTransition(row.status as VisitStatus, fields.status as VisitStatus)) {
           throw new Reject('locked_status', `Passage impossible de « ${row.status} » à « ${fields.status} »`);
         }
         return updateVersioned(ctx, 'visit', row, fields, undefined, async applied => {
+          if (applied.status === 'done') await autoValidate(c, id);   // compte rendu déjà validé : la visite est validée aussitôt
           for (const f of VISIT_HISTORY_FIELDS) {
             if (!(f in applied)) continue;
             const oldV = row[f] instanceof Date ? row[f].toISOString() : row[f] ?? null;
@@ -195,6 +205,7 @@ async function handle(ctx: Ctx): Promise<Applied> {
         if (p.status === 'validated' && !(p.summary ?? '').trim()) throw new Reject('validation_failed', 'summary requis pour valider');
         const extra = p.status === 'validated' ? { validated_at: new Date().toISOString(), validated_by: userId } : {};
         await insert(c, 'visit_report', { id, ...p, ...extra });
+        if (p.status === 'validated') await autoValidate(c, p.visit_id);
         return { version: 1, fields: Object.keys(p) };
       }
       if (op.op === 'update') {
@@ -207,7 +218,7 @@ async function handle(ctx: Ctx): Promise<Applied> {
         return updateVersioned(ctx, 'visit_report', row, fields, (merged, toApply) => {
           if (merged.status === 'validated' && !String(merged.summary ?? '').trim()) throw new Reject('validation_failed', 'summary requis pour valider');
           if (row.status !== 'validated' && merged.status === 'validated') { toApply.validated_at = new Date().toISOString(); toApply.validated_by = userId; }
-        });
+        }, async applied => { if (applied.status === 'validated') await autoValidate(c, row.visit_id); });
       }
       throw new Reject('validation_failed', 'Un compte rendu ne se supprime pas');
     }

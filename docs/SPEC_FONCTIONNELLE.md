@@ -36,7 +36,8 @@ données exploitable (comptes rendus structurés, actions, prochaines étapes).
 
 ### 1 ter. Visites : statuts, adresse, historique, retards (décisions du 21/11)
 
-- **Statuts** : à organiser → **organisée avec le client** → en cours → terminée ; annulée possible avant la fin. Chaque statut a une couleur ; le libellé reste affiché (la couleur n'est jamais seule).
+- **Statuts** : à organiser → **organisée avec le client** → en cours → terminée → **validée** ; annulée possible avant la fin. Une visite devient **validée** automatiquement quand elle est terminée **et** que son compte rendu est validé (dans l'ordre que l'on veut). Les visites validées sont **masquées par défaut** dans la liste (interrupteur pour les afficher), de même que les actions terminées ou annulées.
+- **Heures de visite** : réglées par pas de **15 minutes**. Chaque statut a une couleur ; le libellé reste affiché (la couleur n'est jamais seule).
 - **Adresse de la visite** : celle du client à la création, puis propre à la visite (elle ne suit pas le client). Modifiable par **toute personne qui voit la visite** tant qu'elle est « à organiser » ; par **un commercial seulement** une fois « organisée » ; **plus modifiable** dès que la visite est commencée. Modification par une icône (crayon), pas par un champ dans la vue. À étudier plus tard : aide à la saisie (dictée).
 - **Date prévue** : modifiable par l'auteur de la visite par une icône (crayon) dans le cartouche, tant que la visite n'est pas commencée. **L'historique des modifications** (date prévue et adresse : qui, quand, ancienne et nouvelle valeur) est consultable.
 - **Retards** (hypothèse à confirmer) : visite à organiser ou organisée dont l'heure prévue est dépassée de plus d'une heure ; action à faire dont l'échéance est passée. Signalées en rouge (liseré, pastille « En retard »).

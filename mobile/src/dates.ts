@@ -1,6 +1,6 @@
 import type { Row } from '@visites/sync-core';
 
-export const VISIT_STATUS: Record<string, string> = { planned: 'À organiser', organized: 'Organisée', in_progress: 'En cours', done: 'Terminée', cancelled: 'Annulée' };
+export const VISIT_STATUS: Record<string, string> = { planned: 'À organiser', organized: 'Organisée', in_progress: 'En cours', done: 'Terminée', validated: 'Validée', cancelled: 'Annulée' };
 
 /** « ven. 20 nov. 2026, 10:30 » dans la langue du téléphone ; repli simple si Intl est indisponible. */
 export function fmtDateTime(iso: string): string {
@@ -13,7 +13,7 @@ export function fmtDateTime(iso: string): string {
 /** Libellés de date d'une visite : date principale et complément. */
 export function visitWhen(v: Row): { main: string; sub?: string } {
   const planned = v.planned_start ? `Prévue ${fmtDateTime(v.planned_start)}` : 'Non planifiée';
-  if (v.status === 'done') return { main: `Réalisée ${fmtDateTime(v.ended_at ?? v.started_at ?? v.updated_at)}`, sub: v.planned_start ? planned : undefined };
+  if (v.status === 'done' || v.status === 'validated') return { main: `Réalisée ${fmtDateTime(v.ended_at ?? v.started_at ?? v.updated_at)}`, sub: v.planned_start ? planned : undefined };
   if (v.status === 'in_progress') return { main: `Commencée ${fmtDateTime(v.started_at ?? v.updated_at)}`, sub: v.planned_start ? planned : undefined };
   if (v.status === 'cancelled') return { main: `Annulée · ${planned}` };
   return { main: planned };
@@ -59,4 +59,18 @@ export function fmtJsDate(d: Date, mode: 'date' | 'datetime'): string {
       ? d.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
       : d.toLocaleString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   } catch { return d.toISOString().slice(0, mode === 'date' ? 10 : 16).replace('T', ' '); }
+}
+
+/** Arrondi au quart d'heure le plus proche (les heures de visite se règlent par pas de 15 minutes). */
+export function roundTo15(d: Date): Date {
+  const r = new Date(d); r.setSeconds(0, 0);
+  r.setMinutes(Math.round(r.getMinutes() / 15) * 15);   // 60 passe à l'heure suivante
+  return r;
+}
+/** Quart d'heure suivant (par défaut d'une nouvelle visite : jamais dans le passé). Une heure pile reste inchangée. */
+export function ceilTo15(d: Date): Date {
+  const exact = d.getSeconds() === 0 && d.getMilliseconds() === 0 && d.getMinutes() % 15 === 0;
+  const r = new Date(d); r.setSeconds(0, 0);
+  if (!exact) r.setMinutes(Math.ceil((d.getMinutes() + 0.001) / 15) * 15);
+  return r;
 }

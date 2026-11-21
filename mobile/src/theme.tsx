@@ -5,10 +5,10 @@ import { loadTheme, saveTheme, type ThemePref } from './session';
 export interface Palette {
   bg: string; surface: string; text: string; muted: string; line: string; accent: string; accentInk: string; accentSoft: string;
   okBg: string; warnBg: string; ok: string; err: string;
-  stPlanned: string; stOrganized: string; stProgress: string; stDone: string; stCancelled: string; late: string;
+  stPlanned: string; stOrganized: string; stProgress: string; stDone: string; stValidated: string; stCancelled: string; late: string;
 }
-const light: Palette = { bg: '#F4F6F5', surface: '#FFFFFF', text: '#14212B', muted: '#5B6A74', line: '#D9DEDC', accent: '#0E6A87', accentInk: '#FFFFFF', accentSoft: '#DCEDF3', okBg: '#DDEFE4', warnBg: '#F7EACB', ok: '#2B7A4B', err: '#B3261E', stPlanned: '#A8680A', stOrganized: '#0E6A87', stProgress: '#2B7A4B', stDone: '#5B6A74', stCancelled: '#7C858B', late: '#C62828' };
-const dark: Palette = { bg: '#0C1317', surface: '#152028', text: '#E7EDF0', muted: '#98A8B2', line: '#25333D', accent: '#4FB4D3', accentInk: '#06222C', accentSoft: '#12303B', okBg: '#173526', warnBg: '#3A2D10', ok: '#6CC58D', err: '#F2B8B5', stPlanned: '#E3B04B', stOrganized: '#4FB4D3', stProgress: '#6CC58D', stDone: '#98A8B2', stCancelled: '#7E8A92', late: '#FF8A80' };
+const light: Palette = { bg: '#F4F6F5', surface: '#FFFFFF', text: '#14212B', muted: '#5B6A74', line: '#D9DEDC', accent: '#0E6A87', accentInk: '#FFFFFF', accentSoft: '#DCEDF3', okBg: '#DDEFE4', warnBg: '#F7EACB', ok: '#2B7A4B', err: '#B3261E', stPlanned: '#A8680A', stOrganized: '#0E6A87', stProgress: '#2B7A4B', stDone: '#5B6A74', stValidated: '#5E4BB5', stCancelled: '#7C858B', late: '#C62828' };
+const dark: Palette = { bg: '#0C1317', surface: '#152028', text: '#E7EDF0', muted: '#98A8B2', line: '#25333D', accent: '#4FB4D3', accentInk: '#06222C', accentSoft: '#12303B', okBg: '#173526', warnBg: '#3A2D10', ok: '#6CC58D', err: '#F2B8B5', stPlanned: '#E3B04B', stOrganized: '#4FB4D3', stProgress: '#6CC58D', stDone: '#98A8B2', stValidated: '#B6A1F0', stCancelled: '#7E8A92', late: '#FF8A80' };
 
 function makeStyles(c: Palette) {
   return StyleSheet.create({
@@ -68,5 +68,5 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
 /** Couleur associée à un statut de visite. */
 export function visitStatusColor(c: Palette, status: string): string {
-  return ({ planned: c.stPlanned, organized: c.stOrganized, in_progress: c.stProgress, done: c.stDone, cancelled: c.stCancelled } as Record<string, string>)[status] ?? c.muted;
+  return ({ planned: c.stPlanned, organized: c.stOrganized, in_progress: c.stProgress, done: c.stDone, validated: c.stValidated, cancelled: c.stCancelled } as Record<string, string>)[status] ?? c.muted;
 }
