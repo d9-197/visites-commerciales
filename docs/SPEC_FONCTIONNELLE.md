@@ -17,9 +17,11 @@ données exploitable (comptes rendus structurés, actions, prochaines étapes).
 | Langues | Multilingue | Interface i18n dès le départ ; reconnaissance vocale et IA dans chaque langue ; liste des langues à fixer |
 | Langues précises | Français, anglais, espagnol, italien, allemand, néerlandais | 6 langues à tester en transcription et IA ; glossaire par langue ; langue du CR distincte de la langue de l'interface |
 | Appareils | Parc imposé géré par MDM | Modèle exact (iOS/Android, versions) à communiquer ; distribution et politiques via le MDM ; pas de store public nécessaire |
+| Hiérarchie | 3 niveaux : commercial, manager, directeur | Chaque niveau voit ce qui est en dessous ; un manager a une équipe, un directeur plusieurs équipes |
+| Client supprimé ou fusionné dans le CRM | Visites conservées, client marqué inactif | La synchro marque le client inactif au lieu de le supprimer ; en cas de fusion, rattachement des visites au client absorbant à définir (reprise des identifiants) ; plus de nouvelle visite sur un client inactif |
 | Clients | Partagés entre plusieurs commerciaux | Table d'affectation client-commerciaux ; historique visible par tous les intervenants ; droits par client ; gestion des modifications concurrentes |
 | Langue de dictée | Une langue par commercial, fixée dans le profil | Pas de détection automatique en v1 ; une langue de dictée passée au moteur ; la langue du CR peut différer de celle de l'interface |
-| Visibilité des CR | Pas de préférence exprimée : **proposition** = CR visible par les intervenants du client et leur hiérarchie, plus un champ « note privée » réservé à l'auteur **[À VALIDER]** | Un client partagé implique que l'historique est commun ; la note privée limite le risque de fuite d'informations sensibles |
+| Visibilité des CR | **Paramétrable** (décision du 21/11) entre deux modes : (1) CR visible par tous les commerciaux rattachés au client, plus leur hiérarchie ; (2) CR visible par son auteur et sa hiérarchie seulement. La note privée reste réservée à l'auteur dans les deux modes et n'est pas exposée à l'API du CRM | Réglage dans la console d'administration ; portée du réglage (global, par équipe ou par client) à préciser ; le changement de mode s'applique à l'historique existant, ce qui doit être explicite pour l'administrateur |
 | Fournisseur transcription/IA | Non choisi, à comparer | Comparatif à produire (traitement UE, langues, coût, DPA) à partir de sources vérifiées |
 | MDM | NinjaOne | Distribution et politiques de l'appli via NinjaOne ; à vérifier : plateformes mobiles gérées (iOS/Android), mode de déploiement d'une appli privée, configuration à distance (AppConfig), effacement à distance |
 | CRM (précisions du 20/11) | CRM interne, non nommé ; clients en lecture seule dans l'appli (pas de création) ; le CRM vient **récupérer** visites et CR par API | Le back expose une API REST dédiée au CRM (authentification par clé/jeton de service, pagination, filtre « modifié depuis », identifiants stables, suppression logique) ; le back lit les clients du CRM de son côté ; pas d'écriture dans le CRM |
@@ -74,7 +76,7 @@ données exploitable (comptes rendus structurés, actions, prochaines étapes).
 **Rappels** : notification locale sur l'appareil à l'heure choisie (fonctionne hors-ligne).
 
 ### V2 (hors MVP)
-Assignation d'une action à un collègue (le modèle de données conserve dès le MVP un responsable distinct de l'auteur), Tournée optimisée et itinéraire, géolocalisation/check-in automatique, rappel de
+Assignation d'une action à un collègue (le modèle de données conserve dès le MVP un responsable distinct de l'auteur), tournée optimisée et itinéraire, géolocalisation/check-in automatique, rappel de
 visite à faire (clients non vus depuis N jours), objectifs et tableaux de bord
 manager, opportunités/pipeline, documents partagés, intégration CRM/agenda, export PDF du CR.
 
@@ -149,8 +151,8 @@ Garde-fous :
 
 ## 11. Questions ouvertes
 
-1. Versions minimales d'iOS et d'Android du parc ?
-2. Combien de niveaux hiérarchiques ? Confirmer la règle de visibilité des CR (§1 bis).
+1. Versions minimales d'iOS et d'Android du parc : à vérifier avec l'IT. Hypothèse de travail : iOS 17+ et Android 13+ **[À VALIDER]**.
+2. Portée du réglage de visibilité des CR : global, par équipe ou par client ?
 3. Documentation de l'API du CRM : authentification, champs client/contact, quotas, identifiant de référence ?
 4. Format et contenu attendus par le CRM pour récupérer visites et CR (champs, fréquence d'appel, historique initial) ?
-5. Un client supprimé ou fusionné dans le CRM : que deviennent ses visites dans le back ?
+5. Fusion de clients dans le CRM : le CRM fournit-il l'identifiant du client absorbant ?
