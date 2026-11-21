@@ -235,6 +235,20 @@ CREATE INDEX visit_history_visit_idx ON visit_history(visit_id);
 CREATE INDEX visit_history_seq_idx ON visit_history(seq);
 
 
+-- Journal des envois d'e-mail d'une visite (le contenu n'est pas conservé).
+CREATE TABLE visit_email (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  visit_id    uuid NOT NULL REFERENCES visit(id),
+  sender_id   uuid NOT NULL REFERENCES app_user(id),
+  recipients  text[] NOT NULL,
+  parts       text[] NOT NULL,
+  status      text NOT NULL CHECK (status IN ('sent','failed')),
+  error       text,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX visit_email_sender_idx ON visit_email(sender_id, created_at);
+CREATE INDEX visit_email_visit_idx ON visit_email(visit_id);
+
 -- Compte rendu : champs structurés de la version finale (validée par le commercial).
 CREATE TABLE visit_report (
   id             uuid PRIMARY KEY,

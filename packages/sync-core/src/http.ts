@@ -1,6 +1,11 @@
 import type { Operation, OperationResult, PullResponse } from './types';
 import { ApiError, NetworkError, type Transport } from './engine';
 
+export interface EmailOptions {
+  configured: boolean;
+  recipients: { id: string; name: string; email: string; role: string; kind: 'self' | 'hierarchy' }[];
+  parts: { report: boolean; actions: number; notes: number };
+}
 export interface AiProposalResponse {
   id: string; report_id: string; source_text: string; provider: string; model: string;
   proposal: {
@@ -61,6 +66,13 @@ export class ApiClient implements Transport {
   transcribe(visitId: string, audio: Blob | ArrayBuffer, mime: string, language?: string, durationS?: number): Promise<{ text: string; language: string | null; duration_s: number | null }> {
     const q = new URLSearchParams(); if (language) q.set('language', language); if (durationS !== undefined) q.set('duration_s', String(Math.round(durationS)));
     return this.call('POST', `/visits/${visitId}/transcriptions?${q}`, audio, mime.split(';')[0]!.trim() === 'video/webm' ? 'audio/webm' : mime);
+  }
+
+  /** Destinataires possibles (soi-même, hiérarchie) et contenu disponible pour l'e-mail d'une visite. */
+  emailOptions(visitId: string): Promise<EmailOptions> { return this.call('GET', `/visits/${visitId}/email-options`); }
+  /** Envoi par e-mail (par le back) ; nécessite le réseau. */
+  sendVisitEmail(visitId: string, recipientIds: string[], parts: ('report' | 'actions' | 'notes')[], message?: string): Promise<{ sent_to: string[]; parts: string[] }> {
+    return this.call('POST', `/visits/${visitId}/email`, { recipient_ids: recipientIds, parts, ...(message?.trim() ? { message: message.trim() } : {}) });
   }
 
   /** Synthèse par IA des notes d'une visite. Nécessite le réseau ; la proposition n'est enregistrée nulle part côté appareil. */

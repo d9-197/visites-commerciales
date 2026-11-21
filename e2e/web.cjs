@@ -4,6 +4,40 @@
 // Usage : DATABASE_URL=postgres://… BASE_URL=http://127.0.0.1:3000 SHOTS=/dossier node e2e/web.cjs   (Playwright doit être installé)
 const { chromium } = require('playwright');
 const { execFileSync } = require('node:child_process');
+const net = require('node:net');
+
+// Faux serveur SMTP : reçoit les e-mails envoyés par le back (SMTP_HOST=127.0.0.1 SMTP_PORT=2525 côté back) sans rien envoyer pour de vrai.
+const mails = [];
+function startSmtpSink(port) {
+  return new Promise(resolve => {
+    const srv = net.createServer(sock => {
+      let buf = '', data = false, cur = { to: [], raw: '' };
+      const say = l => sock.write(l + '\r\n');
+      say('220 sink ESMTP');
+      sock.on('data', d => {
+        buf += d.toString('utf8');
+        for (;;) {
+          if (data) {
+            const end = buf.indexOf('\r\n.\r\n'); if (end < 0) return;
+            cur.raw = buf.slice(0, end); buf = buf.slice(end + 5); data = false; mails.push(cur); cur = { to: [], raw: '' }; say('250 ok'); continue;
+          }
+          const nl = buf.indexOf('\r\n'); if (nl < 0) return;
+          const line = buf.slice(0, nl); buf = buf.slice(nl + 2);
+          if (/^EHLO|^HELO/i.test(line)) say('250 sink');
+          else if (/^RCPT TO/i.test(line)) { cur.to.push(/<([^>]+)>/.exec(line)[1]); say('250 ok'); }
+          else if (/^DATA/i.test(line)) { data = true; say('354 go'); }
+          else if (/^QUIT/i.test(line)) { say('221 bye'); sock.end(); }
+          else say('250 ok');
+        }
+      });
+      sock.on('error', () => {});
+    }).listen(port, '127.0.0.1', () => resolve(srv));
+  });
+}
+// Décodage du corps (quoted-printable ou base64) pour chercher du texte dans le message reçu.
+const mailText = m => { const raw = m.raw; const qp = raw.replace(/=\r\n/g, '').replace(/=([0-9A-F]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
+  const b64 = [...raw.matchAll(/\r\n\r\n([A-Za-z0-9+\/=\r\n]{40,})/g)].map(x => Buffer.from(x[1].replace(/\s/g, ''), 'base64').toString('utf8')).join('\n');
+  return Buffer.from(qp, 'latin1').toString('utf8') + '\n' + b64; };
 const assert = require('node:assert/strict');
 const BASE = process.env.BASE_URL ?? 'http://127.0.0.1:3000';
 const SHOTS = process.env.SHOTS;
@@ -23,6 +57,7 @@ const borderOf = async (loc) => loc.evaluate(el => getComputedStyle(el.parentEle
 const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width: 390, height: 800 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, permissions: ['microphone'], ...extra });
 
 (async () => {
+  const smtp = await startSmtpSink(2525);
   // Faux micro du navigateur (un signal de test) : la vraie chaîne d'enregistrement et d'envoi est exercée, sans matériel.
   const browser = await chromium.launch({ args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] });
   const ctx = await newPhone(browser);
@@ -249,6 +284,22 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await page.getByRole('button', { name: '‹ Retour' }).click();
   await page.getByText('CR validé', { exact: true }).first().waitFor();
   await page.getByText('2 à faire · 0 terminée').waitFor();
+
+  // Envoi par e-mail : à soi et au manager ; compte rendu, actions, notes durant visite ; jamais les notes internes
+  await page.getByRole('button', { name: '✉ Envoyer par e-mail' }).click();
+  await page.getByText('Moi (commercial1@exemple.invalid)').waitFor();
+  assert.equal(await page.getByRole('checkbox', { name: 'Compte rendu' }).getByText('✓').count(), 1, 'compte rendu validé : proposé par défaut')
+  await page.getByRole('checkbox', { name: /Manager Démo/ }).click();
+  await page.getByLabel('Message de l\'e-mail', { exact: true }).fill('Pour info avant le point d\'équipe');
+  await page.getByRole('button', { name: 'Envoyer', exact: true }).click();
+  await page.getByText(/E-mail envoyé à commercial1@exemple.invalid, manager@exemple.invalid/).waitFor();
+  await shot(page, '3j-email-envoye');
+  await page.getByRole('button', { name: 'Fermer', exact: true }).last().click();
+  assert.equal(mails.length, 1, 'un e-mail reçu par le serveur SMTP');
+  assert.deepEqual(mails[0].to.sort(), ['commercial1@exemple.invalid', 'manager@exemple.invalid']);
+  const body = mailText(mails[0]);
+  for (const t of ['Intéressé par l\'offre B', 'Préparer la démo', 'Dictée relue', 'Pour info avant le point d\'équipe']) assert.ok(body.includes(t), `l'e-mail contient : ${t}`);
+  assert.ok(!body.includes('Budget réel plus élevé'), 'les notes internes ne sont jamais envoyées par e-mail');
   {       // suivi d'équipe : le manager voit les actions en retard de ses commerciaux
     await page.getByRole('button', { name: 'Synchroniser' }).click(); await page.getByText('Synchronisé').waitFor();
     execFileSync('psql', [process.env.DATABASE_URL, '-c', "UPDATE action_item SET due_date = current_date - 3 WHERE title = 'Préparer la démo'"]);
@@ -560,6 +611,6 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await dctx.close();
 
   assert.deepEqual(errors, [], 'aucune erreur JavaScript dans la page');
-  await browser.close();
+  await browser.close(); smtp.close();
   console.log('E2E web : OK');
 })().catch(e => { console.error('E2E web : ÉCHEC\n', e); process.exit(1); });

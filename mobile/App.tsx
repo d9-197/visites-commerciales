@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, BackHandler, Platform, Pressable, SafeAreaView, ScrollView, Switch, Text, TextInput, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { ApiClient, ApiError, NetworkError, SyncEngine, uuidv4, type AiProposalResponse, type Row, type SyncReport } from '@visites/sync-core';
+import { ApiClient, ApiError, type EmailOptions, NetworkError, SyncEngine, uuidv4, type AiProposalResponse, type Row, type SyncReport } from '@visites/sync-core';
 import type { SqliteStore } from '@visites/sync-core';
 import { openStore } from './src/expoDb';
 import { clearSession, loadSession, saveSession, saveTokens, type Session, type ThemePref } from './src/session';
@@ -41,6 +41,14 @@ const voiceErrorMessage = (e: unknown): string => {
   const code = e instanceof ApiError ? e.code : '';
   return ({ ai_unavailable: 'La transcription vocale n\'est pas activée sur ce serveur.', quota_exceeded: 'Plafond mensuel d\'IA atteint.', rate_limited: 'Trop de demandes : réessayez dans une minute.',
     ai_failed: 'Le service de transcription n\'a pas pu répondre. Réessayez.', payload_too_large: 'Enregistrement trop long.', forbidden: 'Seul l\'auteur de la visite peut dicter.' } as Record<string, string>)[code] ?? 'La transcription a échoué. Réessayez.';
+};
+
+const emailErrorMessage = (e: unknown): string => {
+  if (e instanceof NetworkError) return 'Hors-ligne : l\'envoi d\'e-mail demande une connexion.';
+  const code = e instanceof ApiError ? e.code : '';
+  return ({ email_unavailable: 'L\'envoi d\'e-mail n\'est pas configuré sur ce serveur.', email_failed: 'Le serveur de messagerie n\'a pas accepté l\'e-mail. Réessayez plus tard.',
+    rate_limited: 'Trop d\'envois : réessayez plus tard.', report_not_validated: 'Le compte rendu n\'est pas validé : il ne peut pas être envoyé.', forbidden: 'Destinataire non autorisé.' } as Record<string, string>)[code]
+    ?? 'L\'e-mail n\'a pas pu être envoyé.';
 };
 
 type Screen = { name: 'today' } | { name: 'visit'; id: string } | { name: 'report'; id: string } | { name: 'clients' } | { name: 'client'; id: string } | { name: 'actions'; visitId?: string } | { name: 'action'; id: string } | { name: 'settings' };
@@ -401,6 +409,7 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName, offline, open
   const [sheet, setSheet] = useState<'none' | 'date' | 'address' | 'history' | 'nav'>('none');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmEnd, setConfirmEnd] = useState(false);
+  const [emailSheet, setEmailSheet] = useState(false);
   const setDictError = (id: string, msg?: string) => setDictErr(msg ? { id, msg } : undefined);
   const company: Row | undefined = data.companies.find(co => co.id === v?.company_id);
   // L'adresse appartient à la visite : copiée du client à la création, elle ne suit pas ensuite les changements du client.
@@ -495,6 +504,12 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName, offline, open
             <Pill text={reportState.text} color={reportState.color} />
           </View><Text style={s.muted}>›</Text></Pressable>
       : <Text style={s.muted}>Le compte rendu sera disponible une fois la visite commencée.</Text>}
+
+    {v.status !== 'deleted' && <>
+      <Label>Partage</Label>
+      <View style={{ flexDirection: 'row' }}><Btn small title="✉ Envoyer par e-mail" onPress={() => setEmailSheet(true)} /></View>
+    </>}
+    <EmailSheet visible={emailSheet} visitId={visitId} ctx={ctx} offline={offline} onClose={() => setEmailSheet(false)} />
 
     {canDeleteVisit(ctx.role as UserRole, mine) && v.status !== 'deleted' && <>
       <Label>Suppression</Label>
@@ -794,6 +809,59 @@ function VoiceInput({ voice, id, label, accessibilityLabel, value, onChange, pla
       {err && <Text style={s.err}>{err}</Text>}
       <TextInput accessibilityLabel={accessibilityLabel} placeholderTextColor={c.muted} style={[s.input, minHeight ? { minHeight } : null]} value={value} onChangeText={onChange} placeholder={placeholder} multiline={multiline} />
     </View>
+  );
+}
+
+/** Envoi par e-mail d'une visite (par le back) : à soi-même et à sa hiérarchie ; compte rendu validé, actions, notes durant visite. Jamais les notes internes. */
+function EmailSheet({ visible, visitId, ctx, offline, onClose }: { visible: boolean; visitId: string; ctx: Ctx; offline: boolean; onClose: () => void }) {
+  const { s, c } = useTheme();
+  const [opts, setOpts] = useState<EmailOptions>();
+  const [to, setTo] = useState<Set<string>>(new Set());
+  const [parts, setParts] = useState<Set<'report' | 'actions' | 'notes'>>(new Set());
+  const [message, setMessage] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string>();
+  const [done, setDone] = useState<string[]>();
+  useEffect(() => {
+    if (!visible) return;
+    setOpts(undefined); setErr(undefined); setDone(undefined); setMessage('');
+    if (offline) return;
+    ctx.client.emailOptions(visitId).then(o => {
+      setOpts(o); setTo(new Set(o.recipients.filter(r => r.kind === 'self').map(r => r.id)));
+      setParts(new Set([...(o.parts.report ? ['report'] : []), ...(o.parts.actions > 0 ? ['actions'] : []), ...(o.parts.notes > 0 ? ['notes'] : [])] as ('report' | 'actions' | 'notes')[]));
+    }).catch(e => setErr(emailErrorMessage(e)));
+  }, [visible]);
+  const toggle = <T,>(set: Set<T>, setter: (x: Set<T>) => void, k: T) => { const n = new Set(set); if (n.has(k)) n.delete(k); else n.add(k); setter(n); };
+  const Check = ({ on, label, sub, disabled, onPress }: { on: boolean; label: string; sub?: string; disabled?: boolean; onPress: () => void }) => (
+    <Pressable onPress={onPress} disabled={disabled} accessibilityRole="checkbox" accessibilityState={{ checked: on, disabled }} accessibilityLabel={label} style={[s.rowCard, { gap: 10 }, disabled && { opacity: 0.5 }]}>
+      <View style={[s.box, on && { backgroundColor: c.accent, borderColor: c.accent }]}>{on && <Text style={{ color: c.accentInk, fontWeight: '700' }}>✓</Text>}</View>
+      <View style={{ flex: 1 }}><Text style={s.t}>{label}</Text>{sub ? <Text style={s.muted}>{sub}</Text> : null}</View></Pressable>);
+  const send = async () => {
+    setBusy(true); setErr(undefined);
+    try { const r = await ctx.client.sendVisitEmail(visitId, [...to], [...parts], message); setDone(r.sent_to); }
+    catch (e) { setErr(emailErrorMessage(e)); }
+    finally { setBusy(false); }
+  };
+  return (
+    <Sheet title="Envoyer par e-mail" visible={visible} onClose={onClose}>
+      {offline && <Text style={s.err}>Hors-ligne : l'envoi d'e-mail demande une connexion.</Text>}
+      {!offline && !opts && !err && <ActivityIndicator />}
+      {err && <Text style={s.err}>{err}</Text>}
+      {done && <Text style={[s.t, { color: c.ok }]} accessibilityRole="alert">E-mail envoyé à {done.join(', ')}.</Text>}
+      {opts && !opts.configured && <Text style={s.err}>L'envoi d'e-mail n'est pas configuré sur ce serveur.</Text>}
+      {opts && opts.configured && !done && <>
+        <Label>Destinataires (vous et votre hiérarchie)</Label>
+        {opts.recipients.map(r => <Check key={r.id} on={to.has(r.id)} label={r.kind === 'self' ? `Moi (${r.email})` : `${r.name} (${r.email})`} sub={r.kind === 'self' ? undefined : r.role} onPress={() => toggle(to, setTo, r.id)} />)}
+        <Label>Contenu</Label>
+        <Check on={parts.has('report')} label="Compte rendu" sub={opts.parts.report ? undefined : 'Non validé : indisponible'} disabled={!opts.parts.report} onPress={() => toggle(parts, setParts, 'report')} />
+        <Check on={parts.has('actions')} label="Actions" sub={opts.parts.actions ? `${opts.parts.actions} action${opts.parts.actions > 1 ? 's' : ''}` : 'Aucune action'} disabled={opts.parts.actions === 0} onPress={() => toggle(parts, setParts, 'actions')} />
+        <Check on={parts.has('notes')} label="Notes durant visite" sub={opts.parts.notes ? `${opts.parts.notes} note${opts.parts.notes > 1 ? 's' : ''}` : 'Aucune note'} disabled={opts.parts.notes === 0} onPress={() => toggle(parts, setParts, 'notes')} />
+        <Text style={s.muted}>Les notes internes ne sont jamais envoyées. L'e-mail n'est pas envoyé au client.</Text>
+        <VoiceInput voice={{ ctx, visitId, offline }} id="email-message" label="Message (facultatif)" accessibilityLabel="Message de l'e-mail" value={message} onChange={setMessage} multiline minHeight={70} />
+        <Btn title={busy ? 'Envoi…' : 'Envoyer'} disabled={busy || to.size === 0 || parts.size === 0} onPress={() => void send()} />
+      </>}
+      <Btn small title={done ? 'Fermer' : 'Annuler'} onPress={onClose} />
+    </Sheet>
   );
 }
 

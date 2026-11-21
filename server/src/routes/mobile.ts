@@ -8,13 +8,15 @@ import { requireAuth, signAccess, verifyPassword, sha256, randomToken, versionLt
 import { pull } from '../sync/pull.js';
 import { push, pushSchema } from '../sync/push.js';
 import { AiError, type AiServices } from '../ai/index.js';
+import type { MailService } from '../mail/index.js';
+import { composeVisitEmail } from '../mail/compose.js';
 
 const loginSchema = z.object({
   email: z.string().email(), password: z.string().min(1),
   device: z.object({ device_id: z.string().uuid().optional(), platform: z.enum(['ios', 'android', 'web']), os_version: z.string().optional(), app_version: z.string() }),
 });
 
-export function mobileRouter(pool: Pool, cfg: Config, ai?: AiServices) {
+export function mobileRouter(pool: Pool, cfg: Config, ai?: AiServices, mail?: MailService) {
   const r = express.Router();
   const aiCalls = new Map<string, number[]>();      // limitation de débit de l'IA, par utilisateur (en mémoire : une seule instance du back)
   const auth = requireAuth(pool, cfg, { checkVersion: true });
@@ -208,6 +210,75 @@ export function mobileRouter(pool: Pool, cfg: Config, ai?: AiServices) {
       `INSERT INTO ai_usage(user_id, kind, provider, model, audio_seconds, cost_cents) VALUES ($1,'transcription',$2,$3,$4,$5)`,
       [userId, result.provider, result.model, seconds, costCents]);
     res.json({ text: result.text, language: result.language, duration_s: seconds });
+  }));
+
+  /**
+   * E-mail d'une visite : destinataires = l'utilisateur lui-même et sa hiérarchie (supérieurs), jamais le client.
+   * Contenu au choix : compte rendu (validé seulement), actions, notes durant visite. Les notes internes et privées ne sont jamais envoyées.
+   */
+  async function emailContext(userId: string, visitId: string) {
+    const v = (await pool.query(`SELECT v.*, c.name AS company_name FROM visit v JOIN company c ON c.id = v.company_id WHERE v.id = $1`, [visitId])).rows[0];
+    const readable = v && (await pool.query(`SELECT can_read_visit($1,$2) AS ok`, [userId, visitId])).rows[0].ok;
+    if (!v || !readable || v.deleted_at) throw new HttpError(404, 'not_found', 'Visite inconnue');
+    const me = (await pool.query(`SELECT id, email, display_name, role FROM app_user WHERE id = $1`, [userId])).rows[0];
+    const chain = (await pool.query(
+      `SELECT u.id, u.email, u.display_name, u.role FROM user_hierarchy h JOIN app_user u ON u.id = h.ancestor_id
+       WHERE h.descendant_id = $1 AND h.ancestor_id <> $1 AND u.status = 'active' ORDER BY h.depth`, [userId])).rows;
+    return { v, me, chain };
+  }
+
+  r.get('/visits/:id/email-options', auth, wrap(async (req, res) => {
+    const { v, me, chain } = await emailContext(req.auth!.id, req.params.id);
+    const report = (await pool.query(`SELECT 1 FROM visit_report WHERE visit_id = $1 AND status = 'validated'`, [v.id])).rows[0];
+    const actions = (await pool.query(`SELECT count(*)::int AS n FROM action_item WHERE visit_id = $1 AND status <> 'cancelled'`, [v.id])).rows[0].n;
+    const notes = (await pool.query(`SELECT count(*)::int AS n FROM visit_note WHERE visit_id = $1 AND deleted_at IS NULL AND coalesce(body, '') <> ''`, [v.id])).rows[0].n;
+    res.json({
+      configured: !!mail,
+      recipients: [{ id: me.id, name: me.display_name, email: me.email, role: me.role, kind: 'self' }, ...chain.map(u => ({ id: u.id, name: u.display_name, email: u.email, role: u.role, kind: 'hierarchy' }))],
+      parts: { report: !!report, actions, notes },
+    });
+  }));
+
+  r.post('/visits/:id/email', auth, wrap(async (req, res) => {
+    const body = z.object({
+      recipient_ids: z.array(z.string().uuid()).min(1).max(10), parts: z.array(z.enum(['report', 'actions', 'notes'])).min(1),
+      message: z.string().max(2000).optional(),
+    }).safeParse(req.body);
+    if (!body.success) throw new HttpError(400, 'validation_failed', 'Destinataires et contenu requis');
+    if (!mail) throw new HttpError(503, 'email_unavailable', "L'envoi d'e-mail n'est pas configuré");
+    const userId = req.auth!.id;
+    const { v, me, chain } = await emailContext(userId, req.params.id);
+    const allowed = new Map([[me.id, me], ...chain.map(u => [u.id, u] as const)]);
+    const recipients = [...new Set(body.data.recipient_ids)].map(id => allowed.get(id));
+    if (recipients.some(x => !x)) throw new HttpError(403, 'forbidden', 'Destinataire non autorisé : vous-même ou votre hiérarchie seulement');
+    const parts = [...new Set(body.data.parts)];
+
+    const limit = Number(process.env.EMAIL_RATE_PER_HOUR ?? 20);
+    const sent = (await pool.query(`SELECT count(*)::int AS n FROM visit_email WHERE sender_id = $1 AND created_at > now() - interval '1 hour'`, [userId])).rows[0].n;
+    if (sent >= limit) throw new HttpError(429, 'rate_limited', "Trop d'envois, réessayez plus tard");
+
+    const input: Parameters<typeof composeVisitEmail>[0] = {
+      company: v.company_name, plannedStart: v.planned_start?.toISOString() ?? null, startedAt: v.started_at?.toISOString() ?? null, endedAt: v.ended_at?.toISOString() ?? null,
+      location: v.location_text, senderName: me.display_name, message: body.data.message,
+    };
+    if (parts.includes('report')) {
+      const rep = (await pool.query(`SELECT summary, needs, objections, competitors, decisions, next_step, opportunity_temperature FROM visit_report WHERE visit_id = $1 AND status = 'validated'`, [v.id])).rows[0];
+      if (!rep) throw new HttpError(409, 'report_not_validated', "Le compte rendu n'est pas validé : il ne peut pas être envoyé");
+      input.report = rep;
+    }
+    if (parts.includes('actions')) input.actions = (await pool.query(`SELECT title, due_date::text AS due_date, status FROM action_item WHERE visit_id = $1 AND status <> 'cancelled' ORDER BY due_date NULLS LAST, created_at`, [v.id])).rows;
+    if (parts.includes('notes')) input.notes = (await pool.query(`SELECT body FROM visit_note WHERE visit_id = $1 AND deleted_at IS NULL AND coalesce(body, '') <> '' ORDER BY noted_at, created_at`, [v.id])).rows;
+
+    const to = recipients.map(x => x!.email as string);
+    const msg = composeVisitEmail(input);
+    try { await mail.send({ to, replyTo: me.email, ...msg }); }
+    catch (e) {
+      await pool.query(`INSERT INTO visit_email(visit_id, sender_id, recipients, parts, status, error) VALUES ($1,$2,$3,$4,'failed',$5)`, [v.id, userId, to, parts, String((e as Error).message).slice(0, 300)]);
+      console.error(`[email] envoi refusé : ${String((e as Error).message).slice(0, 200)}`);
+      throw new HttpError(502, 'email_failed', "L'e-mail n'a pas pu être envoyé");
+    }
+    await pool.query(`INSERT INTO visit_email(visit_id, sender_id, recipients, parts, status) VALUES ($1,$2,$3,$4,'sent')`, [v.id, userId, to, parts]);
+    res.json({ sent_to: to, parts });
   }));
 
   return r;

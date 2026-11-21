@@ -331,7 +331,7 @@ test('migration : une base existante reçoit le statut « organisée » et l\'hi
     await pool.query(`INSERT INTO visit(id, company_id, author_id, location_text) VALUES ($1,$2,$3,'ancienne')`, [uuid(), co, u]);
     await assert.rejects(pool.query(`UPDATE visit SET status = 'organized'`), /visit_status_check/);
 
-    assert.deepEqual(await migrate(pool), ['001_visite_organisee_et_historique.sql', '002_visite_validee.sql', '003_notes_internes.sql', '004_actions_depuis_compte_rendu.sql', '005_visite_supprimee.sql', '006_regles_compte_rendu.sql']);
+    assert.deepEqual(await migrate(pool), ['001_visite_organisee_et_historique.sql', '002_visite_validee.sql', '003_notes_internes.sql', '004_actions_depuis_compte_rendu.sql', '005_visite_supprimee.sql', '006_regles_compte_rendu.sql', '007_envoi_email.sql']);
     await pool.query(`UPDATE visit SET status = 'organized'`);                    // maintenant accepté
     assert.equal((await pool.query(`SELECT count(*)::int n FROM visit WHERE location_text = 'ancienne'`)).rows[0].n, 1, 'données conservées');
     assert.equal((await pool.query(`SELECT count(*)::int n FROM visit_history`)).rows[0].n, 0);

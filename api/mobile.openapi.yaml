@@ -262,6 +262,76 @@ paths:
             image/jpeg: {schema: {type: string, format: binary}}
             image/png: {schema: {type: string, format: binary}}
         '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+  /visits/{visit_id}/email-options:
+    get:
+      tags: [Partage]
+      summary: Destinataires et contenu possibles pour l'e-mail d'une visite
+      description: "Destinataires : l'utilisateur lui-même et ses supérieurs hiérarchiques (jamais le client, jamais un collègue). `parts` : compte rendu validé disponible (booléen), nombre d'actions (hors annulées), nombre de notes durant visite. `configured` : faux si le back n'a pas de SMTP."
+      parameters:
+        - {name: visit_id, in: path, required: true, schema: {$ref: 'common.yaml#/components/schemas/Uuid'}}
+      responses:
+        '200':
+          description: Options.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [configured, recipients, parts]
+                properties:
+                  configured: {type: boolean}
+                  recipients:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, name, email, role, kind]
+                      properties:
+                        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+                        name: {type: string}
+                        email: {type: string}
+                        role: {type: string}
+                        kind: {type: string, enum: [self, hierarchy]}
+                  parts:
+                    type: object
+                    properties:
+                      report: {type: boolean}
+                      actions: {type: integer}
+                      notes: {type: integer}
+        '404': {description: Visite inconnue ou non visible.}
+  /visits/{visit_id}/email:
+    post:
+      tags: [Partage]
+      summary: Envoyer une visite par e-mail (SMTP du back)
+      description: "Contenu au choix : `report` (compte rendu **validé** seulement, sinon 409 `report_not_validated`), `actions`, `notes` (notes durant visite). Les notes internes et privées ne sont jamais envoyées. Destinataire hors « soi-même et supérieurs » : 403. Sans SMTP : 503 `email_unavailable`. Échec du serveur de messagerie : 502 `email_failed` (détail technique non exposé). Limite par utilisateur et par heure (`EMAIL_RATE_PER_HOUR`, 20 par défaut) : 429. Chaque envoi est journalisé (qui, à qui, quelles parties, résultat ; pas le contenu). Ne renseigne pas `sent_to_client_at` : l'envoi n'est pas fait au client."
+      parameters:
+        - {name: visit_id, in: path, required: true, schema: {$ref: 'common.yaml#/components/schemas/Uuid'}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [recipient_ids, parts]
+              properties:
+                recipient_ids: {type: array, minItems: 1, maxItems: 10, items: {$ref: 'common.yaml#/components/schemas/Uuid'}}
+                parts: {type: array, minItems: 1, items: {type: string, enum: [report, actions, notes]}}
+                message: {type: string, maxLength: 2000}
+      responses:
+        '200':
+          description: Envoyé.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sent_to: {type: array, items: {type: string}}
+                  parts: {type: array, items: {type: string}}
+        '400': {description: Corps invalide.}
+        '403': {description: Destinataire non autorisé.}
+        '404': {description: Visite inconnue ou non visible.}
+        '409': {description: Compte rendu non validé.}
+        '429': {description: Trop d'envois.}
+        '502': {description: Le serveur de messagerie a refusé l'envoi.}
+        '503': {description: SMTP non configuré.}
   /visits/{visit_id}/transcriptions:
     post:
       tags: [IA et qualité]

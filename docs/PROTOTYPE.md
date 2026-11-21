@@ -14,7 +14,7 @@ Branche `ccr-bf3049f2-b95bh3`. Objectif : éprouver la synchro hors-ligne, les d
 
 ## 2. Résultats vérifiés
 
-**110 tests automatisés passent** (`npm test`), sur un vrai PostgreSQL 16 : un serveur HTTP réel, des clients HTTP réels, une base neuve par fichier de test.
+**114 tests automatisés passent** (`npm test`), sur un vrai PostgreSQL 16 : un serveur HTTP réel, des clients HTTP réels, une base neuve par fichier de test.
 
 | Scénario (`PHASE0_PLAN_COMPLET.md` §5) | Résultat |
 |---|---|

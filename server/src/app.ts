@@ -8,6 +8,7 @@ import { mobileRouter } from './routes/mobile.js';
 import { crmRouter } from './routes/crm.js';
 import { adminRouter } from './routes/admin.js';
 import type { AiServices } from './ai/index.js';
+import type { MailService } from './mail/index.js';
 
 /** Normalise BASE_PATH (« visit », « /visit/ » -> « /visit ») ; vide pour une application à la racine. Refuse les caractères inattendus. */
 export function normalizeBasePath(raw?: string): string {
@@ -30,14 +31,14 @@ export function renderIndex(html: string, basePath: string): string {
     .replace('</head>', `<script>window.__BASE_PATH__=${JSON.stringify(basePath)};</script></head>`);
 }
 
-export function createApp(pool: Pool, cfg: Config = defaultConfig, opts: { webDir?: string; ai?: AiServices; basePath?: string } = {}) {
+export function createApp(pool: Pool, cfg: Config = defaultConfig, opts: { webDir?: string; ai?: AiServices; mail?: MailService; basePath?: string } = {}) {
   const app = express();
   app.disable('x-powered-by');
   const basePath = normalizeBasePath(opts.basePath);
 
   const routes = express.Router();
   routes.use(express.json({ limit: '5mb' }));
-  routes.use('/api/mobile/v1', mobileRouter(pool, cfg, opts.ai));
+  routes.use('/api/mobile/v1', mobileRouter(pool, cfg, opts.ai, opts.mail));
   routes.use('/api/crm/v1', crmRouter(pool, cfg));
   routes.use('/api/admin/v1', adminRouter(pool, cfg));
   // Application web (même origine que l'API : pas de CORS). Les routes /api/* inconnues restent en 404 JSON.

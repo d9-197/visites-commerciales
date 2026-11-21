@@ -27,6 +27,14 @@ services:
       MISTRAL_PRICE_TRANSCRIBE_EUR_PER_MIN: ${MISTRAL_PRICE_TRANSCRIBE_EUR_PER_MIN:-}
       MISTRAL_PRICE_IN_EUR_PER_M: ${MISTRAL_PRICE_IN_EUR_PER_M:-}
       MISTRAL_PRICE_OUT_EUR_PER_M: ${MISTRAL_PRICE_OUT_EUR_PER_M:-}
+      # Envoi d'e-mail des visites (facultatif) : sans SMTP_HOST et SMTP_FROM, la fonction est désactivée.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_SECURE: ${SMTP_SECURE:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      EMAIL_RATE_PER_HOUR: ${EMAIL_RATE_PER_HOUR:-}
       PORT: "3000"
       # Application servie sous un sous-chemin du domaine (https://exemple.fr/visit) : BASE_PATH=/visit. Vide : à la racine.
       BASE_PATH: ${BASE_PATH:-}
