@@ -3,6 +3,7 @@ import { api, download, type R } from '../api';
 import type { Me } from '../App';
 import { Alert, Badge, BranchSelect, Card, Empty, Loading, useLoad, errMsg } from '../ui';
 import { fmtDate, isoDay } from '../format';
+import { CollapseAll, TreeCell, levelName, useCollapsed, useTree, visibleIndexes } from '../tree';
 
 const PRESETS: [string, number][] = [['7 jours', 7], ['30 jours', 30], ['90 jours', 90], ['12 mois', 365]];
 
@@ -17,6 +18,11 @@ export function Reporting({ me }: { me: Me }) {
   const preset = (n: number) => { setFrom(isoDay(-(n - 1))); setTo(isoDay()); };
   const t = data?.totals; const c = data?.clients;
   const multi = (users.data?.users?.length ?? 0) > 1;
+  // Par branche : même arbre que dans Organisation (niveaux colorés, branches repliables) ; les totaux sont déjà consolidés.
+  const byNode: R[] = (data?.by_node ?? []).map((n: R) => ({ ...n, id: n.node_id }));
+  const treeInfo = useTree(byNode as any);
+  const [collapsed, setCollapsed] = useCollapsed('vb.report.collapsed');
+  const shown = visibleIndexes(byNode as any, collapsed);
   return (
     <>
       <header className="page-head">
@@ -49,11 +55,18 @@ export function Reporting({ me }: { me: Me }) {
               </tbody></table>)}
           </Card>
         </div>
-        {data.by_node.length > 1 && <Card title="Par branche (consolidé avec les sous-branches)">
-          <div className="scroll"><table className="num"><thead><tr><th>Branche</th><th>Membres</th><th>Prévues</th><th>Effectuées</th><th>Annulées</th><th>CR validés</th><th>CR à valider</th><th>CR en retard</th></tr></thead><tbody>
-            {data.by_node.map((n: R) => <tr key={n.node_id}><td style={{ paddingLeft: 10 + Math.max(0, n.depth - Math.min(...data.by_node.map((x: R) => x.depth))) * 18 }}><button className="link" onClick={() => setNode(n.node_id)}>{n.name}</button></td><td>{n.members}</td><td>{n.planned}</td><td>{n.done}</td><td>{n.cancelled}</td><td>{n.cr_validated}</td><td>{n.cr_pending}</td><td className={n.cr_late ? 'red' : ''}>{n.cr_late}</td></tr>)}
+        {byNode.length > 1 && <Card title="Par branche (consolidé avec les sous-branches)" actions={<CollapseAll nodes={byNode as any} infos={treeInfo} collapsed={collapsed} set={setCollapsed} />}>
+          <div className="scroll"><table className="num tree"><thead><tr><th>Branche</th><th>Niveau</th><th>Membres</th><th>Prévues</th><th>Effectuées</th><th>Annulées</th><th>CR validés</th><th>CR à valider</th><th>CR en retard</th></tr></thead><tbody>
+            {shown.map(i => { const n = byNode[i]!; const f = treeInfo[i]!; const closed = f.subs > 0 && collapsed.has(n.id); return (
+              <tr key={n.id} className={`lv lv${Math.min(f.rel, 5)}`}>
+                <td className="treecell"><TreeCell rel={f.rel} info={f} name={n.name} open={f.subs > 0 && !closed} closed={closed} onToggle={() => { const c = new Set(collapsed); if (c.has(n.id)) c.delete(n.id); else c.add(n.id); setCollapsed(c); }}>
+                  <button type="button" className="link nodename" onClick={() => setNode(n.node_id)} title="Descendre dans cette branche">{n.name}</button>
+                  {closed && <span className="badge grey" title={`${f.subs} sous-branche${f.subs > 1 ? 's' : ''} repliée${f.subs > 1 ? 's' : ''} (comprises dans les totaux)`}>+{f.subs}</span>}
+                </TreeCell></td>
+                <td style={{ textAlign: 'left' }}><span className={`lvtag lv${Math.min(f.rel, 5)}`}>{levelName(f.rel)}</span></td>
+                <td>{n.members}</td><td>{n.planned}</td><td>{n.done}</td><td>{n.cancelled}</td><td>{n.cr_validated}</td><td>{n.cr_pending}</td><td className={n.cr_late ? 'red' : ''}>{n.cr_late}</td></tr>); })}
           </tbody></table></div>
-          <p className="muted">Chaque ligne cumule les visites de la branche et de ses sous-branches ; cliquez sur une branche pour descendre dedans.</p>
+          <p className="muted">Chaque ligne cumule les visites de la branche et de ses sous-branches, y compris quand elles sont repliées ; cliquez sur le nom d'une branche pour descendre dedans.</p>
         </Card>}
         <Card title="Par commercial">
           {data.by_user.length === 0 ? <Empty>Aucun commercial dans votre périmètre.</Empty> : (

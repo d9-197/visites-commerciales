@@ -142,6 +142,17 @@ const dialog = page => page.getByRole('dialog');
   await rowOf('Équipe Nord').waitFor();
   await nav(page, 'Comptes');
   await page.getByRole('row', { name: /Commercial Deux/ }).getByRole('button', { name: 'Modifier' }).click();
+  // sélecteur de branches : arbre avec niveaux, repli, récapitulatif des choix
+  await dialog(page).getByRole('checkbox', { name: 'Équipe Nord' }).waitFor();
+  assert.equal(await dialog(page).getByRole('checkbox', { name: 'Agence Lyon' }).isChecked(), true, 'branche actuelle cochée');
+  await dialog(page).getByLabel('Branches choisies').getByText('Agence Lyon').waitFor();
+  await shot(page, 'b2d-compte-branches');
+  await dialog(page).getByRole('checkbox', { name: 'Équipe Nord' }).check();
+  await dialog(page).getByRole('button', { name: 'Replier la branche Agence Lyon' }).click();
+  await dialog(page).getByRole('checkbox', { name: 'Équipe Nord' }).waitFor({ state: 'detached' });
+  await dialog(page).getByText(/^\+1 · 1 cochée$/).waitFor();                 // le repli signale les choix qu'il masque
+  await dialog(page).getByRole('button', { name: 'Déplier la branche Agence Lyon' }).click();
+  await dialog(page).getByRole('checkbox', { name: 'Équipe Nord' }).uncheck();
   await dialog(page).getByRole('checkbox', { name: 'Agence Grenoble' }).check();
   await dialog(page).getByRole('button', { name: 'Enregistrer', exact: true }).click();
   await page.getByRole('row', { name: /Commercial Deux/ }).getByText('Agence Grenoble').waitFor();
@@ -224,6 +235,10 @@ const dialog = page => page.getByRole('dialog');
   await page.getByRole('heading', { name: 'Par commercial' }).waitFor();
   await page.getByRole('heading', { name: /Par branche/ }).waitFor();                 // consolidation par branche
   await page.getByRole('button', { name: 'Agence Grenoble' }).first().waitFor();
+  await page.getByRole('button', { name: 'Replier la branche Agence Lyon' }).click();            // repli aussi dans le reporting par branche
+  await page.getByRole('row').filter({ hasText: 'Équipe Nord' }).waitFor({ state: 'detached' });
+  await page.getByRole('button', { name: 'Déplier la branche Agence Lyon' }).click();
+  await page.getByRole('row').filter({ hasText: 'Équipe Nord' }).waitFor();
   const dl = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Exporter en CSV' }).click();
   const file = await dl; assert.match(file.suggestedFilename(), /^activite-\d{4}-\d{2}-\d{2}-\d{4}-\d{2}-\d{2}\.csv$/);

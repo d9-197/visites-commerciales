@@ -105,3 +105,16 @@ table.tree td.treecell { padding: 0 10px 0 14px; }
 tr.lv0 .nodename { font-size: 16px; } tr.lv1 .nodename { font-size: 15px; }
 .lvtag { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; color: var(--lvc); border: 1px solid var(--lvc); white-space: nowrap; }
 table.tree td.treecell { min-width: 300px; } .treerow .nodename { white-space: nowrap; }
+
+/* Sélecteur de branches d'un compte */
+.picker { display: flex; flex-direction: column; }
+.picked-chips { display: flex; flex-wrap: wrap; gap: 6px; min-height: 28px; align-items: center; }
+.chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-weight: 600; font-size: 13px; }
+.chip button { border: 0; background: none; padding: 0 6px; font-size: 15px; color: inherit; line-height: 1; }
+.treelist { border: 1px solid var(--line); border-radius: 10px; overflow: auto; max-height: 300px; }
+.trow { box-shadow: inset 5px 0 0 var(--lvc); background: color-mix(in srgb, var(--lvc) 5%, transparent); border-bottom: 1px solid var(--line); padding-left: 10px; }
+.trow.lv0 { background: color-mix(in srgb, var(--lvc) 10%, transparent); } .trow:last-child { border-bottom: 0; }
+.trow.on { background: color-mix(in srgb, var(--lvc) 20%, transparent); }
+.trow .treerow { min-height: 40px; align-items: stretch; }
+.trow .pick { display: flex; align-items: center; gap: 8px; align-self: center; margin-right: 8px; cursor: pointer; }
+.trow .lvtag { align-self: center; margin-right: 8px; font-size: 11px; } .trow .badge { align-self: center; }
