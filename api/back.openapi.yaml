@@ -1,0 +1,998 @@
+openapi: 3.1.0
+info:
+  title: API de l'application back (PC) — Visites commerciales
+  version: 0.1.0
+  description: |
+    API de l'application web pour ordinateur (servie sur `/admin/`). Elle sert au reporting, à la préparation des visites, à la consultation des visites,
+    à l'administration des comptes et à la **maquette du CRM** (clients, contacts, affectations, import CSV).
+
+    **Authentification** : le jeton d'accès de l'API mobile (`POST /api/mobile/v1/auth/login` avec la plateforme `web`, puis `/auth/refresh`). Aucun jeton propre à cette API.
+
+    **Périmètre** (sauf indication contraire) : un commercial voit ce qui le concerne ; un manager ou un directeur, lui-même et ses subordonnés (hiérarchie) ;
+    un administrateur, tout. Une ressource hors périmètre renvoie 404, jamais 403. Pour la lecture des visites et des comptes rendus, les règles de visibilité
+    (mode 1 ou 2) s'appliquent en plus, sauf à l'administrateur. **Les notes internes et privées ne sont jamais exposées.**
+
+    **Dates** : horodatages en ISO 8601 UTC ; jours `AAAA-MM-JJ` interprétés en UTC pour le reporting.
+
+    **Erreurs** : `application/problem+json` (voir `common.yaml#/components/schemas/Problem`). Les champs supplémentaires d'une erreur (ex. `errors`, `warnings`,
+    `visits_becoming_visible`) sont à la racine du corps.
+
+    Comportement détaillé et limites : `docs/BACK_OFFICE.md`. Brouillon, vérifié par `server/test/back.test.ts`.
+servers:
+  - url: https://{host}/api/back/v1
+    variables:
+      host: {default: visites.example.invalid}
+security:
+  - bearer: []
+tags:
+  - {name: Session, description: Utilisateur connecté.}
+  - {name: Reporting, description: Indicateurs d'activité dans le périmètre.}
+  - {name: Préparation, description: "Clients à visiter, fiche de préparation, planification."}
+  - {name: Visites, description: "Consultation des visites, comptes rendus et actions."}
+  - {name: Comptes, description: Administrateurs seulement.}
+  - {name: Réglages, description: Administrateurs seulement.}
+  - {name: Maquette CRM, description: "Administrateurs seulement. Mêmes tables que l'import du vrai CRM."}
+paths:
+  /me:
+    get:
+      tags: [Session]
+      summary: Utilisateur connecté
+      responses:
+        '200': {description: Profil., content: {application/json: {schema: {$ref: '#/components/schemas/Me'}}}}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+
+  /reports/activity:
+    get:
+      tags: [Reporting]
+      summary: Reporting d'activité
+      description: |
+        Date de référence d'une visite : fin du rendez-vous, sinon début, sinon date prévue ; les visites supprimées sont exclues.
+        « Effectuées » = `done` + `validated`. Un compte rendu est « en retard » 2 jours après la fin du rendez-vous. Les actions « à faire » et « en retard » sont comptées toutes périodes ;
+        « terminées » sur la période. Sans `to`, aujourd'hui ; sans `from`, 29 jours avant `to`. Période : 800 jours au plus.
+      parameters:
+        - {$ref: '#/components/parameters/From'}
+        - {$ref: '#/components/parameters/To'}
+        - {name: user_id, in: query, schema: {$ref: 'common.yaml#/components/schemas/Uuid'}, description: Limiter à un commercial du périmètre (sinon 404).}
+      responses:
+        '200': {description: Rapport., content: {application/json: {schema: {$ref: '#/components/schemas/ActivityReport'}}}}
+        '400': {$ref: 'common.yaml#/components/responses/BadRequest'}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+  /reports/activity.csv:
+    get:
+      tags: [Reporting]
+      summary: Reporting d'activité par commercial, en CSV
+      description: "Mêmes paramètres que `/reports/activity`. Séparateur « ; », UTF-8 avec BOM (Excel). Les cellules qui commencent par `=`, `+`, `-` ou `@` sont préfixées d'une apostrophe (injection de formule)."
+      parameters:
+        - {$ref: '#/components/parameters/From'}
+        - {$ref: '#/components/parameters/To'}
+        - {name: user_id, in: query, schema: {$ref: 'common.yaml#/components/schemas/Uuid'}}
+      responses:
+        '200':
+          description: "Fichier CSV (`Content-Disposition: attachment`)."
+          content: {text/csv: {schema: {type: string}}}
+        '400': {$ref: 'common.yaml#/components/responses/BadRequest'}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+
+  /prep/commerciaux:
+    get:
+      tags: [Préparation]
+      summary: Commerciaux actifs du périmètre
+      parameters:
+        - {name: company_id, in: query, schema: {$ref: 'common.yaml#/components/schemas/Uuid'}, description: "Renseigne `assigned` (client affecté au commercial) et trie les commerciaux affectés en premier."}
+      responses:
+        '200':
+          description: Commerciaux.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [users]
+                properties:
+                  users:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, name, email, assigned]
+                      properties:
+                        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+                        name: {type: string}
+                        email: {type: string}
+                        assigned: {type: boolean}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+  /prep/companies:
+    get:
+      tags: [Préparation]
+      summary: Rechercher un client accessible
+      description: "Clients actifs affectés à au moins un utilisateur du périmètre (administrateur : tous les clients affectés). 30 résultats au plus."
+      parameters:
+        - {name: q, in: query, schema: {type: string}, description: Nom ou ville.}
+      responses:
+        '200':
+          description: Clients.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [companies]
+                properties:
+                  companies:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+                        name: {type: string}
+                        city: {type: [string, 'null']}
+                        sector: {type: [string, 'null']}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+  /prep/suggestions:
+    get:
+      tags: [Préparation]
+      summary: Clients à visiter
+      description: |
+        Clients actifs affectés au périmètre, avec au moins un motif : `never_visited`, `stale` (dernière visite il y a `days` jours ou plus), `late_actions`,
+        `hot_no_followup` (dernier compte rendu validé « chaude » sans visite à venir). Classés par `score` décroissant, 200 au plus. Une visite « effectuée » est
+        une visite `done`, `validated` ou `in_progress`. Par défaut, un client qui a déjà une visite à venir (à organiser ou organisée) n'est pas proposé.
+      parameters:
+        - {name: days, in: query, schema: {type: integer, minimum: 7, maximum: 730, default: 60}}
+        - {name: user_id, in: query, schema: {$ref: 'common.yaml#/components/schemas/Uuid'}}
+        - {name: include_planned, in: query, schema: {type: boolean, default: false}}
+      responses:
+        '200':
+          description: Suggestions.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [days, suggestions]
+                properties:
+                  days: {type: integer}
+                  suggestions: {type: array, items: {$ref: '#/components/schemas/Suggestion'}}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+  /prep/companies/{id}:
+    get:
+      tags: [Préparation]
+      summary: Fiche de préparation d'un client
+      description: "Client, contacts, commerciaux, 12 dernières visites (le compte rendu validé n'est joint que si l'appelant peut lire la visite, sinon `report_hidden`), actions ouvertes et points à aborder déduits (prochaine étape, objections, décisions du dernier compte rendu lisible, jusqu'à 8 actions ouvertes). Client hors périmètre : 404."
+      parameters:
+        - {$ref: '#/components/parameters/Id'}
+      responses:
+        '200': {description: Fiche., content: {application/json: {schema: {$ref: '#/components/schemas/PrepCompany'}}}}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+  /prep/visits:
+    get:
+      tags: [Préparation]
+      summary: Planning des visites à venir
+      description: "Visites « à organiser » ou « organisées » du périmètre, par date prévue (les non planifiées d'abord). Sans `from`, aujourd'hui ; sans `to`, 60 jours. 500 au plus."
+      parameters:
+        - {$ref: '#/components/parameters/From'}
+        - {$ref: '#/components/parameters/To'}
+        - {name: user_id, in: query, schema: {$ref: 'common.yaml#/components/schemas/Uuid'}}
+      responses:
+        '200':
+          description: Visites.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [visits]
+                properties:
+                  visits: {type: array, items: {$ref: '#/components/schemas/PlanningVisit'}}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+    post:
+      tags: [Préparation]
+      summary: Planifier une visite pour un commercial
+      description: |
+        Crée une visite « à organiser » **au nom du commercial** (`author_id`), `created_by` = l'appelant ; elle arrive dans l'application mobile à la synchronisation suivante.
+        Le commercial doit être dans le périmètre de l'appelant (un commercial ne planifie que pour lui-même), actif, et le client lui être affecté.
+        Sans `location_text`, l'adresse du client est utilisée.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/PlanVisit'}}}
+      responses:
+        '201': {description: Visite créée., content: {application/json: {schema: {$ref: '#/components/schemas/IdOnly'}}}}
+        '400': {$ref: 'common.yaml#/components/responses/BadRequest'}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '403': {description: "Commercial hors de votre périmètre (forbidden).", content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+        '409': {description: "`invalid_author` (pas un commercial actif) ou `not_assigned` (client non affecté à ce commercial).", content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}}
+  /prep/visits/{id}:
+    patch:
+      tags: [Préparation]
+      summary: Modifier une visite à organiser ou organisée
+      description: |
+        Date prévue, adresse, objectif, points à aborder, et passage à `planned`, `organized` ou `cancelled`. Réservé aux visites « à organiser » ou « organisées » dont l'auteur est dans le périmètre.
+        Les changements de date et d'adresse sont inscrits dans l'historique de la visite avec le nom de l'appelant. Aucune détection de conflit avec l'application mobile : la dernière écriture l'emporte.
+      parameters:
+        - {$ref: '#/components/parameters/Id'}
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/PatchPlannedVisit'}}}
+      responses:
+        '200': {description: Modifiée., content: {application/json: {schema: {$ref: '#/components/schemas/IdOnly'}}}}
+        '400': {$ref: 'common.yaml#/components/responses/BadRequest'}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+        '409': {description: "`locked_status` : la visite est commencée, terminée, annulée ou supprimée.", content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}}
+
+  /visits:
+    get:
+      tags: [Visites]
+      summary: Lister les visites
+      description: "Visites du périmètre lisibles par l'appelant, de la plus récente à la plus ancienne. Les visites supprimées ne sont listées que si `status=deleted`."
+      parameters:
+        - {name: q, in: query, schema: {type: string}, description: Nom du client.}
+        - {name: status, in: query, schema: {$ref: 'common.yaml#/components/schemas/VisitStatus'}}
+        - {name: user_id, in: query, schema: {$ref: 'common.yaml#/components/schemas/Uuid'}}
+        - {name: company_id, in: query, schema: {$ref: 'common.yaml#/components/schemas/Uuid'}}
+        - {$ref: '#/components/parameters/From'}
+        - {$ref: '#/components/parameters/To'}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Offset'}
+      responses:
+        '200':
+          description: Page de visites.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [total, visits]
+                properties:
+                  total: {type: integer}
+                  visits: {type: array, items: {$ref: '#/components/schemas/VisitRow'}}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+  /visits/{id}:
+    get:
+      tags: [Visites]
+      summary: Détail d'une visite
+      description: "Visite, compte rendu (brouillon ou validé), actions, notes durant visite, historique, e-mails envoyés. Jamais les notes internes ni privées."
+      parameters:
+        - {$ref: '#/components/parameters/Id'}
+      responses:
+        '200': {description: Détail., content: {application/json: {schema: {$ref: '#/components/schemas/VisitDetail'}}}}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+
+  /users:
+    get:
+      tags: [Comptes]
+      summary: Lister les comptes
+      parameters:
+        - {name: q, in: query, schema: {type: string}, description: Nom ou e-mail.}
+      responses:
+        '200':
+          description: Comptes.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [users]
+                properties:
+                  users: {type: array, items: {$ref: '#/components/schemas/User'}}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: 'common.yaml#/components/responses/Forbidden'}
+    post:
+      tags: [Comptes]
+      summary: Créer un compte
+      description: "Sans `password`, un mot de passe temporaire de 16 caractères est généré et renvoyé **une seule fois** (`temporary_password`) ; il n'est jamais journalisé. La hiérarchie est reconstruite."
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/UserCreate'}}}
+      responses:
+        '201':
+          description: Créé.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user]
+                properties:
+                  user: {$ref: '#/components/schemas/User'}
+                  temporary_password: {type: string}
+        '400': {$ref: 'common.yaml#/components/responses/BadRequest'}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: 'common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+        '409': {description: "`email_taken`, `hierarchy_cycle` ou `invalid_manager` (le supérieur doit être manager ou directeur).", content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}}
+  /users/{id}:
+    patch:
+      tags: [Comptes]
+      summary: Modifier un compte
+      description: |
+        Changer de supérieur ou de rôle reconstruit la hiérarchie et retire les accès devenus caducs sur les appareils (`revoked`). `status: disabled` révoque jetons et appareils.
+        Garde-fous : on ne peut pas se désactiver ni retirer ses propres droits d'administrateur (`self_lockout`) ; un manager ou directeur qui a des subordonnés ne devient pas commercial (`has_subordinates`).
+      parameters:
+        - {$ref: '#/components/parameters/Id'}
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/UserPatch'}}}
+      responses:
+        '200':
+          description: Modifié.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user: {$ref: '#/components/schemas/User'}
+                  revoked: {type: integer, description: Accès retirés sur les appareils.}
+        '400': {$ref: 'common.yaml#/components/responses/BadRequest'}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: 'common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+        '409': {description: "`hierarchy_cycle`, `invalid_manager`, `has_subordinates`, `self_lockout` ou `email_taken`.", content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}}
+  /users/{id}/reset-password:
+    post:
+      tags: [Comptes]
+      summary: Réinitialiser le mot de passe
+      description: "Révoque les jetons de rafraîchissement et lève le verrouillage. Sans `password`, un mot de passe temporaire est généré et renvoyé une seule fois."
+      parameters:
+        - {$ref: '#/components/parameters/Id'}
+      requestBody:
+        content: {application/json: {schema: {type: object, properties: {password: {type: string, minLength: 12}}}}}
+      responses:
+        '200':
+          description: Réinitialisé.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+                  temporary_password: {type: string}
+        '400': {$ref: 'common.yaml#/components/responses/BadRequest'}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: 'common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+
+  /settings:
+    get:
+      tags: [Réglages]
+      summary: Mode de visibilité des comptes rendus
+      responses:
+        '200': {description: Réglage., content: {application/json: {schema: {type: object, properties: {report_visibility_mode: {$ref: '#/components/schemas/VisibilityMode'}}}}}}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: 'common.yaml#/components/responses/Forbidden'}
+    put:
+      tags: [Réglages]
+      summary: Changer le mode de visibilité
+      description: "1 = commerciaux du client et hiérarchie ; 2 = auteur et hiérarchie. Un changement demande `confirm_impact: true` ; sans lui, 409 `impact_confirmation_required` avec le nombre de visites qui deviendraient visibles ou invisibles. Les appareils reçoivent les retraits d'accès."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [report_visibility_mode]
+              properties:
+                report_visibility_mode: {$ref: '#/components/schemas/VisibilityMode'}
+                confirm_impact: {type: boolean}
+      responses:
+        '200':
+          description: Enregistré.
+          content: {application/json: {schema: {type: object, properties: {report_visibility_mode: {$ref: '#/components/schemas/VisibilityMode'}, revoked: {type: integer}}}}}
+        '400': {$ref: 'common.yaml#/components/responses/BadRequest'}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: 'common.yaml#/components/responses/Forbidden'}
+        '409':
+          description: Confirmation d'impact requise.
+          content:
+            application/problem+json:
+              schema:
+                allOf:
+                  - {$ref: 'common.yaml#/components/schemas/Problem'}
+                  - type: object
+                    properties:
+                      visits_becoming_visible: {type: integer}
+                      visits_becoming_hidden: {type: integer}
+
+  /companies:
+    get:
+      tags: [Maquette CRM]
+      summary: Lister les clients
+      parameters:
+        - {name: q, in: query, schema: {type: string}, description: "Nom, ville ou identifiant CRM."}
+        - {name: status, in: query, schema: {type: string, enum: [active, inactive]}}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Offset'}
+      responses:
+        '200':
+          description: Page de clients.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [total, companies]
+                properties:
+                  total: {type: integer}
+                  companies: {type: array, items: {$ref: '#/components/schemas/CompanyRow'}}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: 'common.yaml#/components/responses/Forbidden'}
+    post:
+      tags: [Maquette CRM]
+      summary: Créer un client
+      description: "Sans `crm_id`, un identifiant `MAQ-XXXXXXXX` est généré. Les commerciaux de `user_ids` sont affectés (source `admin`)."
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/CompanyCreate'}}}
+      responses:
+        '201': {description: Créé., content: {application/json: {schema: {$ref: '#/components/schemas/IdOnly'}}}}
+        '400': {$ref: 'common.yaml#/components/responses/BadRequest'}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: 'common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+        '409': {description: "`crm_id_taken`.", content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}}
+  /companies/{id}:
+    get:
+      tags: [Maquette CRM]
+      summary: Détail d'un client
+      parameters:
+        - {$ref: '#/components/parameters/Id'}
+      responses:
+        '200':
+          description: Client et contacts.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  company: {$ref: '#/components/schemas/CompanyDetail'}
+                  contacts: {type: array, items: {$ref: '#/components/schemas/Contact'}}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: 'common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+    patch:
+      tags: [Maquette CRM]
+      summary: Modifier un client
+      description: "`status: inactive` : le client n'apparaît plus dans les applications mobiles."
+      parameters:
+        - {$ref: '#/components/parameters/Id'}
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/CompanyPatch'}}}
+      responses:
+        '200': {description: Modifié., content: {application/json: {schema: {$ref: '#/components/schemas/IdOnly'}}}}
+        '400': {$ref: 'common.yaml#/components/responses/BadRequest'}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: 'common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+  /companies/{id}/assignments:
+    put:
+      tags: [Maquette CRM]
+      summary: Remplacer les commerciaux affectés
+      description: "La liste remplace les affectations existantes (retrait logique des absents, source `admin`). Un commercial désaffecté perd l'accès au client : l'appareil reçoit un retrait d'accès (`revoked`)."
+      parameters:
+        - {$ref: '#/components/parameters/Id'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_ids]
+              properties:
+                user_ids: {type: array, maxItems: 100, items: {$ref: 'common.yaml#/components/schemas/Uuid'}}
+      responses:
+        '200':
+          description: Enregistré.
+          content: {application/json: {schema: {type: object, properties: {company_id: {$ref: 'common.yaml#/components/schemas/Uuid'}, revoked: {type: integer}}}}}
+        '400': {$ref: 'common.yaml#/components/responses/BadRequest'}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: 'common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+  /companies/{id}/contacts:
+    post:
+      tags: [Maquette CRM]
+      summary: Ajouter un contact
+      description: "Identifiant CRM généré (`CT-XXXXXXXX`)."
+      parameters:
+        - {$ref: '#/components/parameters/Id'}
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/ContactWrite'}}}
+      responses:
+        '201': {description: Créé., content: {application/json: {schema: {$ref: '#/components/schemas/IdOnly'}}}}
+        '400': {$ref: 'common.yaml#/components/responses/BadRequest'}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: 'common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+  /contacts/{id}:
+    patch:
+      tags: [Maquette CRM]
+      summary: Modifier un contact
+      parameters:
+        - {$ref: '#/components/parameters/Id'}
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/ContactPatch'}}}
+      responses:
+        '200': {description: Modifié., content: {application/json: {schema: {$ref: '#/components/schemas/IdOnly'}}}}
+        '400': {$ref: 'common.yaml#/components/responses/BadRequest'}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: 'common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+    delete:
+      tags: [Maquette CRM]
+      summary: Supprimer un contact
+      description: "Suppression logique (`deleted_at`), transmise aux appareils par la synchronisation."
+      parameters:
+        - {$ref: '#/components/parameters/Id'}
+      responses:
+        '200': {description: Supprimé., content: {application/json: {schema: {$ref: '#/components/schemas/IdOnly'}}}}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: 'common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+  /import:
+    post:
+      tags: [Maquette CRM]
+      summary: Importer des clients et des contacts (CSV)
+      description: |
+        Fournir `companies_csv` et/ou `contacts_csv` (séparateur « ; » ou « , », UTF-8, BOM toléré, 5 Mo au plus chacun).
+        **Clients** : colonnes `crm_id`, `name` (obligatoires), `address_line`, `postal_code`, `city`, `country`, `sector`, `sales_emails` (adresses des commerciaux séparées par espace, virgule, point-virgule ou barre).
+        **Contacts** : `company_crm_id`, `full_name` (obligatoires), `crm_id` (facultatif), `job_title`, `phone`, `email`.
+        Même sémantique que l'import du CRM : un client connu est mis à jour ; les commerciaux du fichier remplacent les affectations de source CRM (celles saisies à la main sont conservées) ;
+        les clients absents du fichier ne sont pas désactivés. Un contact dont le client n'est que dans la base reprend ses affectations CRM actuelles.
+        Une erreur de format **bloque tout l'import** (422 `import_invalid`, rien n'est écrit) ; une adresse de commercial inconnue n'est qu'un avertissement. `dry_run: true` : vérifie sans écrire.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                companies_csv: {type: string}
+                contacts_csv: {type: string}
+                dry_run: {type: boolean, default: false}
+      responses:
+        '200':
+          description: Aperçu ou résultat.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [dry_run, companies, contacts]
+                properties:
+                  dry_run: {type: boolean}
+                  companies: {type: integer}
+                  contacts: {type: integer}
+                  assignments: {type: integer, description: Absent de l'aperçu.}
+                  deactivated: {type: integer, description: Absent de l'aperçu.}
+                  warnings: {type: array, items: {type: string}}
+        '400': {$ref: 'common.yaml#/components/responses/BadRequest'}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: 'common.yaml#/components/responses/Forbidden'}
+        '422':
+          description: Erreurs de format (`import_invalid`) ; rien n'a été importé.
+          content:
+            application/problem+json:
+              schema:
+                allOf:
+                  - {$ref: 'common.yaml#/components/schemas/Problem'}
+                  - type: object
+                    properties:
+                      errors:
+                        type: array
+                        items:
+                          type: object
+                          required: [file, line, message]
+                          properties:
+                            file: {type: string, enum: [clients, contacts]}
+                            line: {type: integer}
+                            message: {type: string}
+                      warnings: {type: array, items: {type: string}}
+
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      bearerFormat: Jeton d'accès de l'API mobile (durée courte)
+  parameters:
+    Id: {name: id, in: path, required: true, schema: {$ref: 'common.yaml#/components/schemas/Uuid'}}
+    From: {name: from, in: query, schema: {type: string, format: date}, description: "Premier jour (AAAA-MM-JJ, UTC)."}
+    To: {name: to, in: query, schema: {type: string, format: date}, description: "Dernier jour inclus (AAAA-MM-JJ, UTC)."}
+    Limit: {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
+    Offset: {name: offset, in: query, schema: {type: integer, minimum: 0, default: 0}}
+  schemas:
+    IdOnly:
+      type: object
+      required: [id]
+      properties: {id: {$ref: 'common.yaml#/components/schemas/Uuid'}}
+    VisibilityMode: {type: integer, enum: [1, 2]}
+    Role: {type: string, enum: [commercial, manager, directeur]}
+    Me:
+      type: object
+      required: [id, email, display_name, role, is_admin]
+      properties:
+        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        email: {type: string}
+        display_name: {type: string}
+        role: {$ref: '#/components/schemas/Role'}
+        is_admin: {type: boolean}
+    User:
+      type: object
+      properties:
+        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        email: {type: string}
+        display_name: {type: string}
+        role: {$ref: '#/components/schemas/Role'}
+        is_admin: {type: boolean}
+        manager_id: {type: [string, 'null'], format: uuid}
+        manager_name: {type: [string, 'null']}
+        status: {type: string, enum: [active, disabled]}
+        dictation_language: {$ref: 'common.yaml#/components/schemas/LanguageCode'}
+        ai_budget_cents: {type: [integer, 'null'], description: "Plafond IA mensuel de l'utilisateur ; null = plafond global."}
+        last_login_at: {type: [string, 'null'], format: date-time}
+        created_at: {type: string, format: date-time}
+    UserCreate:
+      type: object
+      required: [email, display_name, role]
+      additionalProperties: false
+      properties:
+        email: {type: string, format: email}
+        display_name: {type: string, minLength: 1, maxLength: 100}
+        role: {$ref: '#/components/schemas/Role'}
+        manager_id: {type: [string, 'null'], format: uuid}
+        is_admin: {type: boolean}
+        password: {type: string, minLength: 12}
+        dictation_language: {$ref: 'common.yaml#/components/schemas/LanguageCode'}
+        ai_budget_cents: {type: [integer, 'null'], minimum: 0}
+    UserPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        email: {type: string, format: email}
+        display_name: {type: string, minLength: 1, maxLength: 100}
+        role: {$ref: '#/components/schemas/Role'}
+        is_admin: {type: boolean}
+        manager_id: {type: [string, 'null'], format: uuid}
+        status: {type: string, enum: [active, disabled]}
+        dictation_language: {$ref: 'common.yaml#/components/schemas/LanguageCode'}
+        ai_budget_cents: {type: [integer, 'null'], minimum: 0}
+    ActivityReport:
+      type: object
+      required: [period, scope, totals, by_user, by_week, clients, late_reports]
+      properties:
+        period:
+          type: object
+          properties: {from: {type: string, format: date}, to: {type: string, format: date}}
+        scope: {type: string, enum: [all, team], description: "`all` : administrateur sans filtre ; `team` : périmètre hiérarchique."}
+        totals: {$ref: '#/components/schemas/ActivityTotals'}
+        by_user: {type: array, items: {$ref: '#/components/schemas/ActivityUser'}}
+        by_week:
+          type: array
+          description: Visites effectuées par semaine (lundi de la semaine).
+          items:
+            type: object
+            properties: {week: {type: string, format: date}, done: {type: integer}}
+        clients:
+          type: object
+          properties:
+            total: {type: integer, description: Clients actifs affectés au périmètre.}
+            visited: {type: integer, description: Visités sur la période.}
+            not_visited_90d: {type: integer, description: Sans visite effectuée ou en cours depuis 90 jours.}
+        late_reports:
+          type: array
+          description: Comptes rendus à valider depuis plus de 2 jours (50 au plus, du plus ancien).
+          items:
+            type: object
+            properties:
+              visit_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+              company: {type: string}
+              author: {type: string}
+              ended_at: {type: string, format: date-time}
+              days: {type: integer}
+    ActivityTotals:
+      type: object
+      properties:
+        planned: {type: integer}
+        in_progress: {type: integer}
+        done: {type: integer}
+        cancelled: {type: integer}
+        cr_validated: {type: integer}
+        cr_pending: {type: integer}
+        cr_late: {type: integer}
+        avg_cr_delay_days: {type: [number, 'null'], description: "Délai moyen entre la fin du rendez-vous et la validation du compte rendu, pondéré par le nombre de comptes rendus."}
+        actions_todo: {type: integer}
+        actions_late: {type: integer}
+        actions_done: {type: integer, description: Terminées sur la période.}
+    ActivityUser:
+      allOf:
+        - {$ref: '#/components/schemas/ActivityTotals'}
+        - type: object
+          properties:
+            user_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+            name: {type: string}
+    Suggestion:
+      type: object
+      properties:
+        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        name: {type: string}
+        city: {type: [string, 'null']}
+        sector: {type: [string, 'null']}
+        commerciaux: {type: [string, 'null'], description: Noms séparés par des virgules (dans le périmètre).}
+        last_visit_at: {type: [string, 'null'], format: date-time}
+        days_since_last_visit: {type: [integer, 'null']}
+        next_visit_at: {type: [string, 'null'], format: date-time}
+        late_actions: {type: integer}
+        open_actions: {type: integer}
+        last_temperature: {oneOf: [{$ref: 'common.yaml#/components/schemas/Temperature'}, {type: 'null'}]}
+        reasons: {type: array, items: {type: string, enum: [never_visited, stale, late_actions, hot_no_followup]}}
+        score: {type: number}
+    PrepCompany:
+      type: object
+      properties:
+        company:
+          type: object
+          properties:
+            id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+            crm_id: {type: string}
+            name: {type: string}
+            address: {type: string, description: Adresse sur une ligne.}
+            address_line: {type: [string, 'null']}
+            postal_code: {type: [string, 'null']}
+            city: {type: [string, 'null']}
+            country: {type: [string, 'null']}
+            sector: {type: [string, 'null']}
+            status: {type: string, enum: [active, inactive]}
+        contacts:
+          type: array
+          items:
+            type: object
+            properties:
+              id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+              full_name: {type: string}
+              job_title: {type: [string, 'null']}
+              phone: {type: [string, 'null']}
+              email: {type: [string, 'null']}
+        commerciaux:
+          type: array
+          items: {type: object, properties: {id: {$ref: 'common.yaml#/components/schemas/Uuid'}, name: {type: string}}}
+        visits:
+          type: array
+          items:
+            type: object
+            properties:
+              id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+              status: {$ref: 'common.yaml#/components/schemas/VisitStatus'}
+              planned_start: {type: [string, 'null'], format: date-time}
+              started_at: {type: [string, 'null'], format: date-time}
+              ended_at: {type: [string, 'null'], format: date-time}
+              author: {type: string}
+              objective: {type: [string, 'null']}
+              preparation_notes: {type: [string, 'null']}
+              report_hidden: {type: boolean, description: "Compte rendu non lisible avec les droits de l'appelant."}
+              report:
+                oneOf:
+                  - {type: 'null'}
+                  - {$ref: '#/components/schemas/ReportContent'}
+        open_actions:
+          type: array
+          items:
+            type: object
+            properties:
+              id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+              title: {type: string}
+              due_date: {type: [string, 'null'], format: date}
+              status: {type: string}
+              late: {type: boolean}
+              owner: {type: string}
+              visit_id: {type: [string, 'null'], format: uuid}
+        agenda:
+          type: array
+          description: Points à aborder déduits.
+          items:
+            type: object
+            properties:
+              kind: {type: string, enum: [next_step, objections, decisions, action]}
+              text: {type: string}
+    ReportContent:
+      type: object
+      properties:
+        summary: {type: [string, 'null']}
+        needs: {type: [string, 'null']}
+        objections: {type: [string, 'null']}
+        competitors: {type: [string, 'null']}
+        decisions: {type: [string, 'null']}
+        next_step: {type: [string, 'null']}
+        opportunity_temperature: {oneOf: [{$ref: 'common.yaml#/components/schemas/Temperature'}, {type: 'null'}]}
+    PlanVisit:
+      type: object
+      required: [company_id, user_id, planned_start]
+      additionalProperties: false
+      properties:
+        company_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        user_id: {$ref: 'common.yaml#/components/schemas/Uuid', description: Commercial qui réalisera la visite.}
+        planned_start: {type: string, format: date-time}
+        location_text: {type: [string, 'null'], maxLength: 500, description: "Défaut : adresse du client."}
+        objective: {type: [string, 'null'], maxLength: 2000}
+        preparation_notes: {type: [string, 'null'], maxLength: 5000}
+    PatchPlannedVisit:
+      type: object
+      additionalProperties: false
+      properties:
+        planned_start: {type: string, format: date-time}
+        location_text: {type: [string, 'null'], maxLength: 500}
+        objective: {type: [string, 'null'], maxLength: 2000}
+        preparation_notes: {type: [string, 'null'], maxLength: 5000}
+        status: {type: string, enum: [planned, organized, cancelled]}
+    PlanningVisit:
+      type: object
+      properties:
+        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        company_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        company: {type: string}
+        author_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        author: {type: string}
+        created_by_name: {type: [string, 'null'], description: "Personne qui a planifié la visite (null : le commercial lui-même)."}
+        status: {type: string, enum: [planned, organized]}
+        planned_start: {type: [string, 'null'], format: date-time}
+        location_text: {type: [string, 'null']}
+        objective: {type: [string, 'null']}
+        preparation_notes: {type: [string, 'null']}
+        version: {type: integer}
+    VisitRow:
+      type: object
+      properties:
+        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        company_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        company: {type: string}
+        author_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        author: {type: string}
+        status: {$ref: 'common.yaml#/components/schemas/VisitStatus'}
+        planned_start: {type: [string, 'null'], format: date-time}
+        started_at: {type: [string, 'null'], format: date-time}
+        ended_at: {type: [string, 'null'], format: date-time}
+        objective: {type: [string, 'null']}
+        report_status: {type: [string, 'null'], enum: [draft, validated, null]}
+        temperature: {oneOf: [{$ref: 'common.yaml#/components/schemas/Temperature'}, {type: 'null'}]}
+        open_actions: {type: integer}
+        closed: {type: boolean, description: "« Terminée » : compte rendu validé et plus aucune action à faire (déduit, pas un statut stocké)."}
+    VisitDetail:
+      type: object
+      properties:
+        visit:
+          type: object
+          properties:
+            id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+            company_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+            company: {type: string}
+            author_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+            author: {type: string}
+            created_by_name: {type: [string, 'null']}
+            status: {$ref: 'common.yaml#/components/schemas/VisitStatus'}
+            planned_start: {type: [string, 'null'], format: date-time}
+            started_at: {type: [string, 'null'], format: date-time}
+            ended_at: {type: [string, 'null'], format: date-time}
+            location_text: {type: [string, 'null']}
+            objective: {type: [string, 'null']}
+            preparation_notes: {type: [string, 'null']}
+        report:
+          oneOf:
+            - {type: 'null'}
+            - allOf:
+                - {$ref: '#/components/schemas/ReportContent'}
+                - type: object
+                  properties:
+                    status: {type: string, enum: [draft, validated]}
+                    validated_at: {type: [string, 'null'], format: date-time}
+                    no_action: {type: boolean}
+                    draft_actions: {type: array, items: {type: object}}
+        actions:
+          type: array
+          items:
+            type: object
+            properties:
+              id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+              title: {type: string}
+              due_date: {type: [string, 'null'], format: date}
+              status: {$ref: 'common.yaml#/components/schemas/ActionStatus'}
+              origin: {$ref: 'common.yaml#/components/schemas/ActionOrigin'}
+              owner: {type: string}
+              completed_at: {type: [string, 'null'], format: date-time}
+        notes:
+          type: array
+          description: Notes durant visite (pas les notes internes ni privées).
+          items:
+            type: object
+            properties:
+              id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+              kind: {type: string, enum: [text, voice, photo]}
+              body: {type: [string, 'null']}
+              noted_at: {type: string, format: date-time}
+        history:
+          type: array
+          items:
+            type: object
+            properties:
+              field: {type: string, enum: [planned_start, location_text, report_validated, report_reopened, visit_deleted]}
+              old_value: {type: [string, 'null']}
+              new_value: {type: [string, 'null']}
+              changed_by_name: {type: string}
+              changed_at: {type: string, format: date-time}
+        emails:
+          type: array
+          description: Envois d'e-mail de la visite (le contenu n'est pas conservé).
+          items:
+            type: object
+            properties:
+              created_at: {type: string, format: date-time}
+              sender: {type: string}
+              recipients: {type: array, items: {type: string}}
+              parts: {type: array, items: {type: string, enum: [report, actions, notes]}}
+              status: {type: string, enum: [sent, failed]}
+    CompanyBase:
+      type: object
+      properties:
+        name: {type: string, minLength: 1, maxLength: 200}
+        address_line: {type: [string, 'null']}
+        postal_code: {type: [string, 'null']}
+        city: {type: [string, 'null']}
+        country: {type: [string, 'null']}
+        sector: {type: [string, 'null']}
+    CompanyCreate:
+      allOf:
+        - {$ref: '#/components/schemas/CompanyBase'}
+        - type: object
+          required: [name]
+          properties:
+            crm_id: {type: string, maxLength: 50}
+            user_ids: {type: array, maxItems: 50, items: {$ref: 'common.yaml#/components/schemas/Uuid'}}
+    CompanyPatch:
+      allOf:
+        - {$ref: '#/components/schemas/CompanyBase'}
+        - type: object
+          properties:
+            status: {type: string, enum: [active, inactive]}
+    CompanyRow:
+      allOf:
+        - {$ref: '#/components/schemas/CompanyBase'}
+        - type: object
+          properties:
+            id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+            crm_id: {type: string}
+            status: {type: string, enum: [active, inactive]}
+            contacts_count: {type: integer}
+            visits_count: {type: integer}
+            assigned: {type: array, items: {type: object, properties: {id: {$ref: 'common.yaml#/components/schemas/Uuid'}, name: {type: string}}}}
+    CompanyDetail:
+      allOf:
+        - {$ref: '#/components/schemas/CompanyBase'}
+        - type: object
+          properties:
+            id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+            crm_id: {type: string}
+            status: {type: string, enum: [active, inactive]}
+            assigned: {type: array, items: {type: object, properties: {id: {$ref: 'common.yaml#/components/schemas/Uuid'}, name: {type: string}}}}
+    ContactWrite:
+      type: object
+      required: [full_name]
+      additionalProperties: false
+      properties:
+        full_name: {type: string, minLength: 1, maxLength: 200}
+        job_title: {type: [string, 'null']}
+        phone: {type: [string, 'null']}
+        email: {type: [string, 'null'], format: email}
+    ContactPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        full_name: {type: string, minLength: 1, maxLength: 200}
+        job_title: {type: [string, 'null']}
+        phone: {type: [string, 'null']}
+        email: {type: [string, 'null'], format: email}
+    Contact:
+      type: object
+      properties:
+        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        crm_id: {type: string}
+        full_name: {type: string}
+        job_title: {type: [string, 'null']}
+        phone: {type: [string, 'null']}
+        email: {type: [string, 'null']}
