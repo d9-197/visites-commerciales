@@ -189,6 +189,8 @@ CREATE TABLE visit (
   author_id     uuid NOT NULL REFERENCES app_user(id),
   visit_type    text REFERENCES visit_type(code),
   objective     text,
+  preparation_notes text,                             -- points à aborder, saisis avant la visite (application back)
+  created_by    uuid REFERENCES app_user(id),         -- personne qui a planifié la visite pour le commercial (NULL : l'auteur lui-même)
   planned_start timestamptz,
   planned_end   timestamptz,
   started_at    timestamptz,

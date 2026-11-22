@@ -55,7 +55,7 @@ export const VERSIONED: ReadonlySet<EntityName> = new Set(['visit', 'report', 'p
 
 /** Textes longs : en cas de modification concurrente, on garde les deux versions. */
 export const LONG_TEXT_FIELDS: Partial<Record<EntityName, readonly string[]>> = {
-  visit: ['objective'],
+  visit: ['objective', 'preparation_notes'],
   report: ['summary', 'needs', 'objections', 'competitors', 'decisions', 'next_step'],
   private_note: ['body'],
 };

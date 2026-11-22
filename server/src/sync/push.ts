@@ -15,7 +15,7 @@ const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const nstr = z.string().nullable();
 
 const VISIT_FIELDS = {
-  visit_type: nstr, objective: nstr, planned_start: ts.nullable(), planned_end: ts.nullable(),
+  visit_type: nstr, objective: nstr, preparation_notes: nstr, planned_start: ts.nullable(), planned_end: ts.nullable(),
   started_at: ts.nullable(), ended_at: ts.nullable(), location_text: z.string().max(500).nullable(),
   status: z.enum(['planned', 'organized', 'in_progress', 'done', 'validated', 'cancelled', 'deleted']),
 };
@@ -211,6 +211,7 @@ async function handle(ctx: Ctx): Promise<Applied> {
         if (('planned_start' in fields || 'planned_end' in fields) && !canEditVisitDate(row.status as VisitStatus, isAuthor)) {
           throw new Reject('locked_status', 'La date prévue n\'est plus modifiable une fois la visite commencée');
         }
+        if (('objective' in fields || 'preparation_notes' in fields) && !canEditVisitNotes(row.status as VisitStatus)) throw new Reject('locked_status', "L'objectif et les points à aborder ne sont plus modifiables une fois la visite terminée");
         if (fields.status === 'validated') throw new Reject('locked_status', 'Le statut « validée » est attribué automatiquement quand le compte rendu est validé');
         if (fields.status && !canTransition(row.status as VisitStatus, fields.status as VisitStatus)) {
           throw new Reject('locked_status', `Passage impossible de « ${row.status} » à « ${fields.status} »`);

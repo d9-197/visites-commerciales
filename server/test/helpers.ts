@@ -78,7 +78,8 @@ export class Api {
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const text = await res.text();
-    return { status: res.status, body: text ? JSON.parse(text) : null };
+    let parsed: any = null; try { parsed = text ? JSON.parse(text) : null; } catch { parsed = text; }   // réponses CSV : texte brut
+    return { status: res.status, body: parsed, raw: text };
   }
 
   async login(email: string, password = PASSWORD, deviceId?: string) {

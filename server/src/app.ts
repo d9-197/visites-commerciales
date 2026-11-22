@@ -8,6 +8,7 @@ import { mobileRouter } from './routes/mobile.js';
 import { crmRouter } from './routes/crm.js';
 import { adminRouter } from './routes/admin.js';
 import type { AiServices } from './ai/index.js';
+import { backRouter } from './routes/back/index.js';
 import type { MailService } from './mail/index.js';
 import { DEFAULT_BRAND_NAME, type Brand } from './brand.js';
 
@@ -43,6 +44,7 @@ export function createApp(pool: Pool, cfg: Config = defaultConfig, opts: { webDi
   const routes = express.Router();
   routes.use(express.json({ limit: '5mb' }));
   routes.use('/api/mobile/v1', mobileRouter(pool, cfg, opts.ai, opts.mail, opts.brand));
+  routes.use('/api/back/v1', backRouter(pool, cfg));
   routes.use('/api/crm/v1', crmRouter(pool, cfg));
   routes.use('/api/admin/v1', adminRouter(pool, cfg));
   // Application web (même origine que l'API : pas de CORS). Les routes /api/* inconnues restent en 404 JSON.
