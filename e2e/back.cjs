@@ -87,7 +87,7 @@ const dialog = page => page.getByRole('dialog');
   await page.getByRole('button', { name: '+ Nouveau compte' }).click();
   await dialog(page).getByLabel('Nom affiché').fill('Nina Nouvelle');
   await dialog(page).getByLabel('E-mail', { exact: true }).fill('nina@exemple.invalid');
-  await dialog(page).getByLabel('Supérieur hiérarchique').selectOption({ label: 'Manager Démo (Manager)' });
+  await dialog(page).getByRole('checkbox', { name: 'Agence Lyon' }).check();             // branche de l'organisation (le rôle est le même partout)
   await dialog(page).getByRole('button', { name: 'Enregistrer', exact: true }).click();
   await page.getByRole('heading', { name: 'Mot de passe temporaire' }).waitFor();
   const temp = await page.locator('code.secret').innerText();
@@ -107,6 +107,44 @@ const dialog = page => page.getByRole('dialog');
   await p2.reload();                                               // session révoquée : retour à la connexion
   await p2.getByRole('button', { name: 'Se connecter' }).waitFor();
   await c2.close();
+
+  // 4 bis. Organisation arborescente : sous-branche, règles de suppression (au survol), commercial dans plusieurs branches
+  await nav(page, 'Organisation');
+  await page.getByRole('heading', { name: 'Organisation' }).waitFor();
+  const rowOf = n => page.getByRole('row').filter({ hasText: n }).first();
+  await rowOf('Agence Lyon').waitFor();
+  assert.match(await rowOf('Agence Lyon').locator('.tip').getAttribute('title'), /utilisateurs sont affectés/, 'suppression impossible : raison au survol');
+  for (const name of ['Agence Grenoble', 'Temporaire']) {
+    await rowOf('Entreprise').getByRole('button', { name: '+ Sous-branche' }).click();
+    await dialog(page).getByLabel('Nom de la branche').fill(name);
+    await dialog(page).getByRole('button', { name: 'Enregistrer', exact: true }).click();
+    await rowOf(name).waitFor();
+  }
+  await rowOf('Temporaire').getByRole('button', { name: 'Supprimer' }).click();               // branche vide : supprimée
+  await page.getByRole('row').filter({ hasText: 'Temporaire' }).waitFor({ state: 'detached' });
+  await shot(page, 'b2b-organisation');
+  await nav(page, 'Comptes');
+  await page.getByRole('row', { name: /Commercial Deux/ }).getByRole('button', { name: 'Modifier' }).click();
+  await dialog(page).getByRole('checkbox', { name: 'Agence Grenoble' }).check();
+  await dialog(page).getByRole('button', { name: 'Enregistrer', exact: true }).click();
+  await page.getByRole('row', { name: /Commercial Deux/ }).getByText('Agence Grenoble').waitFor();
+  // application mobile : Commercial Deux (deux branches) choisit la branche à la création d'une visite
+  const octx = await browser.newContext({ viewport: { width: 390, height: 800 }, isMobile: true, hasTouch: true });
+  const op2 = await octx.newPage(); op2.on('pageerror', e => errors.push(e.message));
+  await op2.goto(BASE);
+  await op2.getByLabel('E-mail').fill('commercial2@exemple.invalid'); await op2.getByLabel('Mot de passe').fill(PWD);
+  await op2.getByRole('button', { name: 'Se connecter' }).click();
+  await op2.getByText('Synchronisé').waitFor();
+  await op2.getByRole('button', { name: 'Clients', exact: true }).click();
+  await op2.getByText('Atelier Roux').click();
+  await op2.getByRole('button', { name: '+ Planifier une visite' }).click();
+  await op2.getByText('Pour quelle branche ?').waitFor();
+  await shot(op2, 'b2c-choix-branche');
+  await op2.getByRole('button', { name: 'Entreprise › Agence Grenoble' }).click();
+  await op2.getByText('Statut', { exact: true }).waitFor();
+  await op2.getByText('Branche', { exact: true }).waitFor();
+  await op2.getByText('Agence Grenoble', { exact: true }).waitFor();
+  await octx.close();
 
   // 5. Préparation : le client sans visite est suggéré ; fiche ; planification pour Commercial Un
   await nav(page, 'Préparation');
@@ -167,6 +205,8 @@ const dialog = page => page.getByRole('dialog');
   await nav(page, 'Reporting');
   await page.getByText('Visites effectuées', { exact: true }).waitFor();
   await page.getByRole('heading', { name: 'Par commercial' }).waitFor();
+  await page.getByRole('heading', { name: /Par branche/ }).waitFor();                 // consolidation par branche
+  await page.getByRole('button', { name: 'Agence Grenoble' }).first().waitFor();
   const dl = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Exporter en CSV' }).click();
   const file = await dl; assert.match(file.suggestedFilename(), /^activite-\d{4}-\d{2}-\d{2}-\d{4}-\d{2}-\d{2}\.csv$/);

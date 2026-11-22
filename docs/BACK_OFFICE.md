@@ -9,10 +9,11 @@ Application web pour ordinateur, servie par le back sur **`/admin/`** (sous un s
 | Reporting | tous, selon le périmètre | indicateurs d'activité, par commercial, par semaine, comptes rendus en retard, export CSV |
 | Préparation | tous, selon le périmètre | clients à visiter, fiche de préparation, planification pour un commercial, planning |
 | Visites | tous, selon le périmètre | liste filtrée, détail (compte rendu, actions, notes durant visite, historique, e-mails envoyés) |
-| Comptes | administrateurs | création, modification, désactivation, mot de passe, hiérarchie, mode de visibilité des comptes rendus |
+| Organisation | administrateurs | arbre des branches : créer, renommer, déplacer, supprimer ; membres de chaque branche |
+| Comptes | administrateurs | création, modification, désactivation, mot de passe, affectation aux branches (une ou plusieurs), mode de visibilité des comptes rendus |
 | Clients (maquette CRM) | administrateurs | clients, contacts, affectations, import CSV |
 
-**Périmètre** : un commercial voit ce qui le concerne ; un manager ou un directeur, lui-même et ses subordonnés (hiérarchie) ; un administrateur, tout. Pour la consultation des visites, les règles de visibilité des comptes rendus (mode 1 ou 2) s'appliquent en plus, sauf pour l'administrateur. **Les notes internes et privées ne sont jamais exposées.**
+**Périmètre** : un commercial voit ce qui le concerne ; un manager ou un directeur voit les données de **ses branches et de leurs sous-branches** (consolidées) ; un administrateur, tout. Un directeur d'agence ne voit pas les autres agences. Une visite appartient à **une branche** ; elle n'est visible que des utilisateurs qui ont accès à cette branche (ou de son auteur). Pour la consultation des visites, les règles de visibilité des comptes rendus (mode 1 ou 2) s'appliquent en plus, sauf pour l'administrateur. **Les notes internes et privées ne sont jamais exposées.**
 
 ## Reporting
 
@@ -35,9 +36,15 @@ Limites : les visites supprimées sont exclues ; une visite est comptée dans la
 
 Limite connue : une modification faite depuis l'application back n'est pas comparée aux modifications concurrentes de l'application mobile (pas de détection de conflit pour ces deux champs) ; la dernière écriture l'emporte.
 
+## Organisation (administrateurs)
+
+Arbre des branches (une racine « Entreprise »). Créer une sous-branche, renommer, **déplacer** (changer de parent), supprimer. Règles : deux branches de même parent ne portent pas le même nom ; la racine ne se déplace ni ne se supprime ; une branche ne se déplace pas sous elle-même ; **une branche ne se supprime que vide** (sans sous-branche, sans membre, sans visite) — le bouton grisé indique la raison au survol. Déplacer une branche **change les droits** : les directeurs et managers des anciennes branches parentes perdent l'accès à ses données, ceux des nouvelles le gagnent ; les retraits sont transmis aux appareils.
+
+**Reporting** : consolidé par branche (chaque ligne cumule la branche et ses sous-branches, dans la limite de vos droits) ; un clic sur une branche descend dedans ; le filtre « Branche » existe aussi sur Visites. **Planification** : si le commercial est dans plusieurs branches, l'application demande celle de la visite (parmi celles auxquelles vous avez accès aussi).
+
 ## Comptes (administrateurs)
 
-Création avec mot de passe temporaire généré (16 caractères, affiché **une seule fois**, jamais journalisé) ou saisi (12 caractères minimum) ; modification du nom, du rôle, du supérieur, de la langue de dictée, du plafond IA mensuel ; désactivation (révoque jetons et appareils) ; réinitialisation du mot de passe (révoque les jetons). Garde-fous : pas d'auto-désactivation ni de retrait de ses propres droits d'administrateur ; pas de cycle hiérarchique ; le supérieur doit être manager ou directeur ; un manager qui a des subordonnés ne devient pas commercial. Les actions sensibles sont inscrites dans le journal d'audit (`audit_log`, sans mot de passe).
+Création avec mot de passe temporaire généré (16 caractères, affiché **une seule fois**, jamais journalisé) ou saisi (12 caractères minimum) ; modification du nom, du rôle, des branches, de la langue de dictée, du plafond IA mensuel ; désactivation (révoque jetons et appareils) ; réinitialisation du mot de passe (révoque les jetons). Garde-fous : pas d'auto-désactivation ni de retrait de ses propres droits d'administrateur ; au moins une branche par compte (sauf compte administrateur). Les actions sensibles sont inscrites dans le journal d'audit (`audit_log`, sans mot de passe).
 
 Non fait : double authentification, changement de mot de passe obligatoire à la première connexion, invitation par e-mail.
 

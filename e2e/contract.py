@@ -105,7 +105,17 @@ t('GET','/settings','/settings',adm)
 cs=t('GET','/companies','/companies?limit=3',adm)
 t('GET','/companies/{id}',f"/companies/{cs['companies'][0]['id']}",adm)
 # écritures
-u=t('POST','/users','/users',adm,'201',{'email':f'contrat{time.time_ns()}@exemple.invalid','display_name':'Contrat','role':'commercial'})
+# organisation : lecture, création / renommage / suppression d'une sous-branche
+mine=t('GET','/org/mine','/org/mine',adm)
+root=mine['access'][0]['id']
+t('GET','/org/mine','/org/mine',mgr,label='manager')
+t('GET','/org','/org',adm)
+nd=t('POST','/org/nodes','/org/nodes',adm,'201',{'name':f'Contrat {time.time_ns()}','parent_id':root})
+t('PATCH','/org/nodes/{id}',f"/org/nodes/{nd['id']}",adm,'200',{'name':f'Contrat renommée {time.time_ns()}'})
+rep2=t('GET','/reports/activity',f"/reports/activity?from=2026-01-01&to=2026-12-31&node_id={root}",adm,label='node_id')
+assert rep2['by_node'] and rep2['node_id']==root, 'consolidation par branche absente'
+t('DELETE','/org/nodes/{id}',f"/org/nodes/{nd['id']}",adm,'200')
+u=t('POST','/users','/users',adm,'201',{'email':f'contrat{time.time_ns()}@exemple.invalid','display_name':'Contrat','role':'commercial','node_ids':[root]})
 t('PATCH','/users/{id}',f"/users/{u['user']['id']}",adm,'200',{'display_name':'Contrat 2'})
 rp=t('POST','/users/{id}/reset-password',f"/users/{u['user']['id']}/reset-password",adm,'200',{})
 co=t('POST','/companies','/companies',adm,'201',{'name':f'Contrat SA {time.time_ns()}'})

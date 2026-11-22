@@ -6,14 +6,16 @@ import { Preparation } from './pages/Preparation';
 import { Visits } from './pages/Visits';
 import { Accounts } from './pages/Accounts';
 import { Clients } from './pages/Clients';
+import { Organisation } from './pages/Organisation';
 
-export interface Me { id: string; email: string; display_name: string; role: string; is_admin: boolean }
+export interface Me { id: string; email: string; display_name: string; role: string; is_admin: boolean; nodes: { id: string; name: string; path: string }[] }
 type Brand = { name: string; logo: string | null };
 
 const PAGES = [
   { id: 'reporting', label: 'Reporting', icon: '📊' },
   { id: 'preparation', label: 'Préparation', icon: '🗓️' },
   { id: 'visites', label: 'Visites', icon: '📋' },
+  { id: 'organisation', label: 'Organisation', icon: '🌳', admin: true },
   { id: 'comptes', label: 'Comptes', icon: '👥', admin: true },
   { id: 'clients', label: 'Clients (maquette CRM)', icon: '🏢', admin: true },
 ] as const;
@@ -78,12 +80,13 @@ function Shell({ me, brand: b }: { me: Me; brand: Brand }) {
           {pages.map(p => <a key={p.id} href={`#/${p.id}`} className={p.id === current.id ? 'on' : ''} aria-current={p.id === current.id ? 'page' : undefined}><span aria-hidden>{p.icon}</span>{p.label}</a>)}
         </nav>
         <div className="spacer" />
-        <div className="who"><strong>{me.display_name}</strong><small>{role}</small><button className="link" onClick={() => void logout().then(() => location.reload())}>Se déconnecter</button></div>
+        <div className="who"><strong>{me.display_name}</strong><small>{role}{me.nodes.length ? ` · ${me.nodes.map(n => n.name).join(', ')}` : ''}</small><button className="link" onClick={() => void logout().then(() => location.reload())}>Se déconnecter</button></div>
       </aside>
       <main>
         {current.id === 'reporting' && <Reporting me={me} />}
         {current.id === 'preparation' && <Preparation me={me} params={params} />}
         {current.id === 'visites' && <Visits me={me} params={params} />}
+        {current.id === 'organisation' && <Organisation />}
         {current.id === 'comptes' && <Accounts me={me} />}
         {current.id === 'clients' && <Clients />}
       </main>

@@ -26,6 +26,7 @@ security:
   - bearer: []
 tags:
   - {name: Session, description: Utilisateur connecté.}
+  - {name: Organisation, description: "Arbre des branches (écriture : administrateurs)."}
   - {name: Reporting, description: Indicateurs d'activité dans le périmètre.}
   - {name: Préparation, description: "Clients à visiter, fiche de préparation, planification."}
   - {name: Visites, description: "Consultation des visites, comptes rendus et actions."}
@@ -41,6 +42,101 @@ paths:
         '200': {description: Profil., content: {application/json: {schema: {$ref: '#/components/schemas/Me'}}}}
         '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
 
+  /org/mine:
+    get:
+      tags: [Organisation]
+      summary: Mes branches et celles auxquelles j'ai accès
+      description: "`mine` : les nœuds auxquels l'utilisateur est affecté. `access` : ces nœuds et leurs descendants (administrateur : tout l'arbre), dans l'ordre de l'arbre ; c'est la liste des branches qu'il peut choisir comme filtre."
+      responses:
+        '200':
+          description: Branches.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [mine, access]
+                properties:
+                  mine: {type: array, items: {$ref: '#/components/schemas/OrgNode'}}
+                  access: {type: array, items: {$ref: '#/components/schemas/OrgNode'}}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+  /org:
+    get:
+      tags: [Organisation]
+      summary: Arbre complet avec membres et volumes (administrateurs)
+      responses:
+        '200':
+          description: Branches dans l'ordre de l'arbre.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [nodes]
+                properties:
+                  nodes: {type: array, items: {$ref: '#/components/schemas/OrgNodeDetail'}}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: 'common.yaml#/components/responses/Forbidden'}
+  /org/nodes:
+    post:
+      tags: [Organisation]
+      summary: Créer une sous-branche (administrateurs)
+      description: "Le parent est obligatoire (une seule racine). Deux branches de même parent ne portent pas le même nom (insensible à la casse)."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, parent_id]
+              additionalProperties: false
+              properties:
+                name: {type: string, minLength: 1, maxLength: 100}
+                parent_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+      responses:
+        '201': {description: Créée., content: {application/json: {schema: {$ref: '#/components/schemas/IdOnly'}}}}
+        '400': {$ref: 'common.yaml#/components/responses/BadRequest'}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: 'common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+        '409': {description: "`name_taken`.", content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}}
+  /org/nodes/{id}:
+    patch:
+      tags: [Organisation]
+      summary: Renommer ou déplacer une branche (administrateurs)
+      description: "Déplacer (`parent_id`) change les droits : les directeurs et managers des anciennes branches parentes perdent l'accès aux données de la branche, ceux des nouvelles le gagnent ; les retraits sont transmis aux appareils (`revoked`). Refus : `root_immutable` (la racine ne se déplace pas), `org_cycle` (sous elle-même ou une descendante), `name_taken`."
+      parameters:
+        - {$ref: '#/components/parameters/Id'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name: {type: string, minLength: 1, maxLength: 100}
+                parent_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+      responses:
+        '200':
+          description: Modifiée.
+          content: {application/json: {schema: {type: object, properties: {id: {$ref: 'common.yaml#/components/schemas/Uuid'}, revoked: {type: integer}}}}}
+        '400': {$ref: 'common.yaml#/components/responses/BadRequest'}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: 'common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+        '409': {description: "`root_immutable`, `org_cycle` ou `name_taken`.", content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}}
+    delete:
+      tags: [Organisation]
+      summary: Supprimer une branche vide (administrateurs)
+      description: "Refus (409) : `root_immutable`, `has_children`, `has_members`, `has_visits`."
+      parameters:
+        - {$ref: '#/components/parameters/Id'}
+      responses:
+        '200': {description: Supprimée., content: {application/json: {schema: {$ref: '#/components/schemas/IdOnly'}}}}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: 'common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+        '409': {description: "`root_immutable`, `has_children`, `has_members` ou `has_visits`.", content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}}
+
   /reports/activity:
     get:
       tags: [Reporting]
@@ -53,6 +149,7 @@ paths:
         - {$ref: '#/components/parameters/From'}
         - {$ref: '#/components/parameters/To'}
         - {name: user_id, in: query, schema: {$ref: 'common.yaml#/components/schemas/Uuid'}, description: Limiter à un commercial du périmètre (sinon 404).}
+        - {name: node_id, in: query, schema: {$ref: 'common.yaml#/components/schemas/Uuid'}, description: "Descendre dans une branche : cette branche et ses sous-branches (consolidées). Hors de vos branches : 404."}
       responses:
         '200': {description: Rapport., content: {application/json: {schema: {$ref: '#/components/schemas/ActivityReport'}}}}
         '400': {$ref: 'common.yaml#/components/responses/BadRequest'}
@@ -167,7 +264,7 @@ paths:
     get:
       tags: [Préparation]
       summary: Planning des visites à venir
-      description: "Visites « à organiser » ou « organisées » du périmètre, par date prévue (les non planifiées d'abord). Sans `from`, aujourd'hui ; sans `to`, 60 jours. 500 au plus."
+      description: "Visites « à organiser » ou « organisées » de vos branches, par date prévue (les non planifiées d'abord). Sans `from`, aujourd'hui ; sans `to`, 60 jours. 500 au plus."
       parameters:
         - {$ref: '#/components/parameters/From'}
         - {$ref: '#/components/parameters/To'}
@@ -200,7 +297,7 @@ paths:
         '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
         '403': {description: "Commercial hors de votre périmètre (forbidden).", content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}}
         '404': {$ref: 'common.yaml#/components/responses/NotFound'}
-        '409': {description: "`invalid_author` (pas un commercial actif) ou `not_assigned` (client non affecté à ce commercial).", content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}}
+        '409': {description: "`invalid_author` (pas un commercial actif), `not_assigned` (client non affecté à ce commercial), `no_common_node` (aucune branche commune), `invalid_node` ou `org_node_required` (le commercial est dans plusieurs branches : le corps contient `nodes`, liste de {id, path}).", content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}}
   /prep/visits/{id}:
     patch:
       tags: [Préparation]
@@ -230,6 +327,7 @@ paths:
         - {name: status, in: query, schema: {$ref: 'common.yaml#/components/schemas/VisitStatus'}}
         - {name: user_id, in: query, schema: {$ref: 'common.yaml#/components/schemas/Uuid'}}
         - {name: company_id, in: query, schema: {$ref: 'common.yaml#/components/schemas/Uuid'}}
+        - {name: node_id, in: query, schema: {$ref: 'common.yaml#/components/schemas/Uuid'}, description: "Branche et sous-branches (404 hors de vos branches)."}
         - {$ref: '#/components/parameters/From'}
         - {$ref: '#/components/parameters/To'}
         - {$ref: '#/components/parameters/Limit'}
@@ -265,6 +363,7 @@ paths:
       summary: Lister les comptes
       parameters:
         - {name: q, in: query, schema: {type: string}, description: Nom ou e-mail.}
+        - {name: node_id, in: query, schema: {$ref: 'common.yaml#/components/schemas/Uuid'}, description: "Utilisateurs affectés à cette branche ou à l'une de ses sous-branches."}
       responses:
         '200':
           description: Comptes.
@@ -299,14 +398,14 @@ paths:
         '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
         '403': {$ref: 'common.yaml#/components/responses/Forbidden'}
         '404': {$ref: 'common.yaml#/components/responses/NotFound'}
-        '409': {description: "`email_taken`, `hierarchy_cycle` ou `invalid_manager` (le supérieur doit être manager ou directeur).", content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}}
+        '409': {description: "`email_taken`.", content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}}
   /users/{id}:
     patch:
       tags: [Comptes]
       summary: Modifier un compte
       description: |
-        Changer de supérieur ou de rôle reconstruit la hiérarchie et retire les accès devenus caducs sur les appareils (`revoked`). `status: disabled` révoque jetons et appareils.
-        Garde-fous : on ne peut pas se désactiver ni retirer ses propres droits d'administrateur (`self_lockout`) ; un manager ou directeur qui a des subordonnés ne devient pas commercial (`has_subordinates`).
+        Changer de branche ou de rôle reconstruit les droits et retire les accès devenus caducs sur les appareils (`revoked`). `status: disabled` révoque jetons et appareils.
+        Garde-fous : on ne peut pas se désactiver ni retirer ses propres droits d'administrateur (`self_lockout`).
       parameters:
         - {$ref: '#/components/parameters/Id'}
       requestBody:
@@ -326,7 +425,7 @@ paths:
         '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
         '403': {$ref: 'common.yaml#/components/responses/Forbidden'}
         '404': {$ref: 'common.yaml#/components/responses/NotFound'}
-        '409': {description: "`hierarchy_cycle`, `invalid_manager`, `has_subordinates`, `self_lockout` ou `email_taken`.", content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}}
+        '409': {description: "`self_lockout` ou `email_taken`.", content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}}
   /users/{id}/reset-password:
     post:
       tags: [Comptes]
@@ -615,6 +714,8 @@ components:
         display_name: {type: string}
         role: {$ref: '#/components/schemas/Role'}
         is_admin: {type: boolean}
+        nodes: {type: array, items: {$ref: '#/components/schemas/OrgRef'}}
+    OrgRef: {type: object, required: [id, name, path], properties: {id: {$ref: 'common.yaml#/components/schemas/Uuid'}, name: {type: string}, path: {type: string, description: "Chemin dans l'arbre : « Entreprise › Région › Agence »."}}}
     User:
       type: object
       properties:
@@ -623,8 +724,7 @@ components:
         display_name: {type: string}
         role: {$ref: '#/components/schemas/Role'}
         is_admin: {type: boolean}
-        manager_id: {type: [string, 'null'], format: uuid}
-        manager_name: {type: [string, 'null']}
+        nodes: {type: array, items: {$ref: '#/components/schemas/OrgRef'}, description: "Branches de l'utilisateur (vide : compte administrateur sans branche)."}
         status: {type: string, enum: [active, disabled]}
         dictation_language: {$ref: 'common.yaml#/components/schemas/LanguageCode'}
         ai_budget_cents: {type: [integer, 'null'], description: "Plafond IA mensuel de l'utilisateur ; null = plafond global."}
@@ -638,7 +738,7 @@ components:
         email: {type: string, format: email}
         display_name: {type: string, minLength: 1, maxLength: 100}
         role: {$ref: '#/components/schemas/Role'}
-        manager_id: {type: [string, 'null'], format: uuid}
+        node_ids: {type: array, maxItems: 50, items: {$ref: 'common.yaml#/components/schemas/Uuid'}, description: "Branches de l'organisation : au moins une, sauf pour un compte administrateur (400 sinon ; 404 branche inconnue)."}
         is_admin: {type: boolean}
         password: {type: string, minLength: 12}
         dictation_language: {$ref: 'common.yaml#/components/schemas/LanguageCode'}
@@ -651,14 +751,19 @@ components:
         display_name: {type: string, minLength: 1, maxLength: 100}
         role: {$ref: '#/components/schemas/Role'}
         is_admin: {type: boolean}
-        manager_id: {type: [string, 'null'], format: uuid}
+        node_ids: {type: array, maxItems: 50, items: {$ref: 'common.yaml#/components/schemas/Uuid'}, description: "Remplace les branches du compte (au moins une, sauf administrateur)."}
         status: {type: string, enum: [active, disabled]}
         dictation_language: {$ref: 'common.yaml#/components/schemas/LanguageCode'}
         ai_budget_cents: {type: [integer, 'null'], minimum: 0}
     ActivityReport:
       type: object
-      required: [period, scope, totals, by_user, by_week, clients, late_reports]
+      required: [period, scope, node_id, totals, by_user, by_node, by_week, clients, late_reports]
       properties:
+        node_id: {type: [string, 'null'], format: uuid, description: "Branche demandée (`node_id`), sinon null."}
+        by_node:
+          type: array
+          description: "Consolidation par branche : chaque branche cumule ses visites et celles de ses sous-branches visibles. Branches accessibles seulement (administrateur : tout l'arbre)."
+          items: {$ref: '#/components/schemas/ActivityNode'}
         period:
           type: object
           properties: {from: {type: string, format: date}, to: {type: string, format: date}}
@@ -702,6 +807,40 @@ components:
         actions_todo: {type: integer}
         actions_late: {type: integer}
         actions_done: {type: integer, description: Terminées sur la période.}
+    ActivityNode:
+      type: object
+      properties:
+        node_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        parent_id: {type: [string, 'null'], format: uuid}
+        name: {type: string}
+        path: {type: string}
+        depth: {type: integer}
+        members: {type: integer, description: "Utilisateurs directement affectés à la branche."}
+        planned: {type: integer}
+        in_progress: {type: integer}
+        done: {type: integer}
+        cancelled: {type: integer}
+        cr_validated: {type: integer}
+        cr_pending: {type: integer}
+        cr_late: {type: integer}
+    OrgNode:
+      type: object
+      properties:
+        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        parent_id: {type: [string, 'null'], format: uuid}
+        name: {type: string}
+        path: {type: string}
+        depth: {type: integer, description: "Nombre d'ancêtres (racine : 0)."}
+    OrgNodeDetail:
+      allOf:
+        - {$ref: '#/components/schemas/OrgNode'}
+        - type: object
+          properties:
+            children_count: {type: integer}
+            visits_count: {type: integer}
+            members:
+              type: array
+              items: {type: object, properties: {id: {$ref: 'common.yaml#/components/schemas/Uuid'}, name: {type: string}, role: {$ref: '#/components/schemas/Role'}}}
     ActivityUser:
       allOf:
         - {$ref: '#/components/schemas/ActivityTotals'}
@@ -814,6 +953,7 @@ components:
       properties:
         company_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
         user_id: {$ref: 'common.yaml#/components/schemas/Uuid', description: Commercial qui réalisera la visite.}
+        node_id: {allOf: [{$ref: 'common.yaml#/components/schemas/Uuid'}], description: "Branche de la visite : un nœud du commercial auquel vous avez accès. Facultatif s'il n'y en a qu'un ; sinon 409 `org_node_required` (liste dans `nodes`)."}
         planned_start: {type: string, format: date-time}
         location_text: {type: [string, 'null'], maxLength: 500, description: "Défaut : adresse du client."}
         objective: {type: [string, 'null'], maxLength: 2000}
@@ -850,6 +990,8 @@ components:
         company: {type: string}
         author_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
         author: {type: string}
+        org_node_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        org_path: {type: string, description: "Branche de la visite."}
         status: {$ref: 'common.yaml#/components/schemas/VisitStatus'}
         planned_start: {type: [string, 'null'], format: date-time}
         started_at: {type: [string, 'null'], format: date-time}
@@ -870,6 +1012,8 @@ components:
             company: {type: string}
             author_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
             author: {type: string}
+            org_node_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+            org_path: {type: string}
             created_by_name: {type: [string, 'null']}
             status: {$ref: 'common.yaml#/components/schemas/VisitStatus'}
             planned_start: {type: [string, 'null'], format: date-time}

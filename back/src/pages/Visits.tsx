@@ -1,16 +1,18 @@
 import { useState } from 'react';
 import { api, type R } from '../api';
 import type { Me } from '../App';
-import { Alert, Badge, Card, Empty, Loading, Modal, useLoad } from '../ui';
+import { Alert, Badge, BranchSelect, Card, Empty, Loading, Modal, useLoad } from '../ui';
 import { STATUS, STATUS_TONE, TEMP, fmtDateTime, fmtDate } from '../format';
 
 const PAGE = 50;
 export function Visits({ params }: { me: Me; params: URLSearchParams }) {
   const [q, setQ] = useState(''); const [status, setStatus] = useState(''); const [user, setUser] = useState(params.get('user') ?? '');
-  const [from, setFrom] = useState(''); const [to, setTo] = useState(''); const [offset, setOffset] = useState(0);
+  const [from, setFrom] = useState(''); const [to, setTo] = useState(''); const [offset, setOffset] = useState(0); const [node, setNode] = useState('');
+  const branches = useLoad(() => api<R>('org/mine'), []);
+  const accessNodes: R[] = branches.data?.access ?? [];
   const [open, setOpen] = useState<string | null>(params.get('open'));
   const users = useLoad(() => api<R>('prep/commerciaux'), []);
-  const qs = `limit=${PAGE}&offset=${offset}&q=${encodeURIComponent(q)}${status ? `&status=${status}` : ''}${user ? `&user_id=${user}` : ''}${from ? `&from=${from}` : ''}${to ? `&to=${to}` : ''}`;
+  const qs = `limit=${PAGE}&offset=${offset}&q=${encodeURIComponent(q)}${status ? `&status=${status}` : ''}${user ? `&user_id=${user}` : ''}${from ? `&from=${from}` : ''}${to ? `&to=${to}` : ''}${node ? `&node_id=${node}` : ''}`;
   const { data, error, loading } = useLoad(() => api<R>(`visits?${qs}`), [qs]);
   const reset = <T,>(set: (v: T) => void) => (v: T) => { set(v); setOffset(0); };
   return (
@@ -21,15 +23,16 @@ export function Visits({ params }: { me: Me; params: URLSearchParams }) {
           <input type="search" placeholder="Client…" aria-label="Client" value={q} onChange={e => reset(setQ)(e.target.value)} />
           <select aria-label="Statut" value={status} onChange={e => reset(setStatus)(e.target.value)}><option value="">Tous les statuts</option>{Object.entries(STATUS).filter(([k]) => k !== 'closed').map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
           {(users.data?.users?.length ?? 0) > 1 && <select aria-label="Commercial" value={user} onChange={e => reset(setUser)(e.target.value)}><option value="">Tous les commerciaux</option>{users.data!.users.map((u: R) => <option key={u.id} value={u.id}>{u.name}</option>)}</select>}
+          {accessNodes.length > 1 && <BranchSelect nodes={accessNodes as any} value={node} onChange={reset(setNode)} all="Toutes mes branches" label="Branche" />}
           <input type="date" aria-label="Du" value={from} onChange={e => reset(setFrom)(e.target.value)} /><input type="date" aria-label="Au" value={to} onChange={e => reset(setTo)(e.target.value)} />
         </div>
         {error && <Alert>{error}</Alert>}
         {loading && !data && <Loading />}
         {data && (data.visits.length === 0 ? <Empty>Aucune visite ne correspond.</Empty> : <>
-          <div className="scroll"><table className="clickable"><thead><tr><th>Date</th><th>Client</th><th>Commercial</th><th>Statut</th><th>Compte rendu</th><th>Opportunité</th><th>Actions à faire</th></tr></thead><tbody>
+          <div className="scroll"><table className="clickable"><thead><tr><th>Date</th><th>Client</th><th>Commercial</th><th>Branche</th><th>Statut</th><th>Compte rendu</th><th>Opportunité</th><th>Actions à faire</th></tr></thead><tbody>
             {data.visits.map((v: R) => { const st = v.closed ? 'closed' : v.status; return (
               <tr key={v.id} tabIndex={0} onClick={() => setOpen(v.id)} onKeyDown={e => { if (e.key === 'Enter') setOpen(v.id); }}>
-                <td>{fmtDateTime(v.ended_at ?? v.started_at ?? v.planned_start)}</td><td><strong>{v.company}</strong></td><td>{v.author}</td>
+                <td>{fmtDateTime(v.ended_at ?? v.started_at ?? v.planned_start)}</td><td><strong>{v.company}</strong></td><td>{v.author}</td><td>{String(v.org_path ?? '').split(' › ').slice(-1)[0]}</td>
                 <td><Badge tone={STATUS_TONE[st]}>{STATUS[st]}</Badge></td>
                 <td>{v.report_status === 'validated' ? <Badge tone="violet">Validé</Badge> : v.report_status ? <Badge tone="amber">Brouillon</Badge> : <span className="muted">—</span>}</td>
                 <td>{v.temperature ? <Badge tone={v.temperature === 'hot' ? 'red' : v.temperature === 'warm' ? 'amber' : 'grey'}>{TEMP[v.temperature]}</Badge> : '—'}</td>
@@ -56,6 +59,7 @@ function Detail({ id, onClose }: { id: string; onClose: () => void }) {
         <section><h3>Visite</h3>
           <dl className="facts">
             <div><dt>Statut</dt><dd><Badge tone={STATUS_TONE[st]}>{STATUS[st]}</Badge></dd></div>
+            <div><dt>Branche</dt><dd>{v.org_path}</dd></div>
             <div><dt>Commercial</dt><dd>{v.author}{v.created_by_name && v.created_by_name !== v.author ? <small className="muted"> · planifiée par {v.created_by_name}</small> : null}</dd></div>
             <div><dt>Prévue</dt><dd>{fmtDateTime(v.planned_start)}</dd></div><div><dt>Commencée</dt><dd>{fmtDateTime(v.started_at)}</dd></div><div><dt>Fin du rendez-vous</dt><dd>{fmtDateTime(v.ended_at)}</dd></div>
             <div><dt>Adresse</dt><dd>{v.location_text ?? '—'}</dd></div>

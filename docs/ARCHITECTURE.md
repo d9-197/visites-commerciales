@@ -85,15 +85,15 @@ Alternative écartée à ce stade : une base répliquée clé en main. Elle réd
 3. **Pipeline voix et IA** (§7).
 4. **Import CRM** (§8).
 5. **API CRM** (§9).
-6. **Console d'administration** (web) : comptes, rôles, hiérarchie, affectation client-commerciaux, réglage de visibilité, quotas IA, glossaires, journaux de synchro et d'audit.
+6. **Console d'administration** (web) : comptes, rôles, organisation arborescente, affectation client-commerciaux, réglage de visibilité, quotas IA, glossaires, journaux de synchro et d'audit.
 
 ## 6. Modèle de droits
 
 - **Hiérarchie** : table des rattachements (commercial → manager → directeur) ; accès « tout ce qui est en dessous » par requête récursive ou table de fermeture.
 - **Affectation** : table client ↔ commerciaux (un client peut avoir plusieurs commerciaux).
 - **Visibilité des CR** (réglage global, deux modes) :
-  - mode 1 : visible par les commerciaux affectés au client et leur hiérarchie ;
-  - mode 2 : visible par l'auteur et sa hiérarchie.
+  - mode 1 : visible par les commerciaux affectés au client qui ont accès à la branche de la visite, et par les managers/directeurs de cette branche ;
+  - mode 2 : visible par l'auteur et par les managers/directeurs ayant accès à la branche de la visite (organisation arborescente, voir SPEC_FONCTIONNELLE et SCHEMA_DONNEES §3).
 - **Note privée** : lisible par l'auteur uniquement, jamais envoyée à l'API CRM ni aux autres rôles.
 - **Actions** : modifiables par leur responsable ; lecture par la hiérarchie.
 - La règle est appliquée **au back**, pas seulement dans l'application. Le réglage est lu depuis une table de paramètres pour permettre un affinage ultérieur (équipe, client) sans refonte.

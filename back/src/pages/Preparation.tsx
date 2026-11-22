@@ -66,11 +66,11 @@ function Planning({ version, onEdit }: { version: number; onEdit: (v: R) => void
       {error && <Alert>{error}</Alert>}
       {loading && !data && <Loading />}
       {data && (data.visits.length === 0 ? <Empty>Aucune visite à venir (60 prochains jours).</Empty> : (
-        <div className="scroll"><table><thead><tr><th>Date</th><th>Client</th><th>Commercial</th><th>Statut</th><th>Objectif</th><th>Planifiée par</th><th /></tr></thead><tbody>
+        <div className="scroll"><table><thead><tr><th>Date</th><th>Client</th><th>Commercial</th><th>Branche</th><th>Statut</th><th>Objectif</th><th>Planifiée par</th><th /></tr></thead><tbody>
           {data.visits.map((v: R) => (
             <tr key={v.id}>
               <td>{v.planned_start ? fmtDateTime(v.planned_start) : <span className="muted">Non planifiée</span>}</td>
-              <td><strong>{v.company}</strong></td><td>{v.author}</td>
+              <td><strong>{v.company}</strong></td><td>{v.author}</td><td>{String(v.org_path ?? '').split(' › ').slice(-1)[0]}</td>
               <td><Badge tone={STATUS_TONE[v.status]}>{STATUS[v.status]}</Badge></td>
               <td className="wrap">{v.objective ?? '—'}</td>
               <td>{v.created_by_name && v.created_by_name !== v.author ? v.created_by_name : '—'}</td>
@@ -132,17 +132,21 @@ function PlanModal({ me, company, visit, onClose, onDone }: { me: Me; company?: 
   const [when, setWhen] = useState(visit?.planned_start ? isoToLocal(visit.planned_start) : isoToLocal(tomorrow.toISOString()));
   const [address, setAddress] = useState<string>(visit?.location_text ?? ''); const [objective, setObjective] = useState<string>(visit?.objective ?? ''); const [notes, setNotes] = useState<string>(visit?.preparation_notes ?? '');
   const [status, setStatus] = useState<string>(visit?.status ?? 'planned');
+  const [choices, setChoices] = useState<R[]>([]); const [nodeId, setNodeId] = useState('');   // branches possibles quand le commercial est dans plusieurs
   const [err, setErr] = useState<string>(); const [busy, setBusy] = useState(false);
   const save = async () => {
     setBusy(true); setErr(undefined);
     try {
       if (edit) await api(`prep/visits/${visit!.id}`, { method: 'PATCH', body: { planned_start: localToIso(when), location_text: address.trim() || null, objective: objective.trim() || null, preparation_notes: notes.trim() || null, status } });
-      else await api('prep/visits', { method: 'POST', body: { company_id: companyId, user_id: userId, planned_start: localToIso(when), ...(address.trim() ? { location_text: address.trim() } : {}), ...(objective.trim() ? { objective: objective.trim() } : {}), ...(notes.trim() ? { preparation_notes: notes.trim() } : {}) } });
+      else await api('prep/visits', { method: 'POST', body: { company_id: companyId, user_id: userId, ...(nodeId ? { node_id: nodeId } : {}), planned_start: localToIso(when), ...(address.trim() ? { location_text: address.trim() } : {}), ...(objective.trim() ? { objective: objective.trim() } : {}), ...(notes.trim() ? { preparation_notes: notes.trim() } : {}) } });
       onDone();
-    } catch (e) { setErr(errMsg(e)); } finally { setBusy(false); }
+    } catch (e: any) {
+      if (e.code === 'org_node_required' && Array.isArray(e.extra?.nodes)) { setChoices(e.extra.nodes); setNodeId(''); setErr(undefined); }
+      else setErr(errMsg(e));
+    } finally { setBusy(false); }
   };
   const ok = (edit || (companyId && userId)) && !!when;
-  const why = !edit && !companyId ? 'Choisissez un client.' : !edit && !userId ? (users.data && !users.data.users.some((u: R) => u.assigned) ? 'Aucun commercial de votre périmètre n\'est affecté à ce client : affectez-le d\'abord (rubrique Clients).' : 'Choisissez le commercial qui réalisera la visite.') : !when ? 'Indiquez la date et l\'heure.' : '';
+  const why = choices.length > 0 && !nodeId ? 'Choisissez la branche de la visite.' : !edit && !companyId ? 'Choisissez un client.' : !edit && !userId ? (users.data && !users.data.users.some((u: R) => u.assigned) ? 'Aucun commercial de votre périmètre n\'est affecté à ce client : affectez-le d\'abord (rubrique Clients).' : 'Choisissez le commercial qui réalisera la visite.') : !when ? 'Indiquez la date et l\'heure.' : '';
   return (
     <Modal title={edit ? 'Modifier la visite' : 'Planifier une visite'} onClose={onClose} footer={<><button onClick={onClose}>Annuler</button><Tip why={why}><button className="primary" disabled={!ok || busy} onClick={() => void save()}>{busy ? 'Enregistrement…' : 'Enregistrer'}</button></Tip></>}>
       <div className="form">
@@ -155,6 +159,7 @@ function PlanModal({ me, company, visit, onClose, onDone }: { me: Me; company?: 
           {edit ? <div className="picked"><strong>{visit!.author}</strong></div> : <select value={userId} onChange={e => setUserId(e.target.value)} disabled={!companyId}>
             <option value="">Choisir…</option>{(users.data?.users ?? []).map((u: R) => <option key={u.id} value={u.id} disabled={!!companyId && !u.assigned}>{u.name}{companyId && !u.assigned ? ' (client non affecté)' : ''}</option>)}</select>}
         </Field>
+        {choices.length > 0 && <Field full label="Branche de la visite" hint="Ce commercial est affecté à plusieurs branches : la visite appartient à celle-ci (visible de ses managers et directeurs)."><select value={nodeId} onChange={e => setNodeId(e.target.value)} autoFocus><option value="">Choisir…</option>{choices.map(n => <option key={n.id} value={n.id}>{n.path}</option>)}</select></Field>}
         <Field label="Date et heure"><input type="datetime-local" step={900} value={when} onChange={e => setWhen(e.target.value)} /></Field>
         {edit && <Field label="Statut"><select value={status} onChange={e => setStatus(e.target.value)}><option value="planned">À organiser</option><option value="organized">Organisée avec le client</option><option value="cancelled">Annulée</option></select></Field>}
         <Field full label="Adresse de la visite" hint="Vide : adresse du client."><input value={address} onChange={e => setAddress(e.target.value)} maxLength={500} /></Field>

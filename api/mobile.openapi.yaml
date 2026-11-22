@@ -562,6 +562,10 @@ components:
         role: {type: string, enum: [commercial, manager, directeur]}
         ui_language: {$ref: 'common.yaml#/components/schemas/LanguageCode'}
         dictation_language: {$ref: 'common.yaml#/components/schemas/LanguageCode'}
+        nodes:
+          type: array
+          description: "Branches de l'organisation auxquelles l'utilisateur est affecté (même rôle partout). Une visite se crée dans l'une d'elles."
+          items: {type: object, required: [id, name, path], properties: {id: {$ref: 'common.yaml#/components/schemas/Uuid'}, name: {type: string}, path: {type: string, description: "Chemin dans l'arbre : « Entreprise › Région › Agence »."}}}
         enabled_languages:
           type: array
           items: {$ref: 'common.yaml#/components/schemas/LanguageCode'}
@@ -661,6 +665,8 @@ components:
         id: {$ref: 'common.yaml#/components/schemas/Uuid'}
         company_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
         author_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        org_node_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        org_node_name: {type: [string, 'null'], description: "Nom de la branche de la visite."}
         visit_type: {type: [string, 'null']}
         objective: {type: [string, 'null']}
         planned_start: {oneOf: [{$ref: 'common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]}
@@ -925,6 +931,7 @@ components:
       type: object
       properties:
         company_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        org_node_id: {allOf: [{$ref: 'common.yaml#/components/schemas/Uuid'}], description: "Création seulement : branche de la visite, parmi celles de l'auteur. Facultative s'il n'en a qu'une ; sinon `org_node_required` (rejet). Aucune branche : `no_org_node`. Une branche étrangère : `validation_failed`. Non modifiable ensuite."}
         visit_type: {type: string}
         objective: {type: string}
         planned_start: {$ref: 'common.yaml#/components/schemas/Timestamp'}

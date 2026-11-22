@@ -314,7 +314,7 @@ components:
         display_name: {type: string}
         role: {type: string, enum: [commercial, manager, directeur]}
         is_admin: {type: boolean}
-        manager_id: {oneOf: [{$ref: 'common.yaml#/components/schemas/Uuid'}, {type: 'null'}]}
+        node_ids: {type: array, items: {$ref: 'common.yaml#/components/schemas/Uuid'}, description: "Branches de l'organisation (remplace manager_id, supprimé ; voir api/back.openapi.yaml)."}
         ui_language: {$ref: 'common.yaml#/components/schemas/LanguageCode'}
         dictation_language: {$ref: 'common.yaml#/components/schemas/LanguageCode'}
         status: {type: string, enum: [active, disabled]}
@@ -329,7 +329,7 @@ components:
         display_name: {type: string}
         role: {type: string, enum: [commercial, manager, directeur]}
         is_admin: {type: boolean, default: false}
-        manager_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        node_ids: {type: array, items: {$ref: 'common.yaml#/components/schemas/Uuid'}, description: "Branches de l'organisation (remplace manager_id, supprimé ; voir api/back.openapi.yaml)."}
         ui_language: {$ref: 'common.yaml#/components/schemas/LanguageCode'}
         dictation_language: {$ref: 'common.yaml#/components/schemas/LanguageCode'}
     UserUpdate:
@@ -338,7 +338,7 @@ components:
         display_name: {type: string}
         role: {type: string, enum: [commercial, manager, directeur]}
         is_admin: {type: boolean}
-        manager_id: {oneOf: [{$ref: 'common.yaml#/components/schemas/Uuid'}, {type: 'null'}]}
+        node_ids: {type: array, items: {$ref: 'common.yaml#/components/schemas/Uuid'}, description: "Branches de l'organisation (remplace manager_id, supprimé ; voir api/back.openapi.yaml)."}
         ui_language: {$ref: 'common.yaml#/components/schemas/LanguageCode'}
         dictation_language: {$ref: 'common.yaml#/components/schemas/LanguageCode'}
         status: {type: string, enum: [active, disabled]}

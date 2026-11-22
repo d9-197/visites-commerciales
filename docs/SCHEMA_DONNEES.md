@@ -6,7 +6,10 @@ Le schéma exécutable est dans [`db/schema.sql`](../db/schema.sql) (PostgreSQL 
 
 ```mermaid
 erDiagram
-  app_user ||--o{ app_user : "manager_id"
+  app_user ||--o{ user_org : "branches"
+  org_node ||--o{ user_org : "membres"
+  org_node ||--o{ org_node : "parent"
+  org_node ||--o{ visit : "branche"
   app_user ||--o{ device : possède
   app_user ||--o{ company_assignment : "est affecté"
   company ||--o{ company_assignment : a
@@ -30,7 +33,7 @@ erDiagram
 | Domaine | Tables |
 |---------|--------|
 | Référentiels et réglages | `language`, `visit_type`, `app_setting` |
-| Utilisateurs | `app_user`, `user_hierarchy`, `device`, `refresh_token` |
+| Utilisateurs et organisation | `app_user`, `org_node`, `org_closure`, `user_org`, `user_hierarchy` (dérivée), `device`, `refresh_token` |
 | CRM (lecture seule dans l'appli) | `company`, `contact`, `company_assignment` |
 | Visites | `visit`, `visit_contact`, `visit_history`, `visit_report`, `visit_note`, `private_note`, `attachment` |
 | Voix et IA | `recording`, `transcription`, `ai_proposal`, `report_quality`, `error_report`, `ai_usage`, `glossary_term` |
@@ -69,18 +72,26 @@ Table `visit_email` (migration 007) : journal des envois d'e-mail d'une visite (
 
 `internal_note` : id, visite, auteur, **nom de l'auteur copié à la création**, texte, dates, suppression logique. **Lisible par l'auteur et par sa hiérarchie** (fonction `can_read_internal_note`, fermeture de hiérarchie), **indépendamment du mode de visibilité** des comptes rendus. Aucune vue du CRM ne l'expose ; elle n'entre ni dans le compte rendu ni dans la génération par IA. Un changement de supérieur produit des retraits d'accès pour l'ancienne hiérarchie.
 
-## 3. Hiérarchie
+## 3. Organisation arborescente (migration 009)
 
-`app_user.manager_id` donne le supérieur direct. `user_hierarchy` est la **fermeture transitive** (ancêtre, descendant, profondeur, avec la profondeur 0 pour l'utilisateur lui-même), reconstruite par `rebuild_hierarchy()` à chaque changement de rattachement. Elle évite des requêtes récursives à chaque lecture. Garde-fou : profondeur limitée à 10 pour éviter une boucle si un cycle est saisi par erreur.
+Elle **remplace** l'ancien supérieur par utilisateur (`app_user.manager_id`, conservé en base pour la conversion, plus utilisé).
+
+- `org_node` (id, parent, nom) : l'arbre, une seule racine (« Entreprise »). `org_closure` : fermeture transitive (ancêtre, descendant, profondeur ; profondeur 0 pour le nœud lui-même), reconstruite par `rebuild_org()` à chaque changement de l'arbre. `org_path(nœud)` : chemin lisible « Entreprise › Région › Agence ».
+- `user_org` (utilisateur, nœud) : un utilisateur est affecté à **un ou plusieurs nœuds** et garde **le même rôle partout** (le rôle reste `app_user.role`).
+- `visit.org_node_id` (obligatoire) : la **branche de la visite**, un nœud de son auteur, choisi par l'auteur à la création s'il en a plusieurs (non modifiable ensuite). Un changement de branche de l'auteur ne déplace pas ses visites existantes.
+- `org_access(utilisateur, nœud)` : le nœud est l'un des nœuds de l'utilisateur ou un descendant. `org_supervises(utilisateur, nœud)` : idem, **et** le rôle est manager ou directeur.
+- `user_hierarchy` (ancêtre, descendant, profondeur) est conservée, mais **dérivée** de l'arbre (`rebuild_hierarchy()`) : un manager ou directeur « supervise » les utilisateurs affectés aux nœuds de ses branches. Elle sert aux données qui ne dépendent pas d'une visite (clients, actions sans visite). Rebâtie à chaque changement d'affectation, de rôle ou d'arbre.
+- `convert_managers_to_org()` : conversion de l'ancienne hiérarchie (un nœud « Équipe X » par utilisateur qui supervise quelqu'un ou n'a pas de supérieur, sous « Entreprise »), exécutée par la migration 009 : même visibilité qu'avant.
 
 ## 4. Règles de visibilité (fonctions SQL)
 
 | Donnée | Qui la lit |
 |--------|-----------|
-| Visite et compte rendu, **mode 2** | l'auteur et sa hiérarchie |
-| Visite et compte rendu, **mode 1** | mode 2, plus les commerciaux affectés au client et leur hiérarchie |
-| Client et contacts | les commerciaux affectés et leur hiérarchie |
-| Action | l'auteur, le responsable et la hiérarchie du responsable |
+| Visite et compte rendu, **mode 2** | l'auteur, et les managers/directeurs **ayant accès à la branche de la visite** (consolidé sur les sous-branches) |
+| Visite et compte rendu, **mode 1** | mode 2, plus les commerciaux affectés au client **qui ont accès à cette branche** (une autre branche reste invisible, même sur le même client) |
+| Client et contacts | les commerciaux affectés et les managers/directeurs qui supervisent l'un d'eux |
+| Action | l'auteur, le responsable, et (action d'une visite) les managers/directeurs ayant accès à la branche de la visite |
+| Note interne | l'auteur et les managers/directeurs ayant accès à la branche de la visite |
 | Note privée | l'auteur seul |
 | Audio, transcription, proposition IA | l'auteur (et le traitement serveur) |
 

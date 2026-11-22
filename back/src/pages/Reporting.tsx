@@ -1,15 +1,17 @@
 import { useState } from 'react';
 import { api, download, type R } from '../api';
 import type { Me } from '../App';
-import { Alert, Badge, Card, Empty, Loading, useLoad, errMsg } from '../ui';
+import { Alert, Badge, BranchSelect, Card, Empty, Loading, useLoad, errMsg } from '../ui';
 import { fmtDate, isoDay } from '../format';
 
 const PRESETS: [string, number][] = [['7 jours', 7], ['30 jours', 30], ['90 jours', 90], ['12 mois', 365]];
 
 export function Reporting({ me }: { me: Me }) {
-  const [from, setFrom] = useState(isoDay(-29)); const [to, setTo] = useState(isoDay()); const [user, setUser] = useState('');
+  const [from, setFrom] = useState(isoDay(-29)); const [to, setTo] = useState(isoDay()); const [user, setUser] = useState(''); const [node, setNode] = useState('');
   const [err, setErr] = useState<string>();
-  const q = `from=${from}&to=${to}${user ? `&user_id=${user}` : ''}`;
+  const q = `from=${from}&to=${to}${user ? `&user_id=${user}` : ''}${node ? `&node_id=${node}` : ''}`;
+  const branches = useLoad(() => api<R>('org/mine'), []);
+  const accessNodes: R[] = branches.data?.access ?? [];
   const { data, error, loading } = useLoad(() => api<R>(`reports/activity?${q}`), [q]);
   const users = useLoad(() => api<R>('prep/commerciaux'), []);
   const preset = (n: number) => { setFrom(isoDay(-(n - 1))); setTo(isoDay()); };
@@ -23,6 +25,7 @@ export function Reporting({ me }: { me: Me }) {
           {PRESETS.map(([l, n]) => <button key={n} className="ghost" onClick={() => preset(n)}>{l}</button>)}
           <input type="date" aria-label="Du" value={from} max={to} onChange={e => setFrom(e.target.value)} />
           <input type="date" aria-label="Au" value={to} min={from} onChange={e => setTo(e.target.value)} />
+          {accessNodes.length > 1 && <BranchSelect nodes={accessNodes as any} value={node} onChange={setNode} all="Toutes mes branches" label="Branche" />}
           {multi && <select aria-label="Commercial" value={user} onChange={e => setUser(e.target.value)}><option value="">Tous les commerciaux</option>{users.data!.users.map((u: R) => <option key={u.id} value={u.id}>{u.name}</option>)}</select>}
           <button onClick={() => void download(`reports/activity.csv?${q}`, `activite-${from}-${to}.csv`).catch(e => setErr(errMsg(e)))}>Exporter en CSV</button>
         </div>
@@ -46,6 +49,12 @@ export function Reporting({ me }: { me: Me }) {
               </tbody></table>)}
           </Card>
         </div>
+        {data.by_node.length > 1 && <Card title="Par branche (consolidé avec les sous-branches)">
+          <div className="scroll"><table className="num"><thead><tr><th>Branche</th><th>Membres</th><th>Prévues</th><th>Effectuées</th><th>Annulées</th><th>CR validés</th><th>CR à valider</th><th>CR en retard</th></tr></thead><tbody>
+            {data.by_node.map((n: R) => <tr key={n.node_id}><td style={{ paddingLeft: 10 + Math.max(0, n.depth - Math.min(...data.by_node.map((x: R) => x.depth))) * 18 }}><button className="link" onClick={() => setNode(n.node_id)}>{n.name}</button></td><td>{n.members}</td><td>{n.planned}</td><td>{n.done}</td><td>{n.cancelled}</td><td>{n.cr_validated}</td><td>{n.cr_pending}</td><td className={n.cr_late ? 'red' : ''}>{n.cr_late}</td></tr>)}
+          </tbody></table></div>
+          <p className="muted">Chaque ligne cumule les visites de la branche et de ses sous-branches ; cliquez sur une branche pour descendre dedans.</p>
+        </Card>}
         <Card title="Par commercial">
           {data.by_user.length === 0 ? <Empty>Aucun commercial dans votre périmètre.</Empty> : (
             <div className="scroll"><table className="num"><thead><tr><th>Commercial</th><th>Prévues</th><th>Effectuées</th><th>Annulées</th><th>CR validés</th><th>CR à valider</th><th>CR en retard</th><th>Délai CR (j)</th><th>Actions à faire</th><th>Actions en retard</th></tr></thead><tbody>

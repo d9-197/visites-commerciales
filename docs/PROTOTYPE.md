@@ -14,14 +14,14 @@ Branche `ccr-bf3049f2-b95bh3`. Objectif : éprouver la synchro hors-ligne, les d
 
 ## 2. Résultats vérifiés
 
-**128 tests automatisés passent** (`npm test`), sur un vrai PostgreSQL 16 : un serveur HTTP réel, des clients HTTP réels, une base neuve par fichier de test.
+**135 tests automatisés passent** (`npm test`), sur un vrai PostgreSQL 16 : un serveur HTTP réel, des clients HTTP réels, une base neuve par fichier de test.
 
 | Scénario (`PHASE0_PLAN_COMPLET.md` §5) | Résultat |
 |---|---|
 | 1. Deux appareils, même champ : champs différents appliqués, même champ court : le serveur l'emporte | Passe |
 | 2. Même texte long modifié des deux côtés : deux versions conservées | Passe |
 | 3. Opération envoyée deux fois : aucun doublon | Passe |
-| 4. Affectation retirée, mode de visibilité changé, supérieur changé : retraits d'accès reçus par l'appareil | Passe |
+| 4. Affectation retirée, mode de visibilité changé, branche d'un utilisateur changée : retraits d'accès reçus par l'appareil | Passe |
 | 5. Manager et directeur voient exactement ce que la règle prévoit (modes 1 et 2) | Passe |
 | 6. La note privée n'apparaît que chez son auteur, jamais dans l'API CRM | Passe |
 | 7. Reprise après coupure au milieu d'un lot | Passe |
@@ -48,7 +48,7 @@ Non implémentés :
 - enregistrements audio, pièces jointes, glossaire, propositions de l'IA, `/usage`, `/reports/{id}/quality`, `/error-reports` (réponse `not_implemented` pour les entités) ;
 - fenêtre hors-ligne (la synchro initiale envoie tout ce qui est visible) ;
 - limitation de débit ;
-- console d'administration : seulement création d'utilisateur (mot de passe fixé directement, sans lien d'activation), changement de supérieur, affectations d'un client, réglage du mode de visibilité ;
+- console d'administration : seulement création d'utilisateur (mot de passe fixé directement, sans lien d'activation), affectation aux branches de l'organisation, affectations d'un client, réglage du mode de visibilité ;
 - import CRM : fonction appelable, pas de planification ni de client HTTP vers le CRM.
 
 Ajouts ou différences :

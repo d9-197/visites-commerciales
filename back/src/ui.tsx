@@ -41,3 +41,14 @@ export const Loading = () => <p className="empty">Chargement…</p>;
 export function Card({ title, actions, children }: { title?: string; actions?: ReactNode; children: ReactNode }) {
   return <section className="card">{(title || actions) && <div className="card-head">{title && <h3>{title}</h3>}<div className="spacer" />{actions}</div>}{children}</section>;
 }
+
+/** Branche de l'organisation : option indentée selon la profondeur (relative à la première branche de la liste). */
+export function BranchSelect({ nodes, value, onChange, all, label }: { nodes: { id: string; name: string; depth: number }[]; value: string; onChange: (v: string) => void; all?: string; label?: string }) {
+  const base = nodes.length ? Math.min(...nodes.map(n => n.depth)) : 0;
+  return (
+    <select aria-label={label ?? 'Branche'} value={value} onChange={e => onChange(e.target.value)}>
+      {all !== undefined && <option value="">{all}</option>}
+      {nodes.map(n => <option key={n.id} value={n.id}>{'  '.repeat(Math.max(0, n.depth - base))}{n.name}</option>)}
+    </select>
+  );
+}

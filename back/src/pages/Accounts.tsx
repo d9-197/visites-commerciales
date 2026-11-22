@@ -20,10 +20,10 @@ export function Accounts({ me }: { me: Me }) {
       <Card>
         {loading && !data && <Loading />}
         {data && (users.length === 0 ? <Empty>Aucun compte.</Empty> : (
-          <div className="scroll"><table><thead><tr><th>Nom</th><th>E-mail</th><th>Rôle</th><th>Supérieur</th><th>Statut</th><th>Dernière connexion</th><th /></tr></thead><tbody>
+          <div className="scroll"><table><thead><tr><th>Nom</th><th>E-mail</th><th>Rôle</th><th>Branches</th><th>Statut</th><th>Dernière connexion</th><th /></tr></thead><tbody>
             {users.map(u => (
               <tr key={u.id} className={u.status === 'disabled' ? 'dim' : ''}>
-                <td><strong>{u.display_name}</strong>{u.is_admin && <> <Badge tone="violet">Admin</Badge></>}</td><td>{u.email}</td><td>{ROLE[u.role]}</td><td>{u.manager_name ?? '—'}</td>
+                <td><strong>{u.display_name}</strong>{u.is_admin && <> <Badge tone="violet">Admin</Badge></>}</td><td>{u.email}</td><td>{ROLE[u.role]}</td><td>{u.nodes.length ? u.nodes.map((n: R) => <div key={n.id} title={n.path}>{n.name}</div>) : <span className="muted">{u.is_admin ? 'Toutes (admin)' : 'Aucune'}</span>}</td>
                 <td><Badge tone={u.status === 'active' ? 'green' : 'grey'}>{u.status === 'active' ? 'Actif' : 'Désactivé'}</Badge></td><td>{u.last_login_at ? fmtDateTime(u.last_login_at) : '—'}</td>
                 <td className="actions">
                   <button onClick={() => setEdit(u)}>Modifier</button>
@@ -43,19 +43,20 @@ export function Accounts({ me }: { me: Me }) {
 }
 
 function UserModal({ user, users, onClose, onDone }: { user: R | null; users: R[]; onClose: () => void; onDone: (pw?: { who: string; password: string }) => void }) {
-  const [f, setF] = useState({ email: user?.email ?? '', display_name: user?.display_name ?? '', role: user?.role ?? 'commercial', manager_id: user?.manager_id ?? '', is_admin: !!user?.is_admin, dictation_language: user?.dictation_language ?? 'fr', budget: user?.ai_budget_cents === null || user?.ai_budget_cents === undefined ? '' : String(user.ai_budget_cents / 100), password: '' });
+  const [f, setF] = useState({ email: user?.email ?? '', display_name: user?.display_name ?? '', role: user?.role ?? 'commercial', node_ids: (user?.nodes ?? []).map((n: R) => n.id) as string[], is_admin: !!user?.is_admin, dictation_language: user?.dictation_language ?? 'fr', budget: user?.ai_budget_cents === null || user?.ai_budget_cents === undefined ? '' : String(user.ai_budget_cents / 100), password: '' });
   const [err, setErr] = useState<string>(); const [busy, setBusy] = useState(false);
   const set = (k: string, v: unknown) => setF(x => ({ ...x, [k]: v }));
-  const managers = users.filter(u => u.role !== 'commercial' && u.status === 'active' && u.id !== user?.id);
+  const branches = useLoad(() => api<R>('org/mine'), []);
+  const nodeList: R[] = branches.data?.access ?? [];
   const save = async () => {
     setBusy(true); setErr(undefined);
-    const body: R = { display_name: f.display_name.trim(), role: f.role, manager_id: f.manager_id || null, is_admin: f.is_admin, dictation_language: f.dictation_language, ai_budget_cents: f.budget === '' ? null : Math.round(Number(f.budget.replace(',', '.')) * 100), email: f.email.trim() };
+    const body: R = { display_name: f.display_name.trim(), role: f.role, node_ids: f.node_ids, is_admin: f.is_admin, dictation_language: f.dictation_language, ai_budget_cents: f.budget === '' ? null : Math.round(Number(f.budget.replace(',', '.')) * 100), email: f.email.trim() };
     try {
       if (user) { await api(`users/${user.id}`, { method: 'PATCH', body }); onDone(); }
       else { const r = await api<R>('users', { method: 'POST', body: { ...body, ...(f.password ? { password: f.password } : {}) } }); onDone(r.temporary_password ? { who: f.display_name, password: r.temporary_password } : undefined); }
     } catch (e) { setErr(errMsg(e)); } finally { setBusy(false); }
   };
-  const why = !f.display_name.trim() ? 'Renseignez le nom affiché.' : !f.email.includes('@') ? 'Renseignez une adresse e-mail valide.' : f.password && f.password.length < 12 ? 'Le mot de passe doit faire 12 caractères au moins (ou laissez vide pour en générer un).' : f.budget !== '' && !(Number(f.budget.replace(',', '.')) >= 0) ? 'Le plafond IA doit être un nombre positif (ou vide).' : '';
+  const why = !f.display_name.trim() ? 'Renseignez le nom affiché.' : f.node_ids.length === 0 && !f.is_admin ? 'Affectez le compte à au moins une branche (ou cochez Administrateur).' : !f.email.includes('@') ? 'Renseignez une adresse e-mail valide.' : f.password && f.password.length < 12 ? 'Le mot de passe doit faire 12 caractères au moins (ou laissez vide pour en générer un).' : f.budget !== '' && !(Number(f.budget.replace(',', '.')) >= 0) ? 'Le plafond IA doit être un nombre positif (ou vide).' : '';
   const valid = !why;
   return (
     <Modal title={user ? 'Modifier le compte' : 'Nouveau compte'} onClose={onClose} footer={<><button onClick={onClose}>Annuler</button><Tip why={why}><button className="primary" disabled={!valid || busy} onClick={() => void save()}>{busy ? 'Enregistrement…' : 'Enregistrer'}</button></Tip></>}>
@@ -63,7 +64,11 @@ function UserModal({ user, users, onClose, onDone }: { user: R | null; users: R[
         <Field label="Nom affiché"><input value={f.display_name} onChange={e => set('display_name', e.target.value)} autoFocus /></Field>
         <Field label="E-mail"><input type="email" value={f.email} onChange={e => set('email', e.target.value)} /></Field>
         <Field label="Rôle"><select value={f.role} onChange={e => set('role', e.target.value)}><option value="commercial">Commercial</option><option value="manager">Manager</option><option value="directeur">Directeur</option></select></Field>
-        <Field label="Supérieur hiérarchique"><select value={f.manager_id} onChange={e => set('manager_id', e.target.value)}><option value="">Aucun</option>{managers.map(m => <option key={m.id} value={m.id}>{m.display_name} ({ROLE[m.role]})</option>)}</select></Field>
+        <Field full label="Branches de l'organisation" hint="Le rôle est le même dans toutes les branches. Un manager ou directeur voit les données de ses branches et de leurs sous-branches ; un commercial, les siennes.">
+          <div className="checks branchlist" role="group" aria-label="Branches">
+            {nodeList.map(n => <label key={n.id} style={{ paddingLeft: n.depth * 18 }}><input type="checkbox" checked={f.node_ids.includes(n.id)} onChange={e => set('node_ids', e.target.checked ? [...f.node_ids, n.id] : f.node_ids.filter((x: string) => x !== n.id))} /> {n.name}</label>)}
+          </div>
+        </Field>
         <Field label="Langue des comptes rendus" hint="Langue dans laquelle l'IA rédige. La dictée détecte seule la langue parlée."><select value={f.dictation_language} onChange={e => set('dictation_language', e.target.value)}>{[['fr', 'Français'], ['en', 'Anglais'], ['es', 'Espagnol'], ['it', 'Italien'], ['de', 'Allemand'], ['nl', 'Néerlandais']].map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></Field>
         <Field label="Plafond IA mensuel (€)" hint="Vide : plafond global."><input inputMode="decimal" value={f.budget} onChange={e => set('budget', e.target.value)} /></Field>
         <Field full label=""><span className="check"><input type="checkbox" checked={f.is_admin} onChange={e => set('is_admin', e.target.checked)} /> Administrateur (accès aux comptes, à la maquette CRM et à tous les périmètres)</span></Field>

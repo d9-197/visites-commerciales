@@ -4,7 +4,7 @@ import { StatusBar } from 'expo-status-bar';
 import { ApiClient, ApiError, type EmailOptions, NetworkError, SyncEngine, uuidv4, type AiProposalResponse, type Row, type SyncReport } from '@visites/sync-core';
 import type { SqliteStore } from '@visites/sync-core';
 import { openStore } from './src/expoDb';
-import { clearSession, loadBrand, loadSession, saveBrand, saveSession, saveTokens, type Brand, type Session, type ThemePref } from './src/session';
+import { clearSession, loadBrand, loadSession, saveBrand, saveSession, saveTokens, type Brand, type OrgNode, type Session, type ThemePref } from './src/session';
 import { ThemeProvider, useTheme, visitStatusColor } from './src/theme';
 import { REPORT_LATE_DAYS, canEditInternalNote, isDueBeforeVisit, isReportLate, visitStage, canDeleteVisit, canEditVisitAddress, canEditVisitDate, canEditVisitNotes, canValidateReport, isActionLate, isVisitLate, type UserRole } from '@visites/sync-core';
 import { ceilTo15, dateToStr, fmtDate, fmtDateTime, strToDate, visitWhen, VISIT_STATUS } from './src/dates';
@@ -54,7 +54,7 @@ const emailErrorMessage = (e: unknown): string => {
 
 type Screen = { name: 'today' } | { name: 'visit'; id: string } | { name: 'report'; id: string } | { name: 'clients' } | { name: 'client'; id: string } | { name: 'actions'; visitId?: string } | { name: 'action'; id: string } | { name: 'settings' };
 interface Data { visits: Row[]; companies: Row[]; actions: Row[]; reports: Row[]; notes: Row[]; internalNotes: Row[]; history: Row[]; colleagues: Row[]; pending: number }
-interface Ctx { server: string; store: SqliteStore; engine: SyncEngine; client: ApiClient; userId: string; role: UserRole; lang: string }
+interface Ctx { server: string; nodes: OrgNode[]; store: SqliteStore; engine: SyncEngine; client: ApiClient; userId: string; role: UserRole; lang: string }
 type Act = (f: () => Promise<unknown>) => Promise<void>;
 
 export default function App() {
@@ -101,12 +101,14 @@ function Root() {
     const client = new ApiClient(sess.server, APP_VERSION, sess.tokens, t => { void saveTokens(t); onTokens(t); });
     const engine = new SyncEngine(store, client, { newId: uuidv4, userId: sess.userId });
     let role: UserRole = sess.role ?? 'commercial';
+    let nodes: OrgNode[] = sess.nodes ?? [];   // branches de l'organisation : une visite se crée dans l'une d'elles
     let lang = sess.lang ?? 'fr';          // langue des comptes rendus (champ `dictation_language` du profil) ; la dictée, elle, détecte la langue parlée
     try {   // profil à jour quand le réseau est disponible ; sinon valeurs conservées (hors-ligne : commercial et français par défaut)
       const me = await client.me();
-      if (me.role !== role || me.dictation_language !== lang) { role = me.role; lang = me.dictation_language; await saveSession({ ...sess, role, lang }); }
+      const meNodes: OrgNode[] = me.nodes ?? [];
+      if (me.role !== role || me.dictation_language !== lang || JSON.stringify(meNodes) !== JSON.stringify(nodes)) { role = me.role; lang = me.dictation_language; nodes = meNodes; await saveSession({ ...sess, role, lang, nodes }); }
     } catch { /* hors-ligne */ }
-    setCtx({ server: sess.server, store, engine, client, userId: sess.userId, role, lang });
+    setCtx({ server: sess.server, nodes, store, engine, client, userId: sess.userId, role, lang });
     setBoot('ready');
     void fetchBrand(sess.server).then(b => { if (b) updateBrand(b); });
   }, [updateBrand]);
@@ -143,7 +145,7 @@ function Login({ onDone, onBrand }: { onDone: (s: Session) => Promise<void>; onB
       const client = new ApiClient(server, APP_VERSION, undefined);
       const tokens = await client.login(email.trim(), password, PLATFORM);
       const me = await client.me();
-      await onDone({ server, userId: me.id, role: me.role, lang: me.dictation_language, tokens });
+      await onDone({ server, userId: me.id, role: me.role, lang: me.dictation_language, nodes: me.nodes ?? [], tokens });
     } catch (e: any) {
       setErr(e.code === 'invalid_credentials' ? 'Identifiants incorrects.' : e.code === 'account_locked' ? 'Compte verrouillé, réessayez plus tard.'
         : e.code === 'upgrade_required' ? 'Mettez l\'application à jour.' : 'Connexion impossible. Vérifiez le réseau et l\'adresse du serveur.');
@@ -202,7 +204,7 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
     const sub = BackHandler.addEventListener('hardwareBackPress', goBack);
     return () => sub.remove();
   }, [goBack]);
-  const [group, setGroup] = useState<'client' | 'date'>('client');
+  const [group, setGroup] = useState<'client' | 'date' | 'branch'>('client');
   const [showValidated, setShowValidated] = useState(false);       // visites validées : masquées par défaut
   const [showDeleted, setShowDeleted] = useState(false);         // visites supprimées : masquées par défaut
   const [showFinished, setShowFinished] = useState(false);         // actions terminées ou annulées : masquées par défaut
@@ -249,6 +251,14 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
     return [...m.entries()].map(([id, vs]) => ({ id, name: companyName(id), visits: vs.sort(byDateDesc) })).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   })();
 
+  // Regroupement par branche (consolidé) : proposé quand les visites visibles appartiennent à plusieurs branches (direction, managers, commerciaux multi-branches).
+  const manyBranches = new Set(visibleVisits.map(v => v.org_node_id)).size > 1;
+  const branchGroups = (() => {
+    const m = new Map<string, { id: string; name: string; visits: Row[] }>();
+    for (const v of shownVisits) { const g = m.get(v.org_node_id) ?? { id: v.org_node_id, name: v.org_node_name ?? 'Sans branche', visits: [] as Row[] }; g.visits.push(v); m.set(v.org_node_id, g); }
+    return [...m.values()].map(g => ({ ...g, visits: g.visits.sort(byDateDesc) })).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+  })();
+
   const themeLabels: [ThemePref, string][] = [['system', 'Système'], ['light', 'Clair'], ['dark', 'Sombre']];
 
   return (
@@ -263,7 +273,7 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
       {screen.name !== 'report' && screen.name !== 'visit' && <ScrollView ref={mainScroll} contentContainerStyle={s.pad}>
         {screen.name === 'today' && <>
           <View style={s.rowBetween}><Text style={s.h1}>Visites</Text><BrandMark name={false} /></View>
-          <Seg value={group} onChange={setGroup} options={[['client', 'Par client'], ['date', 'Par date']]} />
+          <Seg value={group} onChange={setGroup} options={[['client', 'Par client'], ['date', 'Par date'], ...(manyBranches ? [['branch', 'Par branche'] as ['branch', string]] : [])]} />
           {lateReports.length > 0 && <View style={[s.rowCard, { borderLeftWidth: 6, borderLeftColor: c.late, flexDirection: 'column', alignItems: 'stretch', gap: 2 }]} accessibilityRole="alert">
             <Text style={[s.t, { color: c.late, fontWeight: '700' }]}>{lateReports.length} compte{lateReports.length > 1 ? 's' : ''} rendu{lateReports.length > 1 ? 's' : ''} à valider depuis plus de {REPORT_LATE_DAYS} jours</Text>
             <Text style={s.muted}>{lateReports.slice(0, 3).map(v => companyName(v.company_id)).join(', ')}{lateReports.length > 3 ? '…' : ''}{ctx.role !== 'commercial' ? ' · équipe incluse' : ''}. Sans validation, aucune action n'est créée.</Text>
@@ -278,7 +288,13 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
           </View>
           {hiddenValidated > 0 && <Text style={s.muted}>{hiddenValidated} visite{hiddenValidated > 1 ? 's' : ''} terminée{hiddenValidated > 1 ? 's' : ''} masquée{hiddenValidated > 1 ? 's' : ''}.</Text>}
           {shownVisits.length === 0 && <Text style={s.muted}>{data.visits.length === 0 ? 'Aucune visite. Ouvrez un client (onglet Clients) pour en planifier une.' : 'Aucune visite à afficher.'}</Text>}
-          {group === 'client'
+          {group === 'branch'
+            ? branchGroups.map(g => (
+              <View key={g.id} style={{ gap: 8 }}>
+                <View style={s.group}><Text accessibilityRole="header" style={s.h2}>{g.name}</Text><Text style={s.muted}>{g.visits.length} visite{g.visits.length > 1 ? 's' : ''}</Text></View>
+                {g.visits.map(v => <VisitRow key={v.id} v={v} client={companyName(v.company_id)} onPress={() => navigate({ name: 'visit', id: v.id })} openActions={openActionsOf(v.id)} />)}
+              </View>))
+            : group === 'client'
             ? groups.map(g => (
               <View key={g.id} style={{ gap: 8 }}>
                 <View style={s.group}><Text accessibilityRole="header" style={s.h2}>{g.name}</Text><Text style={s.muted}>{g.visits.length} visite{g.visits.length > 1 ? 's' : ''}{g.visits.some(v => isVisitLate(v)) ? <Text style={{ color: c.late, fontWeight: '700' }}> · {g.visits.filter(v => isVisitLate(v)).length} en retard</Text> : null}</Text></View>
@@ -296,8 +312,8 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
         </>}
         {screen.name === 'client' && <ClientScreen key={screen.id} companyId={screen.id} data={data} ctx={ctx} act={act} back={goBack} showDeleted={showDeleted} showFinished={showFinished}
           openVisit={id => navigate({ name: 'visit', id })} openAction={id => navigate({ name: 'action', id })}
-          planVisit={async co => { const addr = companyAddress(co);
-            const id = await ctx.engine.create('visit', { company_id: co.id, status: 'planned', planned_start: ceilTo15(new Date()).toISOString(), ...(addr ? { location_text: addr } : {}) }); await load(); void sync(); navigate({ name: 'visit', id }); }} />}
+          planVisit={async (co, nodeId) => { const addr = companyAddress(co);
+            const id = await ctx.engine.create('visit', { company_id: co.id, ...(nodeId ? { org_node_id: nodeId } : {}), status: 'planned', planned_start: ceilTo15(new Date()).toISOString(), ...(addr ? { location_text: addr } : {}) }); await load(); void sync(); navigate({ name: 'visit', id }); }} />}
         {screen.name === 'actions' && (() => {
           const filterVisit = screen.visitId ? data.visits.find(x => x.id === screen.visitId) : undefined;
           const inScope = data.actions.filter(a => !screen.visitId || a.visit_id === screen.visitId);
@@ -394,10 +410,12 @@ function VisitRow({ v, client, onPress, openActions }: { v: Row; client?: string
 }
 
 /** Fiche client : informations (CRM, lecture seule), visites précédentes avec leur compte rendu, actions associées. */
-function ClientScreen({ companyId, data, ctx, act, back, showDeleted, showFinished, openVisit, openAction, planVisit }: { companyId: string; data: Data; ctx: Ctx; act: Act; back: () => void; showDeleted: boolean; showFinished: boolean; openVisit: (id: string) => void; openAction: (id: string) => void; planVisit: (co: Row) => Promise<void> }) {
+function ClientScreen({ companyId, data, ctx, act, back, showDeleted, showFinished, openVisit, openAction, planVisit }: { companyId: string; data: Data; ctx: Ctx; act: Act; back: () => void; showDeleted: boolean; showFinished: boolean; openVisit: (id: string) => void; openAction: (id: string) => void; planVisit: (co: Row, nodeId?: string) => Promise<void> }) {
   const { s, c } = useTheme();
   const co: Row | undefined = data.companies.find(x => x.id === companyId);
   const [busy, setBusy] = useState(false);
+  const [pick, setPick] = useState(false);
+  const start = (nodeId?: string) => { if (!co || busy) return; setBusy(true); void planVisit(co, nodeId).finally(() => setBusy(false)); };
   if (!co) return <><Btn small title="‹ Retour" onPress={back} /><Text style={s.muted}>Client introuvable.</Text></>;
   const all = data.visits.filter(v => v.company_id === companyId);
   const visits = all.filter(v => showDeleted || v.status !== 'deleted').sort((a, b) => String(b.planned_start ?? '').localeCompare(String(a.planned_start ?? '')));
@@ -416,7 +434,12 @@ function ClientScreen({ companyId, data, ctx, act, back, showDeleted, showFinish
       {info.map(([k, val]) => <View key={String(k)} style={s.fact}><Text style={s.muted}>{k}</Text><Text style={[s.t, { flexShrink: 1, textAlign: 'right' }]}>{String(val)}</Text></View>)}
       <Text style={s.muted}>Source : CRM, lecture seule.</Text>
     </View>
-    <Btn title="+ Planifier une visite" onPress={() => { if (busy) return; setBusy(true); void planVisit(co).finally(() => setBusy(false)); }} />
+    <Btn title="+ Planifier une visite" onPress={() => { if (busy) return; if (ctx.nodes.length > 1) setPick(true); else start(ctx.nodes[0]?.id); }} />
+    <Sheet title="Pour quelle branche ?" visible={pick} onClose={() => setPick(false)}>
+      <Text style={s.muted}>Vous êtes affecté à plusieurs branches de l'organisation : la visite appartient à celle que vous choisissez (visible de ses managers et directeurs).</Text>
+      {ctx.nodes.map(n => <Btn key={n.id} title={n.path} onPress={() => { setPick(false); setTimeout(() => start(n.id), 300); }} />)}   
+      <Btn small title="Annuler" onPress={() => setPick(false)} />
+    </Sheet>
 
     <Label>Visites ({visits.length})</Label>
     {visits.length === 0 && <Text style={s.muted}>Aucune visite pour ce client.</Text>}
@@ -497,6 +520,7 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName, offline, open
           <Text style={[s.t, { flexShrink: 1, textAlign: 'right' }, isVisitLate(v) && { color: c.late }]}>{v.planned_start ? fmtDateTime(v.planned_start) : 'non planifiée'}</Text>
           {(canDate || dateWhy) && <Icon label="Modifier la date prévue" onPress={() => setSheet('date')} why={canDate ? undefined : dateWhy} />}
         </View></View>
+      {!!v.org_node_name && (ctx.nodes.length > 1 || ctx.role !== 'commercial') && <View style={s.fact}><Text style={s.muted}>Branche</Text><Text style={[s.t, { flexShrink: 1, textAlign: 'right' }]}>{v.org_node_name}</Text></View>}
       <View style={s.fact}><Text style={s.muted}>Commencée</Text><Text style={s.t}>{v.started_at ? fmtDateTime(v.started_at) : '—'}</Text></View>
       <View style={s.fact}><Text style={s.muted}>Fin du rendez-vous</Text><Text style={s.t}>{v.ended_at ? fmtDateTime(v.ended_at) : '—'}</Text></View>
       <View style={s.fact}><Text style={s.muted}>Adresse de la visite</Text>{(canAddress || addressWhy) && <Icon label="Modifier l'adresse de la visite" onPress={() => setSheet('address')} why={canAddress ? undefined : addressWhy} />}</View>
