@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { api, type R } from '../api';
-import { Alert, Badge, Card, Empty, Field, Loading, Modal, useLoad, errMsg } from '../ui';
+import { Alert, Badge, Card, Empty, Field, Loading, Modal, Why, useLoad, errMsg } from '../ui';
 
 const PAGE = 50;
 export function Clients() {
@@ -62,6 +62,7 @@ function CompanyModal({ id, onClose, onChanged }: { id: string | null; onClose: 
           {cid && <Field label="Statut"><select value={form.status} onChange={e => set('status', e.target.value)}><option value="active">Actif</option><option value="inactive">Inactif (n'apparaît plus dans les applications)</option></select></Field>}
         </div>
           {err && <Alert>{err}</Alert>}{ok && <Alert kind="ok">{ok}</Alert>}
+          <Why>{!form.name?.trim() ? 'Renseignez le nom du client pour enregistrer.' : ''}</Why>
         </section>
         {cid && d ? <>
           <section><h3>Commerciaux affectés</h3><p className="muted">Un commercial voit le client (et ses managers avec lui) dès qu'il lui est affecté.</p>
@@ -92,7 +93,8 @@ function Contacts({ companyId, contacts, onChange }: { companyId: string; contac
         <Field label="Fonction"><input value={edit.job_title ?? ''} onChange={e => setEdit({ ...edit, job_title: e.target.value })} /></Field>
         <Field label="Téléphone"><input value={edit.phone ?? ''} onChange={e => setEdit({ ...edit, phone: e.target.value })} /></Field>
         <Field label="E-mail"><input type="email" value={edit.email ?? ''} onChange={e => setEdit({ ...edit, email: e.target.value })} /></Field>
-        <div className="full toolbar"><button onClick={() => setEdit(null)}>Annuler</button><button className="primary" disabled={!edit.full_name?.trim()} onClick={() => void save()}>Enregistrer le contact</button></div></div>}
+        <div className="full toolbar"><button onClick={() => setEdit(null)}>Annuler</button><button className="primary" disabled={!edit.full_name?.trim()} onClick={() => void save()}>Enregistrer le contact</button></div>
+        <div className="full"><Why>{!edit.full_name?.trim() ? 'Renseignez le nom du contact pour enregistrer.' : ''}</Why></div></div>}
       {err && <Alert>{err}</Alert>}
     </section>
   );
@@ -121,6 +123,7 @@ function ImportModal({ onClose, onDone }: { onClose: () => void; onDone: () => v
       </div>
       {err && <Alert>{err}</Alert>}
       {errs.length > 0 && <table><thead><tr><th>Fichier</th><th>Ligne</th><th>Problème</th></tr></thead><tbody>{errs.map((e, i) => <tr key={i}><td>{e.file}</td><td>{e.line}</td><td>{e.message}</td></tr>)}</tbody></table>}
+      <Why>{!ready ? 'Choisissez au moins un fichier CSV.' : !res && !err ? 'Cliquez d\'abord sur « Vérifier » : l\'import n\'est possible qu\'après une vérification réussie.' : err ? 'Corrigez le fichier puis vérifiez à nouveau : l\'import est bloqué tant que la vérification échoue.' : ''}</Why>
       {res && !err && <Alert kind="ok">{res.dry_run ? 'Vérification réussie' : 'Import terminé'} : {res.companies} client(s), {res.contacts} contact(s){res.dry_run ? '. Cliquez sur « Importer » pour enregistrer.' : '.'}</Alert>}
       {(res?.warnings?.length ?? 0) > 0 && <Alert kind="warn"><strong>Avertissements :</strong><ul>{res!.warnings.slice(0, 20).map((w: string, i: number) => <li key={i}>{w}</li>)}</ul></Alert>}
     </Modal>

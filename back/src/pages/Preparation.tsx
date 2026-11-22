@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, type R } from '../api';
 import type { Me } from '../App';
-import { Alert, Badge, Card, Empty, Field, Loading, Modal, useLoad, errMsg } from '../ui';
+import { Alert, Badge, Card, Empty, Field, Loading, Modal, Why, useLoad, errMsg } from '../ui';
 import { REASON, STATUS, STATUS_TONE, TEMP, daysAgo, fmtDate, fmtDateTime, isoToLocal, localToIso } from '../format';
 
 type Tab = 'suggestions' | 'planning';
@@ -142,6 +142,7 @@ function PlanModal({ me, company, visit, onClose, onDone }: { me: Me; company?: 
     } catch (e) { setErr(errMsg(e)); } finally { setBusy(false); }
   };
   const ok = (edit || (companyId && userId)) && !!when;
+  const why = !edit && !companyId ? 'Choisissez un client.' : !edit && !userId ? (users.data && !users.data.users.some((u: R) => u.assigned) ? 'Aucun commercial de votre périmètre n\'est affecté à ce client : affectez-le d\'abord (rubrique Clients).' : 'Choisissez le commercial qui réalisera la visite.') : !when ? 'Indiquez la date et l\'heure.' : '';
   return (
     <Modal title={edit ? 'Modifier la visite' : 'Planifier une visite'} onClose={onClose} footer={<><button onClick={onClose}>Annuler</button><button className="primary" disabled={!ok || busy} onClick={() => void save()}>{busy ? 'Enregistrement…' : 'Enregistrer'}</button></>}>
       <div className="form">
@@ -161,6 +162,7 @@ function PlanModal({ me, company, visit, onClose, onDone }: { me: Me; company?: 
         <Field full label="Points à aborder" hint="Visibles du commercial dans l'application mobile."><textarea rows={4} value={notes} onChange={e => setNotes(e.target.value)} maxLength={5000} /></Field>
       </div>
       {err && <Alert>{err}</Alert>}
+      <Why>{why}</Why>
       {!edit && <p className="muted">Le commercial recevra la visite à sa prochaine synchronisation.</p>}
     </Modal>
   );

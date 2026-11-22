@@ -213,7 +213,7 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await page.getByText('Dictée relue : le client confirme un budget de 40 000 euros.').waitFor();
   const tr = await (await fetch('http://127.0.0.1:4010/__transcriptions')).json();
   assert.equal(tr.length, 1); assert.equal(tr[0].auth, 'Bearer cle-de-test');
-  assert.match(tr[0].contentType, /^multipart\/form-data/); assert.equal(tr[0].language, 'fr', 'langue de dictée du profil');
+  assert.match(tr[0].contentType, /^multipart\/form-data/); assert.ok(!tr[0].language, 'aucune langue imposée à la dictée : détection automatique');
   assert.equal(tr[0].fileType.trim(), 'audio/webm', 'format enregistré par le navigateur');
   assert.ok(tr[0].bytes > 1000, `audio reçu (${tr[0].bytes} octets)`);
   await shot(page, '3h-dictee');
@@ -226,7 +226,7 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await page.getByRole('heading', { name: 'Dupont SA' }).waitFor();
   await page.goForward();
   await page.getByRole('heading', { name: 'Compte rendu' }).waitFor();
-  await page.getByRole('button', { name: 'Générer à partir des notes (IA)' }).click();
+  await page.getByRole('button', { name: /Générer \(IA\)/ }).click();
   await page.getByText('Proposition de l\'IA').waitFor();
   assert.ok(await page.getByText('Nombre absent des notes : 50000', { exact: false }).first().isVisible(), 'nombre qui ne figure pas dans les notes : signalé');
   assert.ok(await page.getByText(/Échéance calculée à partir d'une date relative/).first().isVisible(), 'échéance relative signalée');
@@ -263,7 +263,8 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await page.getByLabel('Résumé du compte rendu').fill('Intéressé par l\'offre B, budget à confirmer.');
   // validation du compte rendu impossible tant que la visite n'est pas terminée
   assert.equal(await page.getByRole('button', { name: 'Valider le compte rendu' }).isDisabled(), true, 'validation refusée visite en cours');
-  await page.getByText('Terminez le rendez-vous (« Fin du rendez-vous ») pour pouvoir valider le compte rendu.').waitFor();
+  await page.getByText('Pour valider : terminez le rendez-vous (« Fin du rendez-vous » sur la visite).').waitFor();
+  await shot(page, '3k-cr-brouillon');
   await page.getByRole('button', { name: 'Enregistrer', exact: true }).click();
   await page.getByRole('button', { name: '‹ Retour' }).click();
   await page.getByRole('heading', { name: 'Dupont SA' }).waitFor();
@@ -272,10 +273,14 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
 
   // Fin de visite : les notes durant visite ne sont plus modifiables (les notes internes, si) ; terminer ne crée aucune action
   await page.getByRole('button', { name: 'Fin du rendez-vous' }).click();
+  // sections repliées d'office une fois le rendez-vous terminé : le résumé dit combien de notes, un clic les déplie
+  assert.equal(await page.getByText('Le rendez-vous est terminé : les notes durant visite ne sont plus modifiables.').count(), 0, 'section « Notes durant visite » repliée');
+  await page.getByRole('button', { name: /Notes durant visite/ }).click();
   await page.getByText('Le rendez-vous est terminé : les notes durant visite ne sont plus modifiables.').waitFor();
   assert.equal(await page.getByRole('button', { name: 'Modifier la note', exact: true }).count(), 0, 'plus de modification de note');
   assert.equal(await page.getByRole('button', { name: '+ Ajouter une note', exact: true }).count(), 0, 'plus d\'ajout de note');
   assert.equal(await page.getByRole('button', { name: /Dicter une note/ }).count(), 0, 'plus de dictée de note');
+  await page.getByRole('button', { name: /Notes internes/ }).click();
   assert.ok(await page.getByRole('button', { name: '+ Ajouter une note interne' }).isVisible(), 'notes internes : toujours possibles');
   assert.equal(await page.getByText('Aucune action pour cette visite.').count(), 1, 'terminer la visite ne crée aucune action');
   assert.ok(await page.getByText('Effectuée', { exact: true }).first().isVisible(), 'rendez-vous fini : visite « Effectuée », pas « Terminée »');
@@ -578,7 +583,7 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   assert.equal((await (await fetch('http://127.0.0.1:4010/__transcriptions')).json()).length, 5, 'la dictée du champ « Intitulé » est transcrite');
   await np.getByRole('button', { name: 'Annuler', exact: true }).last().click();
   assert.equal(await np.getByRole('button', { name: 'Valider le compte rendu' }).isDisabled(), true, 'sans action ni case cochée : validation refusée');
-  await np.getByText('Ajoutez une action ou cochez « Aucune action à prévoir » pour valider.').waitFor();
+  await np.getByText('Pour valider : ajoutez une action ou cochez « Aucune action à prévoir ».').waitFor();
   await np.getByRole('checkbox', { name: 'Aucune action à prévoir' }).click();
   await np.getByRole('button', { name: 'Valider le compte rendu' }).click();
   await np.getByText('Compte rendu validé : les actions ont été créées.').waitFor();

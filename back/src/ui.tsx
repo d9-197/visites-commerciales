@@ -33,6 +33,8 @@ export const Field = ({ label, hint, children, full }: { label: string; hint?: s
 );
 export const Badge = ({ tone = 'grey', children }: { tone?: string; children: ReactNode }) => <span className={`badge ${tone}`}>{children}</span>;
 export const Alert = ({ kind = 'error', children }: { kind?: 'error' | 'ok' | 'warn'; children: ReactNode }) => <div className={`alert ${kind}`} role={kind === 'error' ? 'alert' : 'status'}>{children}</div>;
+/** Explique pourquoi une action est indisponible (affiché à côté du bouton grisé). */
+export const Why = ({ children }: { children?: ReactNode }) => (children ? <p className="why" role="status">{children}</p> : null);
 export const Empty = ({ children }: { children: ReactNode }) => <p className="empty">{children}</p>;
 export const Loading = () => <p className="empty">Chargement…</p>;
 

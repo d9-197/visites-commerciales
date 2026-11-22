@@ -8,7 +8,7 @@ Issues de la spec (§1 bis) :
 - Fonctionnement **hors-ligne** complet pour la consultation et la saisie.
 - **> 50 utilisateurs**, 3 niveaux hiérarchiques, clients partagés entre commerciaux.
 - **Hébergement UE** pour toutes les données, y compris audio, transcription et IA.
-- **6 langues** (FR, EN, ES, IT, DE, NL), une langue de dictée par commercial.
+- **6 langues** (FR, EN, ES, IT, DE, NL), une langue de rédaction des comptes rendus par commercial (la dictée détecte la langue parlée).
 - Parc **iOS + Android** (distribution et MDM hors périmètre de ce projet) ; comptes propres, **sans SSO**.
 - Le **CRM** envoie les clients (lecture seule) et vient **tout récupérer** par API (hors notes privées et audio).
 - Fournisseur de transcription/IA **non choisi** : il doit rester interchangeable.

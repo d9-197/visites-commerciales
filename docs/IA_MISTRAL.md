@@ -10,7 +10,7 @@ Sur la visite, **« Dicter une note »** enregistre la voix (micro du navigateur
 
 - **L'audio n'est pas conservé** (ni sur le serveur, ni sur l'appareil) et le texte transcrit n'est pas enregistré côté serveur avant relecture ; seule la consommation l'est (`ai_usage` : durée et coût).
 - **Dans les champs du compte rendu** : chaque champ (résumé, besoins, objections…) a une icône micro ; le texte transcrit est ajouté à la fin du champ, sans relecture intermédiaire puisque le champ est éditable sur place. Les notes durant visite, elles, passent par un texte à relire avant d'être créées.
-- **Langue** : celle du profil (`dictation_language`), sinon détection automatique par le modèle.
+- **Langue** : détection automatique par le modèle (l'application n'envoie plus de langue ; le paramètre `language` de l'API reste accepté). La langue du profil (`dictation_language`) ne sert qu'à la rédaction du compte rendu.
 - **Limites** : 25 Mo par enregistrement (`AUDIO_MAX_BYTES`), 5 minutes de dictée côté application (arrêt automatique), 10 demandes par minute et par utilisateur, plafond mensuel commun avec la synthèse.
 - **Sans HTTPS** : le micro du navigateur n'existe qu'en contexte sécurisé (HTTPS ou localhost). Sur une page en HTTP simple (essai sur le réseau local), l'application propose à la place **« Choisir un enregistrement audio »** (enregistreur du téléphone sur Android, ou fichier). Pour le micro direct, il faut servir l'application en HTTPS.
 - **En ligne seulement** : sans réseau, la dictée est désactivée. Le besoin initial (dicter hors-ligne, transcrire au retour du réseau) n'est pas encore couvert : il demande de stocker l'audio sur l'appareil et de l'envoyer ensuite par morceaux (voir `API.md`).
@@ -82,7 +82,7 @@ Au démarrage, le journal du back indique si l'IA est active : `docker compose l
 
 - La dictée est en ligne seulement ; pas de stockage de l'audio hors-ligne.
 - La transcription n'a pas de glossaire ni de vocabulaire personnalisé : à voir selon ce que l'API permet.
-- La langue du compte rendu est le français dans l'application ; elle devrait venir de la langue de dictée du profil.
+- La langue du compte rendu vient de la langue du profil (`dictation_language`), pas de la langue parlée : un commercial « anglais » qui dicte en français obtient un compte rendu en anglais.
 - Le glossaire est lu s'il existe en base, mais il n'y a pas d'écran pour le gérer.
 - Les mesures de qualité (acceptée sans modification, nombres modifiés…) et le signalement d'erreur ne sont pas câblés.
 - Réponse synchrone : acceptable pour du texte court. Avec la transcription audio, passer en traitement asynchrone (file de tâches), comme prévu dans l'architecture.

@@ -24,6 +24,7 @@ function makeStyles(c: Palette) {
     group: { marginTop: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' },
     bar: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 8, backgroundColor: c.okBg },
     barOff: { backgroundColor: c.warnBg }, barText: { fontSize: 12, fontWeight: '600', color: c.text }, link: { color: c.accent, fontWeight: '600', fontSize: 12 },
+    actionBar: { borderTopWidth: 1, borderColor: c.line, backgroundColor: c.surface, paddingHorizontal: 16, paddingVertical: 10, gap: 6 },
     tabs: { flexDirection: 'row', borderTopWidth: 1, borderColor: c.line, backgroundColor: c.surface }, tab: { flex: 1, paddingVertical: 14, alignItems: 'center' },
     tabText: { fontSize: 12, fontWeight: '600', color: c.muted }, tabOn: { color: c.accent },
     box: { width: 24, height: 24, borderRadius: 6, borderWidth: 2, borderColor: c.muted }, boxOn: { backgroundColor: c.ok, borderColor: c.ok },

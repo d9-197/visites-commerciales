@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { api, type R } from '../api';
 import type { Me } from '../App';
-import { Alert, Badge, Card, Empty, Field, Loading, Modal, useLoad, errMsg } from '../ui';
+import { Alert, Badge, Card, Empty, Field, Loading, Modal, Why, useLoad, errMsg } from '../ui';
 import { ROLE, fmtDateTime } from '../format';
 
 export function Accounts({ me }: { me: Me }) {
@@ -55,7 +55,8 @@ function UserModal({ user, users, onClose, onDone }: { user: R | null; users: R[
       else { const r = await api<R>('users', { method: 'POST', body: { ...body, ...(f.password ? { password: f.password } : {}) } }); onDone(r.temporary_password ? { who: f.display_name, password: r.temporary_password } : undefined); }
     } catch (e) { setErr(errMsg(e)); } finally { setBusy(false); }
   };
-  const valid = f.email.includes('@') && f.display_name.trim() && (!f.password || f.password.length >= 12) && (f.budget === '' || Number(f.budget.replace(',', '.')) >= 0);
+  const why = !f.display_name.trim() ? 'Renseignez le nom affiché.' : !f.email.includes('@') ? 'Renseignez une adresse e-mail valide.' : f.password && f.password.length < 12 ? 'Le mot de passe doit faire 12 caractères au moins (ou laissez vide pour en générer un).' : f.budget !== '' && !(Number(f.budget.replace(',', '.')) >= 0) ? 'Le plafond IA doit être un nombre positif (ou vide).' : '';
+  const valid = !why;
   return (
     <Modal title={user ? 'Modifier le compte' : 'Nouveau compte'} onClose={onClose} footer={<><button onClick={onClose}>Annuler</button><button className="primary" disabled={!valid || busy} onClick={() => void save()}>{busy ? 'Enregistrement…' : 'Enregistrer'}</button></>}>
       <div className="form">
@@ -63,12 +64,13 @@ function UserModal({ user, users, onClose, onDone }: { user: R | null; users: R[
         <Field label="E-mail"><input type="email" value={f.email} onChange={e => set('email', e.target.value)} /></Field>
         <Field label="Rôle"><select value={f.role} onChange={e => set('role', e.target.value)}><option value="commercial">Commercial</option><option value="manager">Manager</option><option value="directeur">Directeur</option></select></Field>
         <Field label="Supérieur hiérarchique"><select value={f.manager_id} onChange={e => set('manager_id', e.target.value)}><option value="">Aucun</option>{managers.map(m => <option key={m.id} value={m.id}>{m.display_name} ({ROLE[m.role]})</option>)}</select></Field>
-        <Field label="Langue de dictée"><select value={f.dictation_language} onChange={e => set('dictation_language', e.target.value)}>{[['fr', 'Français'], ['en', 'Anglais'], ['es', 'Espagnol'], ['it', 'Italien'], ['de', 'Allemand'], ['nl', 'Néerlandais']].map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></Field>
+        <Field label="Langue des comptes rendus" hint="Langue dans laquelle l'IA rédige. La dictée détecte seule la langue parlée."><select value={f.dictation_language} onChange={e => set('dictation_language', e.target.value)}>{[['fr', 'Français'], ['en', 'Anglais'], ['es', 'Espagnol'], ['it', 'Italien'], ['de', 'Allemand'], ['nl', 'Néerlandais']].map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></Field>
         <Field label="Plafond IA mensuel (€)" hint="Vide : plafond global."><input inputMode="decimal" value={f.budget} onChange={e => set('budget', e.target.value)} /></Field>
         <Field full label=""><span className="check"><input type="checkbox" checked={f.is_admin} onChange={e => set('is_admin', e.target.checked)} /> Administrateur (accès aux comptes, à la maquette CRM et à tous les périmètres)</span></Field>
         {!user && <Field full label="Mot de passe (facultatif)" hint="Vide : un mot de passe temporaire est généré et affiché une fois. 12 caractères minimum."><input type="text" autoComplete="off" value={f.password} onChange={e => set('password', e.target.value)} /></Field>}
       </div>
       {err && <Alert>{err}</Alert>}
+      <Why>{why}</Why>
     </Modal>
   );
 }

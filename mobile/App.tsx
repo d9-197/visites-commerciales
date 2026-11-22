@@ -100,7 +100,7 @@ function Root() {
     const client = new ApiClient(sess.server, APP_VERSION, sess.tokens, t => { void saveTokens(t); onTokens(t); });
     const engine = new SyncEngine(store, client, { newId: uuidv4, userId: sess.userId });
     let role: UserRole = sess.role ?? 'commercial';
-    let lang = sess.lang ?? 'fr';          // langue de dictée du profil : transcription et langue des comptes rendus
+    let lang = sess.lang ?? 'fr';          // langue des comptes rendus (champ `dictation_language` du profil) ; la dictée, elle, détecte la langue parlée
     try {   // profil à jour quand le réseau est disponible ; sinon valeurs conservées (hors-ligne : commercial et français par défaut)
       const me = await client.me();
       if (me.role !== role || me.dictation_language !== lang) { role = me.role; lang = me.dictation_language; await saveSession({ ...sess, role, lang }); }
@@ -158,6 +158,7 @@ function Login({ onDone, onBrand }: { onDone: (s: Session) => Promise<void>; onB
       <Label>E-mail</Label><TextInput accessibilityLabel="E-mail" placeholderTextColor={c.muted} style={s.input} value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" />
       <Label>Mot de passe</Label><TextInput accessibilityLabel="Mot de passe" placeholderTextColor={c.muted} style={s.input} value={password} onChangeText={setPassword} secureTextEntry />
       {err ? <Text style={s.err}>{err}</Text> : null}
+      {(!email || !password) && <Text style={s.muted}>Renseignez l'e-mail et le mot de passe pour vous connecter.</Text>}
       <Btn title={busy ? 'Connexion…' : 'Se connecter'} onPress={submit} disabled={busy || !email || !password} />
     </View></SafeAreaView>
   );
@@ -170,6 +171,10 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
   const [stack, setStack] = useState<Screen[]>([{ name: 'today' }]);
   const stackRef = useRef<Screen[]>(stack);
   const screen = stack[stack.length - 1]!;
+  // Une seule zone défilante sert à plusieurs écrans : on la remonte en haut à chaque changement d'écran (sinon l'écran s'ouvre à la position de l'écran précédent).
+  const mainScroll = useRef<ScrollView>(null);
+  const screenKey = `${screen.name}:${'id' in screen ? screen.id : ''}:${'visitId' in screen ? screen.visitId ?? '' : ''}`;
+  useEffect(() => { mainScroll.current?.scrollTo({ y: 0, animated: false }); }, [screenKey]);
   const TAB_SCREENS = ['today', 'clients', 'actions', 'settings'];
   const navigate = useCallback((next: Screen) => {
     const cur = stackRef.current;
@@ -253,7 +258,8 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
         <Text style={s.barText}>{status.offline ? 'Hors-ligne' : 'Synchronisé'}{data.pending ? ` · ${data.pending} en attente` : ''}{status.msg ? ` · ${status.msg}` : ''}</Text>
         <Pressable onPress={() => void sync()} accessibilityRole="button"><Text style={s.link}>Synchroniser</Text></Pressable>
       </View>
-      <ScrollView contentContainerStyle={s.pad}>
+      {screen.name === 'report' && <ReportScreen key={screen.id} visitId={screen.id} data={data} ctx={ctx} act={act} back={goBack} companyName={companyName} offline={status.offline} openActions={() => navigate({ name: 'actions', visitId: screen.id })} />}
+      {screen.name !== 'report' && <ScrollView ref={mainScroll} contentContainerStyle={s.pad}>
         {screen.name === 'today' && <>
           <View style={s.rowBetween}><Text style={s.h1}>Visites</Text><BrandMark name={false} /></View>
           <Seg value={group} onChange={setGroup} options={[['client', 'Par client'], ['date', 'Par date']]} />
@@ -292,7 +298,6 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
           planVisit={async co => { const addr = companyAddress(co);
             const id = await ctx.engine.create('visit', { company_id: co.id, status: 'planned', planned_start: ceilTo15(new Date()).toISOString(), ...(addr ? { location_text: addr } : {}) }); await load(); void sync(); navigate({ name: 'visit', id }); }} />}
         {screen.name === 'visit' && <VisitScreen key={screen.id} visitId={screen.id} data={data} ctx={ctx} act={act} back={goBack} companyName={companyName} offline={status.offline} openReport={() => navigate({ name: 'report', id: screen.id })} openActions={() => navigate({ name: 'actions', visitId: screen.id })} />}
-        {screen.name === 'report' && <ReportScreen key={screen.id} visitId={screen.id} data={data} ctx={ctx} act={act} back={goBack} companyName={companyName} offline={status.offline} openActions={() => navigate({ name: 'actions', visitId: screen.id })} />}
         {screen.name === 'actions' && (() => {
           const filterVisit = screen.visitId ? data.visits.find(x => x.id === screen.visitId) : undefined;
           const inScope = data.actions.filter(a => !screen.visitId || a.visit_id === screen.visitId);
@@ -358,7 +363,7 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
           <Text style={s.muted}>Version {APP_VERSION}. Dictée, IA et chiffrement de la base : non implémentés dans ce prototype.</Text>
           <Btn title="Se déconnecter (efface les données de l'appareil)" onPress={onLogout} />
         </>}
-      </ScrollView>
+      </ScrollView>}
       <View style={s.tabs}>
         {([['today', 'Visites'], ['clients', 'Clients'], ['actions', 'Actions'], ['settings', 'Réglages']] as const).map(([k, l]) => (
           <Pressable key={k} style={s.tab} onPress={() => navigate({ name: k } as Screen)} accessibilityRole="button"><Text style={[s.tabText, (screen.name === k || (k === 'clients' && screen.name === 'client')) && s.tabOn]}>{l}</Text></Pressable>
@@ -488,9 +493,12 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName, offline, open
       {address
         ? <Pressable onPress={() => setSheet('nav')} accessibilityRole="link" accessibilityLabel="Ouvrir l'itinéraire"><Text style={[s.t, { color: c.accent, textDecorationLine: 'underline' }]}>{address}  ›</Text></Pressable>
         : <Text style={s.muted}>Aucune adresse{canAddress ? ' : touchez le crayon pour en saisir une.' : '.'}</Text>}
+      {v.status !== 'deleted' && !canDate && <Text style={s.muted}>🔒 Date prévue : {!mine ? 'seul l\'auteur de la visite la modifie.' : 'non modifiable une fois la visite commencée.'}</Text>}
+      {v.status !== 'deleted' && !canAddress && <Text style={s.muted}>🔒 Adresse : {v.status === 'organized' ? 'une fois la visite organisée, seuls les commerciaux la modifient.' : 'non modifiable une fois la visite commencée.'}</Text>}
       <Pressable onPress={() => setSheet('history')} accessibilityRole="button" style={{ minHeight: 36, justifyContent: 'center' }}>
         <Text style={s.link}>Historique des modifications ({entries.length})</Text></Pressable>
     </View>
+    {!mine && v.status !== 'deleted' && <Text style={s.muted}>Visite de {data.colleagues.find(u => u.id === v.author_id)?.display_name ?? 'un autre commercial'} : consultation seulement. Seul l'auteur la démarre, la termine et rédige le compte rendu.</Text>}
     {(v.objective || v.preparation_notes || (v.created_by && v.created_by !== v.author_id)) && (
       <View style={[s.rowCard, { flexDirection: 'column', alignItems: 'stretch', gap: 4 }]} accessibilityLabel="Préparation de la visite">
         <Text style={s.t}>Préparation</Text>
@@ -505,20 +513,22 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName, offline, open
     {mine && v.status === 'in_progress' && <Text style={s.muted}>Quand vous quittez le client. Il restera à valider le compte rendu et à faire les actions ; la visite sera « Terminée » quand tout sera fait.</Text>}
     {isReportLate(v) && <Text style={[s.muted, { color: c.late, fontWeight: '600' }]}>Compte rendu à valider depuis plus de {REPORT_LATE_DAYS} jours.</Text>}
 
-    <Label>Notes durant visite</Label>
+    <FoldSection title="Notes durant visite" summary={visitNotes.length ? `${visitNotes.length} note${visitNotes.length > 1 ? 's' : ''}` : 'aucune'} defaultOpen={notesOpen}>
     {visitNotes.map(n => n.author_id === ctx.userId && notesOpen
       ? <Pressable key={n.id} onPress={() => setEditing({ entity: 'note', row: n })} accessibilityRole="button" accessibilityLabel="Modifier la note" style={[s.note, { flexDirection: 'row', gap: 8 }]}>
           <Text style={{ color: c.text, flex: 1 }}>{n.body}</Text><Text style={s.iconText}>✎</Text></Pressable>
       : <Text key={n.id} style={s.note}>{n.body}</Text>)}
     {mine && !notesOpen && v.status !== 'deleted' && <Text style={s.muted}>Le rendez-vous est terminé : les notes durant visite ne sont plus modifiables.</Text>}
+    {!mine && notesOpen && <Text style={s.muted}>Seul l'auteur de la visite ajoute des notes durant visite.</Text>}
     {mine && notesOpen && <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
       <DictationControl id="notes" label="Notes durant visite" review active={dictating} setActive={setDictating} ctx={ctx} visitId={visitId} offline={offline}
         onText={text => act(() => ctx.engine.create('note', { visit_id: visitId, kind: 'voice', body: text }))} onError={setDictError} />
       {dictating !== 'notes' && <Btn small title="+ Ajouter une note" onPress={() => setNoteSheet('note')} />}
     </View>}
     {dictErr?.id === 'notes' && <Text style={s.err}>{dictErr.msg}</Text>}
+    </FoldSection>
 
-    <Label>Notes internes</Label>
+    <FoldSection title="Notes internes" summary={internal.length ? `${internal.length} note${internal.length > 1 ? 's' : ''}` : 'aucune'} defaultOpen={['planned', 'organized', 'in_progress'].includes(v.status)}>
     <Text style={s.muted}>Partagées avec votre hiérarchie. Elles n'apparaissent pas dans le compte rendu et ne sont jamais envoyées à l'IA.</Text>
     {internal.map(n => (
       <Pressable key={n.id} disabled={n.author_id !== ctx.userId || !canEditInternalNote(v.status)} onPress={() => setEditing({ entity: 'internal_note', row: n })} accessibilityRole="button" accessibilityLabel={n.author_id === ctx.userId && canEditInternalNote(v.status) ? 'Modifier la note interne' : 'Note interne'}
@@ -528,8 +538,10 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName, offline, open
       </Pressable>))}
     {v.status === 'validated' && internal.length > 0 && <Text style={s.muted}>Compte rendu validé : vous pouvez ajouter une note interne, les notes existantes ne se modifient plus.</Text>}
     {ctx.role === 'commercial' && v.status !== 'deleted' && <View style={{ flexDirection: 'row' }}><Btn small title="+ Ajouter une note interne" onPress={() => setNoteSheet('internal')} /></View>}
+    {ctx.role !== 'commercial' && v.status !== 'deleted' && <Text style={s.muted}>Les notes internes sont écrites par les commerciaux ; vous les lisez en lecture seule.</Text>}
+    </FoldSection>
 
-    <Label>Actions</Label>
+    <FoldSection title="Actions" summary={visitActions.length ? `${todoCount} à faire · ${doneCount} terminée${doneCount > 1 ? 's' : ''}` : 'aucune'} defaultOpen>
     {visitActions.length > 0
       ? <Pressable onPress={openActions} accessibilityRole="button" accessibilityLabel="Voir les actions de la visite" style={s.rowCard}>
           <View style={{ flex: 1, gap: 2 }}>
@@ -539,6 +551,9 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName, offline, open
       : <Text style={s.muted}>Aucune action pour cette visite.</Text>}
     {drafts.length > 0 && <Text style={s.muted}>{drafts.length} action{drafts.length > 1 ? 's' : ''} prévue{drafts.length > 1 ? 's' : ''} : créée{drafts.length > 1 ? 's' : ''} à la validation du compte rendu.</Text>}
     {mine && reportOpen && <View style={{ flexDirection: 'row' }}><Btn small title="+ Ajouter une action" onPress={() => setActionSheet(true)} /></View>}
+    {mine && !reportOpen && v.status !== 'deleted' && <Text style={s.muted}>L'ajout d'actions est possible une fois la visite commencée.</Text>}
+    {!mine && <Text style={s.muted}>Seul l'auteur de la visite ajoute des actions.</Text>}
+    </FoldSection>
 
     <Label>Compte rendu</Label>
     {reportOpen
@@ -605,6 +620,8 @@ function ReportScreen({ visitId, data, ctx, act, back, companyName, offline, ope
   const [dictErr, setDictErr] = useState<{ id: string; msg: string }>();
   const [actionSheet, setActionSheet] = useState<{ index: number | null } | null>(null);     // ajout (null) ou modification d'une action prévue
   const [confirmReopen, setConfirmReopen] = useState(false);
+  const [openK, setOpenK] = useState<Record<string, boolean>>({});   // sections ouvertes ou fermées par l'utilisateur
+  const scrollRef = useRef<ScrollView>(null);
   const [noAction, setNoAction] = useState(!!report?.no_action);
   const setDictError = (id: string, msg?: string) => setDictErr(msg ? { id, msg } : undefined);
   const appendTo = (k: string, text: string) => setF(cur => ({ ...cur, [k]: cur[k] && cur[k]!.trim() ? `${cur[k]!.trimEnd()} ${text}` : text }));
@@ -660,63 +677,81 @@ function ReportScreen({ visitId, data, ctx, act, back, companyName, offline, ope
     });
   };
 
+  // Pourquoi une action est impossible : dit à l'utilisateur ce qu'il manque, au lieu de griser un bouton sans explication.
+  const validateBlockers = [
+    !canValidateReport(v.status) ? 'terminez le rendez-vous (« Fin du rendez-vous » sur la visite)' : '',
+    !(f.summary ?? '').trim() ? 'renseignez le résumé' : '',
+    noActionAsked && !noAction ? 'ajoutez une action ou cochez « Aucune action à prévoir »' : '',
+  ].filter(Boolean);
+  const saveBlocker = !hasContent && !report ? 'Rien à enregistrer : le compte rendu est vide.' : '';
+  const reveal = (k: string) => setOpenK(cur => ({ ...cur, [k]: true }));
+  const isOpen = (k: string, dflt: boolean) => openK[k] ?? dflt;
+  const toggle = (k: string, dflt: boolean) => setOpenK(cur => ({ ...cur, [k]: !(cur[k] ?? dflt) }));
+
   return <>
-    <View style={s.headerRow}>
-      <Pressable onPress={back} accessibilityRole="button" style={s.backBtn}><Text style={s.link}>‹ Retour</Text></Pressable>
-      <Text style={s.titleCenter} numberOfLines={1} accessibilityRole="header">Compte rendu</Text>
-      <View style={s.backBtn} />
-    </View>
-    <View style={[s.rowCard, { flexDirection: 'column', alignItems: 'stretch', gap: 6 }]}>
-      <View style={s.fact}><Text style={s.muted}>Visite</Text><Text style={s.t}>{companyName(v.company_id)}</Text></View>
-      <View style={s.fact}><Text style={s.muted}>Statut du compte rendu</Text><Pill text={state.text} color={state.color} /></View>
-    </View>
-    {mine && <>
-      <Btn title={aiBusy ? 'Génération en cours…' : 'Générer à partir des notes (IA)'} disabled={aiBusy || !canGenerate} onPress={generate} />
-      <Text style={s.muted}>{whyNot ?? 'Utilise les notes durant visite, jamais les notes internes. Vous relisez avant d\'appliquer.'}</Text>
-      {aiErr && <Text style={s.err}>{aiErr}</Text>}
-    </>}
-    {REPORT_FIELDS.map(([k, label]) => (
-      <View key={k} style={{ gap: 4 }}>
-        <View style={s.rowBetween}>
-          <Text style={s.muted}>{label}</Text>
-          {mine && !validated && <DictationControl compact id={`field:${k}`} label={label} active={dictating} setActive={setDictating} ctx={ctx} visitId={visitId} offline={offline}
-            onText={text => appendTo(k, text)} onError={setDictError} />}
-        </View>
-        {dictErr?.id === `field:${k}` && <Text style={s.err}>{dictErr.msg}</Text>}
-        <TextInput accessibilityLabel={k === 'summary' ? 'Résumé du compte rendu' : label} placeholderTextColor={c.muted} style={[s.input, { minHeight: k === 'summary' ? 90 : 60 }]}
-          value={f[k] ?? ''} onChangeText={t => setF(cur => ({ ...cur, [k]: t }))} multiline editable={mine && !validated} />
-      </View>))}
-
-    <Label>{validated ? 'Actions' : 'Actions à créer à la validation'}</Label>
-    {validated
-      ? <Text style={s.muted}>Compte rendu validé : les actions ont été créées.</Text>
-      : <Text style={s.muted}>Elles ne deviennent de vraies actions que lorsque le compte rendu est validé.</Text>}
-    {!validated && drafts.map((d, i) => (
-      <Pressable key={d.id} disabled={!mine} onPress={() => setActionSheet({ index: i })} accessibilityRole="button" accessibilityLabel={`Modifier l'action prévue : ${d.title}`} style={[s.note, { flexDirection: 'row', gap: 8 }]}>
-        <View style={{ flex: 1 }}><Text style={{ color: c.text }}>{d.title}</Text><Text style={s.muted}>{d.due_date ? fmtDate(d.due_date) : 'sans échéance'}{d.origin === 'ai' ? ' · proposée par l\'IA' : ''}</Text></View>
-        {mine && <Text style={s.iconText}>✎</Text>}
-      </Pressable>))}
-    {mine && !validated && <View style={{ flexDirection: 'row' }}><Btn small title="+ Ajouter une action" onPress={() => setActionSheet({ index: null })} /></View>}
-    {mine && !validated && noActionAsked && <Pressable onPress={() => setNoAction(x => !x)} accessibilityRole="checkbox" accessibilityState={{ checked: noAction }} accessibilityLabel="Aucune action à prévoir" style={[s.rowCard, { gap: 10 }]}>
-      <View style={[s.box, noAction && { backgroundColor: c.accent, borderColor: c.accent }]}>{noAction && <Text style={{ color: c.accentInk, fontWeight: '700' }}>✓</Text>}</View>
-      <Text style={[s.t, { flex: 1 }]}>Aucune action à prévoir</Text></Pressable>}
-    {visitActions.length > 0 && <Pressable onPress={openActions} accessibilityRole="button" accessibilityLabel="Voir les actions de la visite" style={s.rowCard}>
-      <View style={{ flex: 1, gap: 2 }}><Text style={s.t}>Actions de la visite</Text><Text style={s.muted}>{todoCount} à faire · {doneCount} terminée{doneCount > 1 ? 's' : ''}</Text></View><Text style={s.muted}>›</Text></Pressable>}
-
-    {mine && !validated && <>
-      <View style={s.rowBetween}>
-        <Btn small title="Enregistrer" disabled={!hasContent && !report} onPress={() => saveReport(false)} />
-        <Btn small title="Valider le compte rendu" disabled={!canValidate} onPress={() => saveReport(true)} />
+    <ScrollView ref={scrollRef} contentContainerStyle={s.pad}>
+      <View style={s.headerRow}>
+        <Pressable onPress={back} accessibilityRole="button" style={s.backBtn}><Text style={s.link}>‹ Retour</Text></Pressable>
+        <Text style={s.titleCenter} numberOfLines={1} accessibilityRole="header">Compte rendu</Text>
+        <View style={s.backBtn} />
       </View>
-      {!canValidateReport(v.status) && <Text style={s.muted}>Terminez le rendez-vous (« Fin du rendez-vous ») pour pouvoir valider le compte rendu.</Text>}
-      {canValidateReport(v.status) && noActionAsked && !noAction && <Text style={s.muted}>Ajoutez une action ou cochez « Aucune action à prévoir » pour valider.</Text>}
-    </>}
-    {mine && validated && !report?.sent_to_client_at && <>
-      <Text style={s.muted}>Un compte rendu validé n'est plus modifiable. Pour le corriger, remettez-le en brouillon : la visite repassera à « Effectuée ».</Text>
-      <Btn small title="Remettre en brouillon" onPress={() => setConfirmReopen(true)} />
-    </>}
-    {mine && validated && !!report?.sent_to_client_at && <Text style={s.muted}>Compte rendu transmis au client : il ne peut plus être remis en brouillon.</Text>}
-    {!mine && <Text style={s.muted}>Seul l'auteur de la visite modifie le compte rendu.</Text>}
+      <View style={[s.rowCard, { flexDirection: 'column', alignItems: 'stretch', gap: 6 }]}>
+        <View style={s.fact}><Text style={s.muted}>Visite</Text><Text style={s.t}>{companyName(v.company_id)}</Text></View>
+        <View style={s.fact}><Text style={s.muted}>Statut du compte rendu</Text><Pill text={state.text} color={state.color} /></View>
+      </View>
+      {aiErr && <Text style={s.err}>{aiErr}</Text>}
+      {!mine && <Text style={s.muted}>Compte rendu de {data.colleagues.find(u => u.id === v.author_id)?.display_name ?? 'un autre commercial'} : consultation seulement.</Text>}
+      {REPORT_FIELDS.map(([k, label]) => {
+        const first = k === 'summary';
+        return (
+          <Section key={k} title={label} open={isOpen(k, first || !!(f[k] ?? '').trim())} onToggle={() => toggle(k, first || !!(f[k] ?? '').trim())}
+            summary={!isOpen(k, first || !!(f[k] ?? '').trim()) ? ((f[k] ?? '').trim() ? 'renseigné' : 'vide') : undefined}
+            right={mine && !validated ? <DictationControl compact id={`field:${k}`} label={label} active={dictating} setActive={setDictating} ctx={ctx} visitId={visitId} offline={offline}
+              onText={text => { appendTo(k, text); reveal(k); }} onError={setDictError} /> : undefined}>
+            {dictErr?.id === `field:${k}` && <Text style={s.err}>{dictErr.msg}</Text>}
+            <TextInput accessibilityLabel={first ? 'Résumé du compte rendu' : label} placeholderTextColor={c.muted} style={[s.input, { minHeight: first ? 90 : 60 }]}
+              value={f[k] ?? ''} onChangeText={t => setF(cur => ({ ...cur, [k]: t }))} multiline editable={mine && !validated} />
+          </Section>);
+      })}
+
+      <Section title={validated ? 'Actions' : 'Actions à créer à la validation'} open={isOpen('actions', true)} onToggle={() => toggle('actions', true)}
+        summary={!isOpen('actions', true) ? (validated ? `${todoCount} à faire · ${doneCount} terminée${doneCount > 1 ? 's' : ''}` : `${drafts.length} prévue${drafts.length > 1 ? 's' : ''}`) : undefined}>
+        {validated
+          ? <Text style={s.muted}>Compte rendu validé : les actions ont été créées.</Text>
+          : <Text style={s.muted}>Elles ne deviennent de vraies actions que lorsque le compte rendu est validé.</Text>}
+        {!validated && drafts.map((d, i) => (
+          <Pressable key={d.id} disabled={!mine} onPress={() => setActionSheet({ index: i })} accessibilityRole="button" accessibilityLabel={`Modifier l'action prévue : ${d.title}`} style={[s.note, { flexDirection: 'row', gap: 8 }]}>
+            <View style={{ flex: 1 }}><Text style={{ color: c.text }}>{d.title}</Text><Text style={s.muted}>{d.due_date ? fmtDate(d.due_date) : 'sans échéance'}{d.origin === 'ai' ? ' · proposée par l\'IA' : ''}</Text></View>
+            {mine && <Text style={s.iconText}>✎</Text>}
+          </Pressable>))}
+        {mine && !validated && <View style={{ flexDirection: 'row' }}><Btn small title="+ Ajouter une action" onPress={() => setActionSheet({ index: null })} /></View>}
+        {mine && !validated && noActionAsked && <Pressable onPress={() => setNoAction(x => !x)} accessibilityRole="checkbox" accessibilityState={{ checked: noAction }} accessibilityLabel="Aucune action à prévoir" style={[s.rowCard, { gap: 10 }]}>
+          <View style={[s.box, noAction && { backgroundColor: c.accent, borderColor: c.accent }]}>{noAction && <Text style={{ color: c.accentInk, fontWeight: '700' }}>✓</Text>}</View>
+          <Text style={[s.t, { flex: 1 }]}>Aucune action à prévoir</Text></Pressable>}
+        {visitActions.length > 0 && <Pressable onPress={openActions} accessibilityRole="button" accessibilityLabel="Voir les actions de la visite" style={s.rowCard}>
+          <View style={{ flex: 1, gap: 2 }}><Text style={s.t}>Actions de la visite</Text><Text style={s.muted}>{todoCount} à faire · {doneCount} terminée{doneCount > 1 ? 's' : ''}</Text></View><Text style={s.muted}>›</Text></Pressable>}
+      </Section>
+    </ScrollView>
+
+    {/* Barre d'actions fixe : toujours visible, quelle que soit la position dans la page ; elle dit pourquoi une action est impossible. */}
+    <View style={s.actionBar} accessibilityLabel="Actions du compte rendu">
+      {mine && !validated && <>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+          <Btn small title={aiBusy ? 'Génération…' : '✨ Générer (IA)'} disabled={aiBusy || !canGenerate} onPress={generate} />
+          <Btn small title="Enregistrer" disabled={!!saveBlocker} onPress={() => saveReport(false)} />
+          <Btn small title="Valider le compte rendu" disabled={validateBlockers.length > 0} onPress={() => saveReport(true)} />
+        </View>
+        {validateBlockers.length > 0 && <Text style={s.muted}>Pour valider : {validateBlockers.join(' ; ')}.</Text>}
+        {saveBlocker ? <Text style={s.muted}>{saveBlocker}</Text> : null}
+        {!canGenerate && <Text style={s.muted}>{`Génération IA indisponible : ${whyNot ?? 'conditions non remplies.'}`}</Text>}
+      </>}
+      {mine && validated && !report?.sent_to_client_at && <>
+        <Btn small title="Remettre en brouillon" onPress={() => setConfirmReopen(true)} />
+        <Text style={s.muted}>Un compte rendu validé n'est plus modifiable. Pour le corriger, remettez-le en brouillon : la visite repassera à « Effectuée ».</Text>
+      </>}
+      {mine && validated && !!report?.sent_to_client_at && <Text style={s.muted}>Compte rendu transmis au client : il ne peut plus être remis en brouillon.</Text>}
+      {!mine && <Text style={s.muted}>Seul l'auteur de la visite modifie le compte rendu.</Text>}
+    </View>
     <ConfirmSheet visible={confirmReopen} title="Remettre le compte rendu en brouillon ?" confirmLabel="Remettre en brouillon"
       message="Le compte rendu redeviendra modifiable et la visite repassera à « Effectuée ». Les actions déjà créées sont conservées ; à la prochaine validation, seules les nouvelles actions prévues seront créées."
       onClose={() => setConfirmReopen(false)} onConfirm={() => { setConfirmReopen(false); void act(async () => { const cur = await freshReport(ctx, visitId); if (cur) await ctx.engine.update('report', cur.id, { status: 'draft' }); }); }} />
@@ -726,6 +761,31 @@ function ReportScreen({ visitId, data, ctx, act, back, companyName, offline, ope
       onSave={a => { const i = actionSheet!.index; setActionSheet(null); void saveDrafts(i === null ? [...drafts, { id: uuidv4(), title: a.title, due_date: a.due_date, origin: 'manual' }] : drafts.map((d, j) => j === i ? { ...d, ...a } : d)); }} />
     <AiSheet voice={{ ctx, visitId, offline }} result={ai} onClose={() => setAi(undefined)} onApply={applyAi} />
   </>;
+}
+
+/** Section repliable : titre cliquable (▸ / ▾), résumé quand elle est repliée, zone libre à droite (ex. micro) toujours accessible. */
+function Section({ title, summary, open, onToggle, right, children }: { title: string; summary?: string; open: boolean; onToggle: () => void; right?: React.ReactNode; children: React.ReactNode }) {
+  const { s, c } = useTheme();
+  return (
+    <View style={{ gap: 6 }}>
+      <View style={[s.rowBetween, { minHeight: 40 }]}>
+        <Pressable onPress={onToggle} accessibilityRole="button" accessibilityState={{ expanded: open }} accessibilityHint={open ? 'Replier' : 'Déplier'} style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 40 }}>
+          <Text style={{ color: c.muted, width: 16 }}>{open ? '▾' : '▸'}</Text>
+          <Text style={s.label}>{title}</Text>
+          {summary ? <Text style={[s.muted, { flexShrink: 1 }]} numberOfLines={1}>{summary}</Text> : null}
+        </Pressable>
+        {right}
+      </View>
+      {open && children}
+    </View>
+  );
+}
+
+/** Section repliable qui garde son propre état (ouverte ou fermée par défaut selon la situation). */
+function FoldSection({ defaultOpen, ...rest }: { title: string; summary?: string; defaultOpen: boolean; right?: React.ReactNode; children: React.ReactNode }) {
+  const [user, setUser] = useState<boolean>();
+  const open = user ?? defaultOpen;
+  return <Section {...rest} summary={open ? undefined : rest.summary} open={open} onToggle={() => setUser(!open)} />;
 }
 
 interface DraftAction { id: string; title: string; due_date: string | null; origin: 'ai' | 'manual' }
@@ -760,6 +820,7 @@ function ActionSheet({ voice, visible, visit, title, initial, hint, onClose, onS
       <DateField label="Échéance de l'action" mode="date" value={due} onChange={setDue} clearable />
       {hint ? <Text style={s.muted}>{hint}</Text> : null}
       {tooEarly && <Text style={s.err}>L'échéance est antérieure à la date de la visite.</Text>}
+      {!text.trim() && <Text style={s.muted}>Saisissez un intitulé pour enregistrer.</Text>}
       <Btn title="Enregistrer" disabled={!text.trim() || tooEarly} onPress={() => onSave({ title: text.trim(), due_date: due ? dateToStr(due) : null })} />
       <Btn small title="Annuler" onPress={onClose} />
     </Sheet>
@@ -787,6 +848,7 @@ function AddNoteSheet({ voice, visible, title, label, placeholder, hint, onClose
     <Sheet title={title} visible={visible} onClose={onClose}>
       <VoiceInput voice={voice} id="add-note" label={label} accessibilityLabel={label} value={text} onChange={setText} placeholder={placeholder} multiline minHeight={110} />
       <Text style={s.muted}>{hint}</Text>
+      {!text.trim() && <Text style={s.muted}>Saisissez ou dictez une note pour l'ajouter.</Text>}
       <Btn title="Ajouter" disabled={!text.trim()} onPress={() => onAdd(text.trim())} />
       <Btn small title="Annuler" onPress={onClose} />
     </Sheet>
@@ -809,6 +871,7 @@ function NoteEditSheet({ voice, target, onClose, onSave, onDelete }: { voice?: V
         <Btn small title="Annuler" onPress={() => setConfirming(false)} />
       </> : <>
         <VoiceInput voice={voice} id="edit-note" label="Texte de la note" accessibilityLabel="Texte de la note" value={text} onChange={setText} multiline minHeight={110} />
+        {(!text.trim() || text.trim() === ((target?.row.body as string) ?? '').trim()) && <Text style={s.muted}>{!text.trim() ? 'Une note ne peut pas être vide : modifiez le texte, ou supprimez la note.' : 'Aucune modification à enregistrer.'}</Text>}
         <Btn title="Enregistrer" disabled={!text.trim() || text.trim() === ((target?.row.body as string) ?? '').trim()} onPress={() => onSave(text.trim())} />
         <Btn small title="Supprimer la note" danger onPress={() => setConfirming(true)} />
         <Btn small title="Annuler" onPress={onClose} />
@@ -825,6 +888,7 @@ function EditDateSheet({ visible, initial, onClose, onSave }: { visible: boolean
     <Sheet title="Modifier la date prévue" visible={visible} onClose={onClose}>
       <DateField label="Date et heure prévues" mode="datetime" value={value} onChange={setValue} clearable />
       <Text style={useTheme().s.muted}>L'ancienne date reste consultable dans l'historique.</Text>
+      {!changed && <Text style={useTheme().s.muted}>Aucune modification à enregistrer.</Text>}
       <Btn title="Enregistrer" disabled={!changed} onPress={() => onSave(value)} />
       <Btn small title="Annuler" onPress={onClose} />
     </Sheet>
@@ -902,6 +966,8 @@ function EmailSheet({ visible, visitId, ctx, offline, onClose }: { visible: bool
         <Check on={parts.has('notes')} label="Notes durant visite" sub={opts.parts.notes ? `${opts.parts.notes} note${opts.parts.notes > 1 ? 's' : ''}` : 'Aucune note'} disabled={opts.parts.notes === 0} onPress={() => toggle(parts, setParts, 'notes')} />
         <Text style={s.muted}>Les notes internes ne sont jamais envoyées. L'e-mail n'est pas envoyé au client.</Text>
         <VoiceInput voice={{ ctx, visitId, offline }} id="email-message" label="Message (facultatif)" accessibilityLabel="Message de l'e-mail" value={message} onChange={setMessage} multiline minHeight={70} />
+        {to.size === 0 && <Text style={s.muted}>Choisissez au moins un destinataire.</Text>}
+        {parts.size === 0 && <Text style={s.muted}>Choisissez au moins un contenu à envoyer.</Text>}
         <Btn title={busy ? 'Envoi…' : 'Envoyer'} disabled={busy || to.size === 0 || parts.size === 0} onPress={() => void send()} />
       </>}
       <Btn small title={done ? 'Fermer' : 'Annuler'} onPress={onClose} />
@@ -917,6 +983,7 @@ function EditAddressSheet({ voice, visible, initial, onClose, onSave }: { voice?
     <Sheet title="Adresse de la visite" visible={visible} onClose={onClose}>
       <VoiceInput voice={voice} id="address" label="Adresse de la visite" accessibilityLabel="Adresse de la visite" value={text} onChange={setText} placeholder="Numéro, rue, code postal, ville" multiline minHeight={90} />
       <Text style={s.muted}>L'adresse du client n'est pas modifiée : elle ne concerne que cette visite.</Text>
+      {text.trim() === initial.trim() && <Text style={s.muted}>Aucune modification à enregistrer.</Text>}
       <Btn title="Enregistrer" disabled={text.trim() === initial.trim()} onPress={() => onSave(text)} />
       <Btn small title="Annuler" onPress={onClose} />
     </Sheet>
@@ -966,7 +1033,7 @@ function DictationControl({ id, label, active, setActive, ctx, visitId, offline,
   const send = async (audio: RecordedAudio) => {
     setActive(id); setState('sending'); onError(id, undefined);
     try {
-      const r = await ctx.client.transcribe(visitId, audio.body, audio.mime, ctx.lang, audio.durationS);
+      const r = await ctx.client.transcribe(visitId, audio.body, audio.mime, undefined, audio.durationS);
       if (review) { setText(r.text); setState('review'); } else { onText(r.text.trim()); done(); }
     } catch (e) { onError(id, voiceErrorMessage(e)); done(); }
   };
@@ -1066,6 +1133,7 @@ function ActionForm({ id, data, ctx, act, back, companyName, openVisit, offline 
     <Label>Échéance</Label><DateField label="Échéance" mode="date" value={due} onChange={setDue} clearable />
     <Text style={s.muted}>Responsable : vous.</Text>
     {tooEarly && <Text style={s.err}>L'échéance est antérieure à la date de la visite.</Text>}
+    {!title.trim() && <Text style={s.muted}>Saisissez un intitulé pour enregistrer.</Text>}
     <Btn title="Enregistrer" disabled={!title.trim() || tooEarly} onPress={() => act(async () => {
       await ctx.engine.update('action', existing.id, { title: title.trim(), due_date: due ? dateToStr(due) : null });
       back();
