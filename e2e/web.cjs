@@ -162,8 +162,13 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   assert.ok(await page.getByRole('button', { name: 'Modifier l\'adresse de la visite' }).isVisible(), 'commercial : adresse encore modifiable une fois organisée');
   await page.getByRole('button', { name: 'Démarrer la visite' }).click();
   await page.getByText('En cours', { exact: true }).first().waitFor();
-  assert.equal(await page.getByRole('button', { name: 'Modifier l\'adresse de la visite' }).count(), 0, 'adresse non modifiable une fois la visite commencée');
-  assert.equal(await page.getByRole('button', { name: 'Modifier la date prévue' }).count(), 0, 'date prévue non modifiable une fois la visite commencée');
+  assert.equal(await page.getByRole('button', { name: 'Modifier l\'adresse de la visite' }).getByText('🔒').count(), 1, 'adresse non modifiable une fois la visite commencée (cadenas)');
+  // date non modifiable une fois la visite commencée : cadenas ; la raison n'apparaît qu'au survol
+  assert.equal(await page.getByRole('button', { name: 'Modifier la date prévue' }).getByText('🔒').count(), 1, 'cadenas sur la date');
+  assert.equal(await page.getByText(/n'est plus modifiable une fois la visite commencée/).count(), 0, 'raison masquée tant qu\'on ne survole pas');
+  await page.getByRole('button', { name: 'Modifier la date prévue' }).hover();
+  await page.getByText('La date prévue n\'est plus modifiable une fois la visite commencée.').waitFor();
+  await page.mouse.move(5, 400);
   assert.equal(await page.getByLabel('Nouvelle note', { exact: true }).count(), 0, 'plus de champ de note permanent : écran allégé');
   assert.ok(await page.getByText('Notes durant visite', { exact: true }).first().isVisible(), 'libellé « Notes durant visite »');
   assert.ok(await page.getByRole('button', { name: /🎤 Dicter une note/ }).isVisible(), 'icône micro sur le bouton dicter');
@@ -262,8 +267,11 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   assert.ok(await page.getByText('Elles ne deviennent de vraies actions que lorsque le compte rendu est validé.').isVisible());
   await page.getByLabel('Résumé du compte rendu').fill('Intéressé par l\'offre B, budget à confirmer.');
   // validation du compte rendu impossible tant que la visite n'est pas terminée
-  assert.equal(await page.getByRole('button', { name: 'Valider le compte rendu' }).isDisabled(), true, 'validation refusée visite en cours');
+  assert.equal(await page.getByRole('button', { name: 'Valider le compte rendu' }).getAttribute('data-testid'), 'disabled-hint', 'validation refusée visite en cours');
+  assert.equal(await page.getByText(/^Pour valider/).count(), 0, 'la raison n\'est pas affichée en permanence');
+  await page.getByRole('button', { name: 'Valider le compte rendu' }).hover();                    // infobulle au survol
   await page.getByText('Pour valider : terminez le rendez-vous (« Fin du rendez-vous » sur la visite).').waitFor();
+  await page.mouse.move(5, 300);
   await shot(page, '3k-cr-brouillon');
   await page.getByRole('button', { name: 'Enregistrer', exact: true }).click();
   await page.getByRole('button', { name: '‹ Retour' }).click();
@@ -274,11 +282,12 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   // Fin de visite : les notes durant visite ne sont plus modifiables (les notes internes, si) ; terminer ne crée aucune action
   await page.getByRole('button', { name: 'Fin du rendez-vous' }).click();
   // sections repliées d'office une fois le rendez-vous terminé : le résumé dit combien de notes, un clic les déplie
-  assert.equal(await page.getByText('Le rendez-vous est terminé : les notes durant visite ne sont plus modifiables.').count(), 0, 'section « Notes durant visite » repliée');
   await page.getByRole('button', { name: /Notes durant visite/ }).click();
+  assert.equal(await page.getByText('Le rendez-vous est terminé : les notes durant visite ne sont plus modifiables.').count(), 0, 'raison masquée sans survol');
+  await page.getByRole('button', { name: '+ Ajouter une note', exact: true }).hover();
   await page.getByText('Le rendez-vous est terminé : les notes durant visite ne sont plus modifiables.').waitFor();
   assert.equal(await page.getByRole('button', { name: 'Modifier la note', exact: true }).count(), 0, 'plus de modification de note');
-  assert.equal(await page.getByRole('button', { name: '+ Ajouter une note', exact: true }).count(), 0, 'plus d\'ajout de note');
+  assert.equal(await page.getByRole('button', { name: '+ Ajouter une note', exact: true }).getAttribute('data-testid'), 'disabled-hint', 'plus d\'ajout de note');
   assert.equal(await page.getByRole('button', { name: /Dicter une note/ }).count(), 0, 'plus de dictée de note');
   await page.getByRole('button', { name: /Notes internes/ }).click();
   assert.ok(await page.getByRole('button', { name: '+ Ajouter une note interne' }).isVisible(), 'notes internes : toujours possibles');
@@ -350,8 +359,9 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await page.getByRole('button', { name: '+ Ajouter une action' }).click();
   await page.getByLabel('Intitulé de l\'action').fill('Relancer le client (en retard)');
   await page.getByLabel('Échéance de l\'action').fill(daysAgo(5));                  // échéance antérieure à la visite : refusée
+  await page.getByRole('button', { name: 'Enregistrer', exact: true }).hover();           // la raison n'apparaît qu'au survol du bouton grisé
   await page.getByText('L\'échéance est antérieure à la date de la visite.').waitFor();
-  assert.equal(await page.getByRole('button', { name: 'Enregistrer', exact: true }).isDisabled(), true, 'enregistrement bloqué');
+  assert.equal(await page.getByRole('button', { name: 'Enregistrer', exact: true }).getAttribute('data-testid'), 'disabled-hint', 'enregistrement bloqué');
   await page.getByLabel('Échéance de l\'action').fill('2026-12-15');
   await page.getByRole('button', { name: 'Enregistrer', exact: true }).click();
   await page.getByText('4 à faire · 0 terminée').waitFor();
@@ -468,11 +478,11 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await login(mp, 'manager@exemple.invalid');
   await mp.getByRole('radio', { name: 'Par date' }).click();           // une ligne par visite, avec le nom du client
   await mp.getByText('Atelier Roux').first().click();
-  assert.equal(await mp.getByRole('button', { name: 'Modifier la date prévue' }).count(), 0, 'le manager ne modifie pas la date');
+  assert.equal(await mp.getByRole('button', { name: 'Modifier la date prévue' }).getByText('🔒').count(), 1, 'le manager ne modifie pas la date (cadenas)');
   await mp.getByText('Le client hésite, voir avec la direction').waitFor();                      // note interne : partagée avec la hiérarchie
   await mp.getByText('Commercial Un', { exact: true }).waitFor();
   assert.equal(await mp.getByRole('button', { name: 'Modifier la note interne' }).count(), 0, 'le manager lit la note interne sans pouvoir la modifier');
-  assert.equal(await mp.getByRole('button', { name: '+ Ajouter une note interne' }).count(), 0, 'le manager n\'écrit pas de note interne');
+  assert.equal(await mp.getByRole('button', { name: '+ Ajouter une note interne' }).getAttribute('data-testid'), 'disabled-hint', 'le manager n\'écrit pas de note interne');
   await mp.getByRole('button', { name: 'Modifier l\'adresse de la visite' }).click();
   await mp.getByLabel('Adresse de la visite', { exact: true }).fill('Entrée B, 8 quai Jean Moulin, Villeurbanne');
   await mp.getByRole('button', { name: 'Enregistrer' }).last().click();
@@ -497,12 +507,13 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await mp.getByRole('radio', { name: 'Par client' }).click();
   await mp.getByText(/1 en retard/).waitFor();
   await shot(mp, '3f-liste-retard');
-  assert.equal(await mp.getByRole('button', { name: 'Modifier l\'adresse de la visite' }).count(), 0, 'manager : plus de modification d\'adresse une fois la visite organisée');
+  assert.equal(await mp.getByRole('button', { name: 'Modifier l\'adresse de la visite' }).count(), 0, 'liste des visites : pas de bouton de modification');
   // 7 ter. Suppression d'une visite : le manager ne peut pas ; le commercial confirme ; elle est masquée par défaut
-  assert.equal(await mp.getByRole('button', { name: 'Supprimer la visite' }).count(), 0, 'liste : pas de bouton ici');
   await mp.getByText('Organisée', { exact: true }).first().click();
   await mp.getByText('Statut', { exact: true }).waitFor();
-  assert.equal(await mp.getByRole('button', { name: 'Supprimer la visite' }).count(), 0, 'le manager ne supprime pas une visite');
+  assert.equal(await mp.getByRole('button', { name: 'Supprimer la visite' }).getAttribute('data-testid'), 'disabled-hint', 'le manager ne supprime pas une visite');
+  await mp.getByRole('button', { name: 'Supprimer la visite' }).hover();
+  await mp.getByText(/réservée au commercial auteur de la visite et au directeur/).waitFor();
   await mp.getByRole('button', { name: '‹ Retour' }).click();
   await p1.getByRole('button', { name: 'Supprimer la visite' }).click();
   await p1.getByText('Supprimer cette visite ?').waitFor();                 // confirmation demandée
@@ -582,7 +593,8 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await np.waitForFunction(() => /Dictée simulée/.test(document.querySelector('[aria-label="Intitulé de l\'action"]').value));
   assert.equal((await (await fetch('http://127.0.0.1:4010/__transcriptions')).json()).length, 5, 'la dictée du champ « Intitulé » est transcrite');
   await np.getByRole('button', { name: 'Annuler', exact: true }).last().click();
-  assert.equal(await np.getByRole('button', { name: 'Valider le compte rendu' }).isDisabled(), true, 'sans action ni case cochée : validation refusée');
+  assert.equal(await np.getByRole('button', { name: 'Valider le compte rendu' }).getAttribute('data-testid'), 'disabled-hint', 'sans action ni case cochée : validation refusée');
+  await np.getByRole('button', { name: 'Valider le compte rendu' }).hover();
   await np.getByText('Pour valider : ajoutez une action ou cochez « Aucune action à prévoir ».').waitFor();
   await np.getByRole('checkbox', { name: 'Aucune action à prévoir' }).click();
   await np.getByRole('button', { name: 'Valider le compte rendu' }).click();

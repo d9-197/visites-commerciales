@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { api, type R } from '../api';
 import type { Me } from '../App';
-import { Alert, Badge, Card, Empty, Field, Loading, Modal, Why, useLoad, errMsg } from '../ui';
+import { Alert, Badge, Card, Empty, Field, Loading, Modal, Tip, useLoad, errMsg } from '../ui';
 import { ROLE, fmtDateTime } from '../format';
 
 export function Accounts({ me }: { me: Me }) {
@@ -58,7 +58,7 @@ function UserModal({ user, users, onClose, onDone }: { user: R | null; users: R[
   const why = !f.display_name.trim() ? 'Renseignez le nom affiché.' : !f.email.includes('@') ? 'Renseignez une adresse e-mail valide.' : f.password && f.password.length < 12 ? 'Le mot de passe doit faire 12 caractères au moins (ou laissez vide pour en générer un).' : f.budget !== '' && !(Number(f.budget.replace(',', '.')) >= 0) ? 'Le plafond IA doit être un nombre positif (ou vide).' : '';
   const valid = !why;
   return (
-    <Modal title={user ? 'Modifier le compte' : 'Nouveau compte'} onClose={onClose} footer={<><button onClick={onClose}>Annuler</button><button className="primary" disabled={!valid || busy} onClick={() => void save()}>{busy ? 'Enregistrement…' : 'Enregistrer'}</button></>}>
+    <Modal title={user ? 'Modifier le compte' : 'Nouveau compte'} onClose={onClose} footer={<><button onClick={onClose}>Annuler</button><Tip why={why}><button className="primary" disabled={!valid || busy} onClick={() => void save()}>{busy ? 'Enregistrement…' : 'Enregistrer'}</button></Tip></>}>
       <div className="form">
         <Field label="Nom affiché"><input value={f.display_name} onChange={e => set('display_name', e.target.value)} autoFocus /></Field>
         <Field label="E-mail"><input type="email" value={f.email} onChange={e => set('email', e.target.value)} /></Field>
@@ -70,7 +70,6 @@ function UserModal({ user, users, onClose, onDone }: { user: R | null; users: R[
         {!user && <Field full label="Mot de passe (facultatif)" hint="Vide : un mot de passe temporaire est généré et affiché une fois. 12 caractères minimum."><input type="text" autoComplete="off" value={f.password} onChange={e => set('password', e.target.value)} /></Field>}
       </div>
       {err && <Alert>{err}</Alert>}
-      <Why>{why}</Why>
     </Modal>
   );
 }

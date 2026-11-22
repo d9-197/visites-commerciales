@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { api, type R } from '../api';
-import { Alert, Badge, Card, Empty, Field, Loading, Modal, Why, useLoad, errMsg } from '../ui';
+import { Alert, Badge, Card, Empty, Field, Loading, Modal, Tip, useLoad, errMsg } from '../ui';
 
 const PAGE = 50;
 export function Clients() {
@@ -52,7 +52,7 @@ function CompanyModal({ id, onClose, onChanged }: { id: string | null; onClose: 
   const assigned = new Set<string>((d?.company.assigned ?? []).map((a: R) => a.id));
   const toggle = (uid: string) => guard(async () => { const s = new Set(assigned); if (s.has(uid)) s.delete(uid); else s.add(uid); await api(`companies/${cid}/assignments`, { method: 'PUT', body: { user_ids: [...s] } }); detail.reload(); });
   return (
-    <Modal wide title={cid ? (d?.company.name ?? 'Client') : 'Nouveau client'} onClose={onClose} footer={<><button onClick={onClose}>Fermer</button><button className="primary" disabled={busy || !form.name?.trim()} onClick={() => void save()}>Enregistrer</button></>}>
+    <Modal wide title={cid ? (d?.company.name ?? 'Client') : 'Nouveau client'} onClose={onClose} footer={<><button onClick={onClose}>Fermer</button><Tip why={!form.name?.trim() ? 'Renseignez le nom du client pour enregistrer.' : undefined}><button className="primary" disabled={busy || !form.name?.trim()} onClick={() => void save()}>Enregistrer</button></Tip></>}>
       <div className="fiche">
         <section><h3>Informations</h3><div className="form one">
           <Field label="Nom"><input value={form.name ?? ''} onChange={e => set('name', e.target.value)} autoFocus /></Field>
@@ -62,7 +62,6 @@ function CompanyModal({ id, onClose, onChanged }: { id: string | null; onClose: 
           {cid && <Field label="Statut"><select value={form.status} onChange={e => set('status', e.target.value)}><option value="active">Actif</option><option value="inactive">Inactif (n'apparaît plus dans les applications)</option></select></Field>}
         </div>
           {err && <Alert>{err}</Alert>}{ok && <Alert kind="ok">{ok}</Alert>}
-          <Why>{!form.name?.trim() ? 'Renseignez le nom du client pour enregistrer.' : ''}</Why>
         </section>
         {cid && d ? <>
           <section><h3>Commerciaux affectés</h3><p className="muted">Un commercial voit le client (et ses managers avec lui) dès qu'il lui est affecté.</p>
@@ -93,8 +92,7 @@ function Contacts({ companyId, contacts, onChange }: { companyId: string; contac
         <Field label="Fonction"><input value={edit.job_title ?? ''} onChange={e => setEdit({ ...edit, job_title: e.target.value })} /></Field>
         <Field label="Téléphone"><input value={edit.phone ?? ''} onChange={e => setEdit({ ...edit, phone: e.target.value })} /></Field>
         <Field label="E-mail"><input type="email" value={edit.email ?? ''} onChange={e => setEdit({ ...edit, email: e.target.value })} /></Field>
-        <div className="full toolbar"><button onClick={() => setEdit(null)}>Annuler</button><button className="primary" disabled={!edit.full_name?.trim()} onClick={() => void save()}>Enregistrer le contact</button></div>
-        <div className="full"><Why>{!edit.full_name?.trim() ? 'Renseignez le nom du contact pour enregistrer.' : ''}</Why></div></div>}
+        <div className="full toolbar"><button onClick={() => setEdit(null)}>Annuler</button><Tip why={!edit.full_name?.trim() ? 'Renseignez le nom du contact pour enregistrer.' : undefined}><button className="primary" disabled={!edit.full_name?.trim()} onClick={() => void save()}>Enregistrer le contact</button></Tip></div></div>}
       {err && <Alert>{err}</Alert>}
     </section>
   );
@@ -115,7 +113,7 @@ function ImportModal({ onClose, onDone }: { onClose: () => void; onDone: () => v
   };
   const ready = !!(companies || contacts);
   return (
-    <Modal wide title="Importer des clients et contacts (CSV)" onClose={onClose} footer={<><button onClick={onClose}>Fermer</button><button disabled={!ready || busy} onClick={() => void run(true)}>Vérifier</button><button className="primary" disabled={!ready || busy || !res || res.dry_run === false} onClick={() => void run(false)}>Importer</button></>}>
+    <Modal wide title="Importer des clients et contacts (CSV)" onClose={onClose} footer={<><button onClick={onClose}>Fermer</button><Tip why={!ready ? 'Choisissez au moins un fichier CSV.' : undefined}><button disabled={!ready || busy} onClick={() => void run(true)}>Vérifier</button></Tip><Tip why={!ready ? 'Choisissez au moins un fichier CSV.' : !res || res.dry_run === false ? (err ? 'Corrigez le fichier puis vérifiez à nouveau : l\'import est bloqué tant que la vérification échoue.' : 'Cliquez d\'abord sur « Vérifier » : l\'import n\'est possible qu\'après une vérification réussie.') : undefined}><button className="primary" disabled={!ready || busy || !res || res.dry_run === false} onClick={() => void run(false)}>Importer</button></Tip></>}>
       <p className="muted">Séparateur « ; » ou « , », encodage UTF-8. Un client déjà connu (même identifiant CRM) est mis à jour ; ses commerciaux (colonne <code>sales_emails</code>) remplacent les affectations issues du CRM. Les erreurs de format bloquent tout l'import. Modèles : <a download="clients.csv" href={dataUrl(TEMPLATE_COMPANIES)}>clients.csv</a> · <a download="contacts.csv" href={dataUrl(TEMPLATE_CONTACTS)}>contacts.csv</a></p>
       <div className="form">
         <Field label="Fichier des clients"><input type="file" accept=".csv,text/csv" onChange={e => void read(e, setCompanies)} /></Field>
@@ -123,7 +121,6 @@ function ImportModal({ onClose, onDone }: { onClose: () => void; onDone: () => v
       </div>
       {err && <Alert>{err}</Alert>}
       {errs.length > 0 && <table><thead><tr><th>Fichier</th><th>Ligne</th><th>Problème</th></tr></thead><tbody>{errs.map((e, i) => <tr key={i}><td>{e.file}</td><td>{e.line}</td><td>{e.message}</td></tr>)}</tbody></table>}
-      <Why>{!ready ? 'Choisissez au moins un fichier CSV.' : !res && !err ? 'Cliquez d\'abord sur « Vérifier » : l\'import n\'est possible qu\'après une vérification réussie.' : err ? 'Corrigez le fichier puis vérifiez à nouveau : l\'import est bloqué tant que la vérification échoue.' : ''}</Why>
       {res && !err && <Alert kind="ok">{res.dry_run ? 'Vérification réussie' : 'Import terminé'} : {res.companies} client(s), {res.contacts} contact(s){res.dry_run ? '. Cliquez sur « Importer » pour enregistrer.' : '.'}</Alert>}
       {(res?.warnings?.length ?? 0) > 0 && <Alert kind="warn"><strong>Avertissements :</strong><ul>{res!.warnings.slice(0, 20).map((w: string, i: number) => <li key={i}>{w}</li>)}</ul></Alert>}
     </Modal>
