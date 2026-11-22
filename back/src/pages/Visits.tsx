@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { api, type R } from '../api';
 import type { Me } from '../App';
-import { Alert, Badge, BranchSelect, Card, Empty, Loading, Modal, useLoad } from '../ui';
+import { Alert, AuthorState, Badge, BranchSelect, Card, Empty, Loading, Modal, useLoad } from '../ui';
 import { STATUS, STATUS_TONE, TEMP, fmtDateTime, fmtDate } from '../format';
 
 const PAGE = 50;
@@ -32,7 +32,7 @@ export function Visits({ params }: { me: Me; params: URLSearchParams }) {
           <div className="scroll"><table className="clickable"><thead><tr><th>Date</th><th>Client</th><th>Commercial</th><th>Branche</th><th>Statut</th><th>Compte rendu</th><th>Opportunité</th><th>Actions à faire</th></tr></thead><tbody>
             {data.visits.map((v: R) => { const st = v.closed ? 'closed' : v.status; return (
               <tr key={v.id} tabIndex={0} onClick={() => setOpen(v.id)} onKeyDown={e => { if (e.key === 'Enter') setOpen(v.id); }}>
-                <td>{fmtDateTime(v.ended_at ?? v.started_at ?? v.planned_start)}</td><td><strong>{v.company}</strong></td><td>{v.author}</td><td>{String(v.org_path ?? '').split(' › ').slice(-1)[0]}</td>
+                <td>{fmtDateTime(v.ended_at ?? v.started_at ?? v.planned_start)}</td><td><strong>{v.company}</strong></td><td>{v.author}<AuthorState status={v.author_status} role={v.author_role} /></td><td>{String(v.org_path ?? '').split(' › ').slice(-1)[0]}</td>
                 <td><Badge tone={STATUS_TONE[st]}>{STATUS[st]}</Badge></td>
                 <td>{v.report_status === 'validated' ? <Badge tone="violet">Validé</Badge> : v.report_status ? <Badge tone="amber">Brouillon</Badge> : <span className="muted">—</span>}</td>
                 <td>{v.temperature ? <Badge tone={v.temperature === 'hot' ? 'red' : v.temperature === 'warm' ? 'amber' : 'grey'}>{TEMP[v.temperature]}</Badge> : '—'}</td>
@@ -60,7 +60,7 @@ function Detail({ id, onClose }: { id: string; onClose: () => void }) {
           <dl className="facts">
             <div><dt>Statut</dt><dd><Badge tone={STATUS_TONE[st]}>{STATUS[st]}</Badge></dd></div>
             <div><dt>Branche</dt><dd>{v.org_path}</dd></div>
-            <div><dt>Commercial</dt><dd>{v.author}{v.created_by_name && v.created_by_name !== v.author ? <small className="muted"> · planifiée par {v.created_by_name}</small> : null}</dd></div>
+            <div><dt>Commercial</dt><dd>{v.author}<AuthorState status={v.author_status} role={v.author_role} />{v.created_by_name && v.created_by_name !== v.author ? <small className="muted"> · planifiée par {v.created_by_name}</small> : null}</dd></div>
             <div><dt>Prévue</dt><dd>{fmtDateTime(v.planned_start)}</dd></div><div><dt>Commencée</dt><dd>{fmtDateTime(v.started_at)}</dd></div><div><dt>Fin du rendez-vous</dt><dd>{fmtDateTime(v.ended_at)}</dd></div>
             <div><dt>Adresse</dt><dd>{v.location_text ?? '—'}</dd></div>
           </dl>

@@ -848,6 +848,8 @@ components:
           properties:
             user_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
             name: {type: string}
+            role: {$ref: '#/components/schemas/Role'}
+            status: {type: string, enum: [active, disabled], description: "Un utilisateur désactivé ou devenu manager/directeur reste listé s'il a des visites (ou des actions) dans la période : ses visites ne disparaissent ni des lignes ni des totaux."}
     Suggestion:
       type: object
       properties:
@@ -990,6 +992,8 @@ components:
         company: {type: string}
         author_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
         author: {type: string}
+        author_status: {type: string, enum: [active, disabled]}
+        author_role: {$ref: '#/components/schemas/Role'}
         org_node_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
         org_path: {type: string, description: "Branche de la visite."}
         status: {$ref: 'common.yaml#/components/schemas/VisitStatus'}
@@ -1012,6 +1016,8 @@ components:
             company: {type: string}
             author_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
             author: {type: string}
+            author_status: {type: string, enum: [active, disabled]}
+            author_role: {$ref: '#/components/schemas/Role'}
             org_node_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
             org_path: {type: string}
             created_by_name: {type: [string, 'null']}

@@ -31,6 +31,11 @@ export function Modal({ title, onClose, children, wide, footer }: { title: strin
 export const Field = ({ label, hint, children, full }: { label: string; hint?: string; children: ReactNode; full?: boolean }) => (
   <label className={`field${full ? ' full' : ''}`}><span>{label}</span>{children}{hint && <small>{hint}</small>}</label>
 );
+/** Rappelle qu'un auteur n'est plus actif ou n'est plus commercial (ses visites restent affichées). */
+export const AuthorState = ({ status, role }: { status?: string; role?: string }) => (<>
+  {status === 'disabled' && <> <span className="badge grey" title="Compte désactivé : ses visites restent affichées">Désactivé</span></>}
+  {role && role !== 'commercial' && <> <span className="badge blue" title="N'est plus commercial : ses visites restent affichées">{role === 'manager' ? 'Manager' : 'Directeur'}</span></>}
+</>);
 export const Badge = ({ tone = 'grey', children }: { tone?: string; children: ReactNode }) => <span className={`badge ${tone}`}>{children}</span>;
 export const Alert = ({ kind = 'error', children }: { kind?: 'error' | 'ok' | 'warn'; children: ReactNode }) => <div className={`alert ${kind}`} role={kind === 'error' ? 'alert' : 'status'}>{children}</div>;
 /** Explique pourquoi une action est indisponible : infobulle au survol du bouton grisé (et lue par les lecteurs d'écran), sans alourdir l'écran. */

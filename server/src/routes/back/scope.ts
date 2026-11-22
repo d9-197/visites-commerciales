@@ -33,6 +33,25 @@ export async function subtree(pool: Pool, nodeId: unknown, allowed: string[] | n
   return ids.length ? (allowed === null ? ids : ids.filter(i => allowed.includes(i))) : null;
 }
 
+/**
+ * Auteurs dont on affiche les visites. Ne dépend NI du statut NI du rôle actuels de l'auteur : une visite d'un utilisateur désactivé, ou qui n'est plus
+ * commercial, reste visible tant qu'elle appartient à une branche accessible. Un utilisateur précis (`uid`) n'est accepté que si l'on voit au moins une de ses visites.
+ * Sans `uid` : tous les auteurs (administrateur, manager, directeur : la branche limite déjà) ou soi-même (commercial).
+ */
+export async function authorFilter(pool: Pool, req: Request, uid?: string): Promise<string[] | null> {
+  const a = req.auth!;
+  if (uid) {
+    if (!/^[0-9a-f-]{36}$/i.test(uid)) throw new HttpError(404, 'not_found', 'Utilisateur hors de votre périmètre');
+    if (!a.isAdmin && uid !== a.id) {
+      const nodes = await scopeNodes(pool, req);
+      const ok = (await pool.query(`SELECT 1 FROM visit WHERE author_id = $1 AND deleted_at IS NULL AND org_node_id = ANY($2::uuid[]) LIMIT 1`, [uid, nodes ?? []])).rows[0];
+      if (!ok) throw new HttpError(404, 'not_found', 'Utilisateur hors de votre périmètre');
+    }
+    return [uid];
+  }
+  return a.isAdmin || a.role === 'manager' || a.role === 'directeur' ? null : [a.id];
+}
+
 export const requireAdmin = (req: Request) => { if (!req.auth!.isAdmin) throw new HttpError(403, 'forbidden', 'Droit administrateur requis'); };
 
 export const inScope = (scope: string[] | null, userId: string) => scope === null || scope.includes(userId);

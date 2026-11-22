@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { api, download, type R } from '../api';
 import type { Me } from '../App';
-import { Alert, Badge, BranchSelect, Card, Empty, Loading, useLoad, errMsg } from '../ui';
+import { Alert, AuthorState, Badge, BranchSelect, Card, Empty, Loading, useLoad, errMsg } from '../ui';
 import { fmtDate, isoDay } from '../format';
 import { CollapseAll, TreeCell, levelName, useCollapsed, useTree, visibleIndexes } from '../tree';
 
@@ -71,7 +71,7 @@ export function Reporting({ me }: { me: Me }) {
         <Card title="Par commercial">
           {data.by_user.length === 0 ? <Empty>Aucun commercial dans votre périmètre.</Empty> : (
             <div className="scroll"><table className="num"><thead><tr><th>Commercial</th><th>Prévues</th><th>Effectuées</th><th>Annulées</th><th>CR validés</th><th>CR à valider</th><th>CR en retard</th><th>Délai CR (j)</th><th>Actions à faire</th><th>Actions en retard</th></tr></thead><tbody>
-              {data.by_user.map((u: R) => <tr key={u.user_id}><td><a href={`#/visites?user=${u.user_id}`}>{u.name}</a></td><td>{u.planned}</td><td>{u.done}</td><td>{u.cancelled}</td><td>{u.cr_validated}</td><td>{u.cr_pending}</td>
+              {data.by_user.map((u: R) => <tr key={u.user_id}><td><a href={`#/visites?user=${u.user_id}`}>{u.name}</a><AuthorState status={u.status} role={u.role} /></td><td>{u.planned}</td><td>{u.done}</td><td>{u.cancelled}</td><td>{u.cr_validated}</td><td>{u.cr_pending}</td>
                 <td className={u.cr_late ? 'red' : ''}>{u.cr_late}</td><td>{u.avg_cr_delay_days ?? '—'}</td><td>{u.actions_todo}</td><td className={u.actions_late ? 'red' : ''}>{u.actions_late}</td></tr>)}
             </tbody></table></div>)}
         </Card>

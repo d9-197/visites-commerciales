@@ -3,7 +3,7 @@ import type { Pool } from '../../db.js';
 import { wrap } from '../../errors.js';
 import { REPORT_LATE_DAYS } from '@visites/sync-core';
 import { toCsv } from '../../csv.js';
-import { scopeUsers, scopeNodes, subtree, day, inScope } from './scope.js';
+import { scopeUsers, scopeNodes, subtree, day, authorFilter } from './scope.js';
 import { HttpError } from '../../errors.js';
 
 const addDays = (d: string, n: number) => new Date(Date.parse(d) + n * 86400000).toISOString().slice(0, 10);
@@ -17,10 +17,10 @@ export function reportsRouter(pool: Pool) {
     const from = day(req.query.from) ?? addDays(to, -29);
     if (from > to) throw new HttpError(400, 'validation_failed', 'La période est inversée');
     if (Date.parse(to) - Date.parse(from) > 800 * 86400000) throw new HttpError(400, 'validation_failed', 'Période trop longue (800 jours au plus)');
-    const scope = await scopeUsers(pool, req);
+    const scope = await scopeUsers(pool, req);     // utilisateurs supervisés (hiérarchie) : sert aux clients et aux comptes à lister
     const userId = typeof req.query.user_id === 'string' ? req.query.user_id : undefined;
-    if (userId && !inScope(scope, userId)) throw new HttpError(404, 'not_found', 'Utilisateur hors de votre périmètre');
-    const ids = userId ? [userId] : scope;     // null = tout
+    const ids = await authorFilter(pool, req, userId);     // auteurs des visites : tous (limités par les branches) ou un seul ; indépendant de leur statut et de leur rôle actuels
+    const assignIds = userId ? [userId] : scope;     // null = tout
     // Branches : celles de l'utilisateur et leurs descendantes ; `node_id` descend dans une branche (consolidée avec ses sous-branches).
     const allowedNodes = await scopeNodes(pool, req);
     const nodeId = typeof req.query.node_id === 'string' && req.query.node_id ? req.query.node_id : undefined;
@@ -40,11 +40,13 @@ export function reportsRouter(pool: Pool) {
         AND ($4::int IS NOT NULL) AND ($5::uuid[] IS NULL OR v.org_node_id = ANY($5) OR v.author_id = $6::uuid)
         AND COALESCE(v.ended_at, v.started_at, v.planned_start) >= $2::date AND COALESCE(v.ended_at, v.started_at, v.planned_start) < $3::date)`;
 
-    const users = (await pool.query(
-      `SELECT u.id, u.display_name, u.role FROM app_user u WHERE u.status = 'active' AND u.role = 'commercial' AND ($1::uuid[] IS NULL OR u.id = ANY($1))
+    // Utilisateurs listés : les commerciaux actifs du périmètre, PLUS tout auteur de visite (ou responsable d'action) de la période, même désactivé ou
+    // devenu manager/directeur : ses visites ne disparaissent ni des lignes ni des totaux. Complétés après les requêtes ci-dessous.
+    const activeUsers = (await pool.query(
+      `SELECT u.id, u.display_name, u.role, u.status FROM app_user u WHERE u.status = 'active' AND u.role = 'commercial' AND ($1::uuid[] IS NULL OR u.id = ANY($1))
          AND (NOT u.is_admin OR EXISTS (SELECT 1 FROM visit v WHERE v.author_id = u.id) OR EXISTS (SELECT 1 FROM company_assignment a WHERE a.user_id = u.id AND a.removed_at IS NULL))
          AND ($2::uuid[] IS NULL OR EXISTS (SELECT 1 FROM user_org uo WHERE uo.user_id = u.id AND uo.node_id = ANY($2)))
-       ORDER BY u.display_name`, [ids, nodeId ? nodes : null])).rows;
+       ORDER BY u.display_name`, [assignIds, nodeId ? nodes : null])).rows;
 
     const perUser = (await pool.query(`${VISITS}
       SELECT vv.author_id AS user_id,
@@ -64,12 +66,17 @@ export function reportsRouter(pool: Pool) {
         count(*) FILTER (WHERE a.status = 'todo' AND a.due_date < current_date)::int AS late,
         count(*) FILTER (WHERE a.status = 'done' AND a.completed_at >= $2::date AND a.completed_at < $3::date)::int AS done_in_period
        FROM action_item a LEFT JOIN visit v ON v.id = a.visit_id
-       WHERE ($1::uuid[] IS NULL OR a.owner_id = ANY($1)) AND (v.id IS NULL OR $4::uuid[] IS NULL OR v.org_node_id = ANY($4) OR v.author_id = $5::uuid)
-       GROUP BY a.owner_id`, [ids, from, addDays(to, 1), nodes, viewer])).rows;
+       WHERE ($1::uuid[] IS NULL OR a.owner_id = ANY($1))
+         AND (CASE WHEN v.id IS NULL THEN ($6::uuid[] IS NULL OR a.owner_id = ANY($6)) ELSE ($4::uuid[] IS NULL OR v.org_node_id = ANY($4) OR v.author_id = $5::uuid) END)
+       GROUP BY a.owner_id`, [userId ? [userId] : null, from, addDays(to, 1), nodes, viewer, scope])).rows;
+    const known = new Set(activeUsers.map(u => u.id as string));
+    const extraIds = [...new Set([...perUser.map(x => x.user_id as string), ...actions.map(x => x.user_id as string)])].filter(id => !known.has(id));
+    const extra = extraIds.length ? (await pool.query(`SELECT id, display_name, role, status FROM app_user WHERE id = ANY($1::uuid[])`, [extraIds])).rows : [];
+    const users = [...activeUsers, ...extra].sort((a, b) => String(a.display_name).localeCompare(String(b.display_name), 'fr'));
 
     const byUser = users.map(u => {
       const v = perUser.find(x => x.user_id === u.id) ?? {}; const a = actions.find(x => x.user_id === u.id) ?? {};
-      return { user_id: u.id, name: u.display_name, planned: v.planned ?? 0, in_progress: v.in_progress ?? 0, done: v.done ?? 0, cancelled: v.cancelled ?? 0,
+      return { user_id: u.id, name: u.display_name, role: u.role, status: u.status, planned: v.planned ?? 0, in_progress: v.in_progress ?? 0, done: v.done ?? 0, cancelled: v.cancelled ?? 0,
         cr_validated: v.cr_validated ?? 0, cr_pending: v.cr_pending ?? 0, cr_late: v.cr_late ?? 0, avg_cr_delay_days: v.avg_cr_delay_days === null || v.avg_cr_delay_days === undefined ? null : Number(v.avg_cr_delay_days),
         actions_todo: a.todo ?? 0, actions_late: a.late ?? 0, actions_done: a.done_in_period ?? 0 };
     });
@@ -95,7 +102,7 @@ export function reportsRouter(pool: Pool) {
          count(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM visit v WHERE v.company_id = cs.id AND v.deleted_at IS NULL AND v.status IN ('done','validated','in_progress')
               AND ($4::uuid[] IS NULL OR v.org_node_id = ANY($4) OR v.author_id = $5::uuid)
               AND COALESCE(v.ended_at, v.started_at, v.planned_start) >= now() - interval '90 days'))::int AS not_visited_90d
-       FROM cs`, [ids, from, addDays(to, 1), nodes, viewer])).rows[0];
+       FROM cs`, [assignIds, from, addDays(to, 1), nodes, viewer])).rows[0];
 
     const late = (await pool.query(
       `SELECT v.id AS visit_id, c.name AS company, u.display_name AS author, v.ended_at,

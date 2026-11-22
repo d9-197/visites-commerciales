@@ -5,7 +5,7 @@ import type { Pool } from '../../db.js';
 import { tx } from '../../db.js';
 import { HttpError, wrap } from '../../errors.js';
 import { VISIT_HISTORY_FIELDS } from '@visites/sync-core';
-import { scopeUsers, scopeNodes, inScope, day } from './scope.js';
+import { scopeUsers, scopeNodes, inScope, authorFilter, day } from './scope.js';
 
 const uuid = z.string().uuid();
 const ts = z.string().datetime({ offset: true });
@@ -118,9 +118,8 @@ export function prepRouter(pool: Pool) {
 
   /** Visites à venir (à organiser ou organisées) du périmètre. */
   r.get('/prep/visits', wrap(async (req, res) => {
-    const scope = await scopeUsers(pool, req);
     const uid = typeof req.query.user_id === 'string' ? req.query.user_id : undefined;
-    if (uid && !inScope(scope, uid)) throw new HttpError(404, 'not_found', 'Utilisateur hors de votre périmètre');
+    const authors = await authorFilter(pool, req, uid);     // indépendant du statut et du rôle actuels de l'auteur
     const from = day(req.query.from) ?? new Date().toISOString().slice(0, 10);
     const to = day(req.query.to) ?? new Date(Date.now() + 60 * 86400000).toISOString().slice(0, 10);
     const { rows } = await pool.query(
@@ -129,7 +128,7 @@ export function prepRouter(pool: Pool) {
        WHERE v.deleted_at IS NULL AND v.status IN ('planned','organized') AND ($1::uuid[] IS NULL OR v.author_id = ANY($1))
          AND ($4::uuid[] IS NULL OR v.org_node_id = ANY($4) OR v.author_id = $5::uuid)
          AND (v.planned_start IS NULL OR (v.planned_start >= $2::date AND v.planned_start < $3::date + 1)) ORDER BY v.planned_start NULLS FIRST LIMIT 500`,
-      [uid ? [uid] : scope, from, to, await scopeNodes(pool, req), req.auth!.id]);
+      [authors, from, to, await scopeNodes(pool, req), req.auth!.id]);
     res.json({ visits: rows });
   }));
 
@@ -173,7 +172,9 @@ export function prepRouter(pool: Pool) {
     const me = (await pool.query(`SELECT display_name FROM app_user WHERE id = $1`, [req.auth!.id])).rows[0];
     await tx(pool, async c => {
       const v = (await c.query(`SELECT * FROM visit WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, [req.params.id])).rows[0];
-      if (!v || !inScope(scope, v.author_id) || !(allowedNodes === null || allowedNodes.includes(v.org_node_id) || v.author_id === req.auth!.id)) throw new HttpError(404, 'not_found', 'Visite inconnue');
+      // Modifiable par son auteur, par un manager/directeur ayant accès à sa branche, par un administrateur (le statut ou le rôle actuel de l'auteur n'y change rien).
+      const supervisor = req.auth!.role === 'manager' || req.auth!.role === 'directeur';
+      if (!v || !(req.auth!.isAdmin || v.author_id === req.auth!.id || (supervisor && allowedNodes !== null && allowedNodes.includes(v.org_node_id)))) throw new HttpError(404, 'not_found', 'Visite inconnue');
       if (!['planned', 'organized'].includes(v.status)) throw new HttpError(409, 'locked_status', 'Seule une visite à organiser ou organisée se modifie ici');
       const cols = Object.keys(f) as (keyof typeof f)[];
       if (!cols.length) return;

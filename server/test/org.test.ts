@@ -217,3 +217,41 @@ test('e-mail d\'une visite : seuls les supérieurs qui peuvent lire la visite so
   assert.deepEqual(o.recipients.map((r: any) => r.name).sort(), ['cA1', 'dirA', 'dirAg1', 'mgrA1']);
   assert.ok(!o.recipients.some((r: any) => ['mgrA2', 'dirB', 'mgrB1'].includes(r.name)));
 });
+
+test('les visites d\'un utilisateur désactivé, devenu manager ou changé de branche ne disparaissent d\'aucune vue (reporting, liste, détail, planning)', async () => {
+  const iso = (n: number) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
+  const q = `?from=${iso(-30)}&to=${iso(1)}`;
+  const before = (await back('dirA', 'GET', `/reports/activity${q}`)).body;
+  const a2Before = before.by_user.find((u: any) => u.name === 'cA2');
+  assert.ok(a2Before && a2Before.in_progress === 1, 'point de départ : cA2 a une visite en cours');
+  // planning : une visite à venir de cA2, puis cA2 est désactivé et passe manager
+  const when = new Date(Date.now() + 6 * 86400000).toISOString();
+  const planned = await back('mgrA2', 'POST', '/prep/visits', { company_id: U.company, user_id: U.cA2, planned_start: when });
+  assert.equal(planned.status, 201);
+  assert.equal((await back('admin', 'PATCH', `/users/${U.cA2}`, { status: 'disabled' })).status, 200);
+  assert.equal((await back('admin', 'PATCH', `/users/${U.cA2}`, { role: 'manager' })).status, 200);
+  for (const viewer of ['dirA', 'mgrA2', 'admin']) {
+    const r = (await back(viewer, 'GET', `/reports/activity${q}`)).body;
+    const row = r.by_user.find((u: any) => u.name === 'cA2');
+    assert.ok(row, `${viewer} : la ligne de cA2 reste`); assert.equal(row.status, 'disabled'); assert.equal(row.role, 'manager'); assert.equal(row.in_progress, 1);
+    assert.equal(r.totals.in_progress, r.by_user.reduce((n: number, u: any) => n + u.in_progress, 0), `${viewer} : les totaux comptent aussi ses visites`);
+  }
+  const after = (await back('dirA', 'GET', `/reports/activity${q}`)).body;
+  assert.equal(after.totals.in_progress, before.totals.in_progress, 'totaux inchangés');
+  assert.equal(after.by_node.find((n: any) => n.name === 'Agence A2').in_progress, before.by_node.find((n: any) => n.name === 'Agence A2').in_progress);
+  // filtre sur cet utilisateur, liste et détail
+  assert.equal((await back('dirA', 'GET', `/reports/activity${q}&user_id=${U.cA2}`)).status, 200);
+  assert.equal((await back('dirB', 'GET', `/reports/activity${q}&user_id=${U.cA2}`)).status, 404, 'hors de la branche du demandeur');
+  const list = (await back('dirA', 'GET', `/visits?limit=100&user_id=${U.cA2}`)).body.visits;
+  assert.ok(list.length >= 2 && list.every((v: any) => v.author === 'cA2' && v.author_status === 'disabled' && v.author_role === 'manager'));
+  assert.equal((await back('mgrA2', 'GET', `/visits/${V.cA2}`)).body.visit.author_status, 'disabled');
+  assert.ok((await back('mgrA2', 'GET', '/prep/visits')).body.visits.some((v: any) => v.id === planned.body.id), 'planning : la visite à venir reste listée');
+  assert.equal((await back('mgrA2', 'PATCH', `/prep/visits/${planned.body.id}`, { objective: 'reprise' })).status, 200, 'un manager de la branche peut la modifier');
+  // changé de branche : ses visites restent dans l'ancienne
+  assert.equal((await back('admin', 'PATCH', `/users/${U.cA2}`, { node_ids: [N['Agence B1']] })).status, 200);
+  assert.ok((await back('mgrA2', 'GET', `/visits?limit=100&user_id=${U.cA2}`)).body.visits.length >= 2, 'l\'ancienne branche voit toujours ses visites');
+  assert.ok((await back('dirA', 'GET', `/reports/activity${q}`)).body.by_user.some((u: any) => u.name === 'cA2'));
+  // l'application mobile suit la même règle
+  assert.equal((await visitsOf('mgrA2')).some(v => v.id === V.cA2), true);
+  await back('admin', 'PATCH', `/users/${U.cA2}`, { status: 'active', role: 'commercial', node_ids: [N['Agence A2']] });
+});
