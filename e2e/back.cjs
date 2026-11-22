@@ -122,7 +122,24 @@ const dialog = page => page.getByRole('dialog');
   }
   await rowOf('Temporaire').getByRole('button', { name: 'Supprimer' }).click();               // branche vide : supprimée
   await page.getByRole('row').filter({ hasText: 'Temporaire' }).waitFor({ state: 'detached' });
+  // arbre à plusieurs niveaux : niveaux distincts, branches repliables
+  await rowOf('Agence Lyon').getByRole('button', { name: '+ Sous-branche' }).click();
+  await dialog(page).getByLabel('Nom de la branche').fill('Équipe Nord');
+  await dialog(page).getByRole('button', { name: 'Enregistrer', exact: true }).click();
+  await rowOf('Équipe Nord').waitFor();
+  assert.equal(await rowOf('Équipe Nord').getByText('Niveau 2', { exact: true }).count(), 1, 'niveau affiché');
+  assert.equal(await rowOf('Entreprise').getByText('Racine', { exact: true }).count(), 1);
   await shot(page, 'b2b-organisation');
+  await page.getByRole('button', { name: 'Replier la branche Agence Lyon' }).click();
+  await page.getByRole('row').filter({ hasText: 'Équipe Nord' }).waitFor({ state: 'detached' });
+  await rowOf('Agence Lyon').getByText('+1', { exact: true }).waitFor();
+  await shot(page, 'b2b-organisation-repliee');
+  await page.getByRole('button', { name: 'Déplier la branche Agence Lyon' }).click();
+  await rowOf('Équipe Nord').waitFor();
+  await page.getByRole('button', { name: 'Tout replier' }).click();
+  await page.getByRole('row').filter({ hasText: 'Équipe Nord' }).waitFor({ state: 'detached' });
+  await page.getByRole('button', { name: 'Tout déplier' }).click();
+  await rowOf('Équipe Nord').waitFor();
   await nav(page, 'Comptes');
   await page.getByRole('row', { name: /Commercial Deux/ }).getByRole('button', { name: 'Modifier' }).click();
   await dialog(page).getByRole('checkbox', { name: 'Agence Grenoble' }).check();

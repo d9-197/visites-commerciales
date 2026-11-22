@@ -84,3 +84,24 @@ dl.facts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; } dl.fa
 
 .login { min-height: 100%; display: grid; place-items: center; padding: 24px; } .login form { width: 100%; max-width: 380px; display: flex; flex-direction: column; gap: 12px; } .login h1 { text-align: center; } .login p { text-align: center; margin: 0; } .login-logo { max-height: 72px; max-width: 240px; object-fit: contain; align-self: center; }
 @media (max-width: 900px) { .shell { grid-template-columns: 1fr; } aside { position: static; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; } nav { flex-direction: row; flex-wrap: wrap; } .fiche, .form { grid-template-columns: 1fr; } main { padding: 16px; } }
+
+/* Arbre de l'organisation : un niveau = une couleur, des traits de liaison, des branches repliables. */
+:root { --lv0: #0e6a87; --lv1: #5e4bb5; --lv2: #2b7a4b; --lv3: #a8680a; --lv4: #b3261e; --lv5: #5b6a74; }
+@media (prefers-color-scheme: dark) { :root { --lv0: #4fb4d3; --lv1: #b6a1f0; --lv2: #6cc58d; --lv3: #e3b04b; --lv4: #ff8a80; --lv5: #98a8b2; } }
+.lv0 { --lvc: var(--lv0); } .lv1 { --lvc: var(--lv1); } .lv2 { --lvc: var(--lv2); } .lv3 { --lvc: var(--lv3); } .lv4 { --lvc: var(--lv4); } .lv5 { --lvc: var(--lv5); }
+table.tree tbody tr.lv { box-shadow: inset 5px 0 0 var(--lvc); background: color-mix(in srgb, var(--lvc) 6%, transparent); }
+table.tree tbody tr.lv0 { background: color-mix(in srgb, var(--lvc) 11%, transparent); }
+table.tree td { vertical-align: middle; }
+table.tree td.treecell { padding: 0 10px 0 14px; }
+.treerow { display: flex; align-items: stretch; gap: 0; min-height: 46px; }
+.treerow .guide { width: 26px; flex: none; position: relative; }
+.treerow .guide.more::before { content: ''; position: absolute; left: 12px; top: 0; bottom: 0; border-left: 2px solid var(--line); }
+.treerow .guide.last::before { content: ''; position: absolute; left: 12px; top: 0; height: 50%; border-left: 2px solid var(--line); border-bottom: 2px solid var(--line); width: 14px; border-bottom-left-radius: 8px; }
+.treerow .guide.last.more::before { height: 100%; border-bottom: 0; border-bottom-left-radius: 0; }
+.treerow .guide.last.more::after { content: ''; position: absolute; left: 12px; top: 50%; width: 14px; border-top: 2px solid var(--line); }
+.treerow .chev { align-self: center; flex: none; width: 26px; height: 26px; padding: 0; margin-right: 6px; line-height: 1; border-radius: 6px; border: 1px solid var(--lvc); color: var(--lvc); background: var(--surface); font-size: 14px; }
+.treerow .chev.leaf { border: 0; background: none; text-align: center; color: var(--lvc); opacity: .6; display: inline-flex; align-items: center; justify-content: center; }
+.treerow .nodename { align-self: center; margin-right: 8px; }
+tr.lv0 .nodename { font-size: 16px; } tr.lv1 .nodename { font-size: 15px; }
+.lvtag { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; color: var(--lvc); border: 1px solid var(--lvc); white-space: nowrap; }
+table.tree td.treecell { min-width: 300px; } .treerow .nodename { white-space: nowrap; }
