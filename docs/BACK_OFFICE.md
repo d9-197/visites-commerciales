@@ -65,7 +65,7 @@ Authentification : jeton de l'application mobile (`POST /api/mobile/v1/auth/logi
 | `GET/POST /users`, `PATCH /users/{id}`, `POST /users/{id}/reset-password`, `GET/PUT /settings` | administrateur |
 | `GET/POST /companies`, `GET/PATCH /companies/{id}`, `PUT /companies/{id}/assignments`, `POST /companies/{id}/contacts`, `PATCH/DELETE /contacts/{id}`, `POST /import` | administrateur |
 
-Description OpenAPI : `api/back.openapi.yaml` (validée avec `openapi_spec_validator`, réponses réelles comparées aux schémas pour les points d'entrée en lecture et en écriture). Le comportement est vérifié par `server/test/back.test.ts`.
+Description OpenAPI : `api/back.openapi.yaml` (validée avec `openapi_spec_validator`). Le test de contrat `e2e/contract.py` (`npm run e2e:contract`, Python avec PyYAML, back démarré avec les données de démonstration) crée un jeu de données puis compare les réponses réelles aux schémas : champs inconnus, champs obligatoires absents, types, énumérations ; il vérifie aussi que les notes internes ne sortent pas. Il écrit des données de test : pas sur une base de production. Le comportement est vérifié par `server/test/back.test.ts`.
 
 ## Déploiement
 

@@ -771,7 +771,12 @@ components:
               report:
                 oneOf:
                   - {type: 'null'}
-                  - {$ref: '#/components/schemas/ReportContent'}
+                  - allOf:
+                      - {$ref: '#/components/schemas/ReportContent'}
+                      - type: object
+                        properties:
+                          visit_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+                          status: {type: string, enum: [validated], description: "Seuls les comptes rendus validés sont joints."}
         open_actions:
           type: array
           items:

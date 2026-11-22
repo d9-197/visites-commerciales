@@ -13,6 +13,7 @@
     "pg:start": "bash server/scripts/pg-local.sh start",
     "pg:stop": "bash server/scripts/pg-local.sh stop",
     "build:back": "npm --prefix back run build",
-    "e2e:back": "node e2e/back.cjs"
+    "e2e:back": "node e2e/back.cjs",
+    "e2e:contract": "python3 e2e/contract.py"
   }
 }

@@ -100,7 +100,7 @@ export function prepRouter(pool: Pool) {
       `SELECT visit_id, summary, needs, objections, competitors, decisions, next_step, opportunity_temperature, status FROM visit_report WHERE visit_id = ANY($1::uuid[]) AND status = 'validated'`,
       [visits.filter(v => v.readable).map(v => v.id)])).rows : [];
     const actions = (await pool.query(
-      `SELECT x.id, x.title, x.due_date::text AS due_date, x.status, (x.status = 'todo' AND x.due_date < current_date) AS late, u.display_name AS owner, x.visit_id
+      `SELECT x.id, x.title, x.due_date::text AS due_date, x.status, COALESCE(x.status = 'todo' AND x.due_date < current_date, false) AS late, u.display_name AS owner, x.visit_id
        FROM action_item x JOIN app_user u ON u.id = x.owner_id WHERE x.company_id = $1 AND x.status = 'todo' AND ($2::boolean OR can_read_action($3, x.id)) ORDER BY x.due_date NULLS LAST`, [company.id, viewer.isAdmin, viewer.id])).rows;
     const shown = visits.map(v => ({ id: v.id, status: v.status, planned_start: v.planned_start, started_at: v.started_at, ended_at: v.ended_at, author: v.author, objective: v.objective, preparation_notes: v.preparation_notes,
       report: v.readable ? reports.find(x => x.visit_id === v.id) ?? null : null, report_hidden: !v.readable }));
