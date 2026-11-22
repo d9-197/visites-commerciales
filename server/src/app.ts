@@ -44,7 +44,7 @@ export function createApp(pool: Pool, cfg: Config = defaultConfig, opts: { webDi
   const routes = express.Router();
   routes.use(express.json({ limit: '5mb' }));
   routes.use('/api/mobile/v1', mobileRouter(pool, cfg, opts.ai, opts.mail, opts.brand));
-  routes.use('/api/back/v1', backRouter(pool, cfg));
+  routes.use('/api/back/v1', backRouter(pool, cfg, opts.ai));
   routes.use('/api/crm/v1', crmRouter(pool, cfg));
   routes.use('/api/admin/v1', adminRouter(pool, cfg));
   // Application back (PC) sur /admin/ : fichiers statiques ; les URL relatives de l'application fonctionnent sous n'importe quel sous-chemin.

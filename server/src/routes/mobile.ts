@@ -9,6 +9,7 @@ import { pull } from '../sync/pull.js';
 import { push, pushSchema } from '../sync/push.js';
 import { AiError, type AiServices, type BriefReport } from '../ai/index.js';
 import { reviewByRules } from '../ai/review-rules.js';
+import { aiCalls } from '../ai/usage.js';
 import type { MailService } from '../mail/index.js';
 import { composeVisitEmail } from '../mail/compose.js';
 import { DEFAULT_BRAND_NAME, type Brand } from '../brand.js';
@@ -30,7 +31,7 @@ export function mobileRouter(pool: Pool, cfg: Config, ai?: AiServices, mail?: Ma
     // Un SVG peut contenir des scripts : servi en image seulement, sans exécution (CSP), jamais interprété comme autre chose.
     res.set({ 'Content-Type': brand.logo.mime, 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox", 'Cache-Control': 'public, max-age=3600' }).send(brand.logo.data);
   });
-  const aiCalls = new Map<string, number[]>();      // limitation de débit de l'IA, par utilisateur (en mémoire : une seule instance du back)
+  // (limite de débit partagée avec le back : voir ai/usage.ts)      // limitation de débit de l'IA, par utilisateur (en mémoire : une seule instance du back)
   const auth = requireAuth(pool, cfg, { checkVersion: true });
 
   async function issueTokens(userId: string, deviceId: string, isAdmin: boolean) {

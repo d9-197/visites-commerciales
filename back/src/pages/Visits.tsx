@@ -3,6 +3,7 @@ import { api, type R } from '../api';
 import type { Me } from '../App';
 import { Alert, AuthorState, Badge, BranchSelect, Card, ClientFilter, Empty, Loading, Modal, useLoad } from '../ui';
 import { Planning, usePrep } from './Preparation';
+import { EmailModal, ReportEditor } from './VisitActions';
 import { STATUS, STATUS_TONE, TEMP, fmtDateTime, fmtDate } from '../format';
 
 const PAGE = 50;
@@ -33,7 +34,7 @@ export function Visits({ me, params }: { me: Me; params: URLSearchParams }) {
       {cur.prep
         ? <Planning key={cur.id} version={version} fixed={cur.prep.late || cur.prep.user ? cur.prep : undefined} onEdit={prep.openEdit} onAssign={prep.openAssign} onOpen={setOpen} />
         : <VisitList key={cur.id} version={version} status={cur.status ?? ''} initialUser={params.get('user') ?? ''} onOpen={setOpen} />}
-      {open && <Detail id={open} onClose={() => setOpen(null)} />}
+      {open && <Detail id={open} me={me} onClose={() => setOpen(null)} onChanged={() => setVersion(v => v + 1)} />}
       {prep.dialogs}
     </>
   );
@@ -76,14 +77,21 @@ function VisitList({ version, status: initialStatus, initialUser, onOpen }: { ve
   );
 }
 
-export function Detail({ id, onClose }: { id: string; onClose: () => void }) {
-  const { data, error, loading } = useLoad(() => api<R>(`visits/${id}`), [id]);
+export function Detail({ id, me, onClose, onChanged }: { id: string; me: Me; onClose: () => void; onChanged?: () => void }) {
+  const [tick, setTick] = useState(0);
+  const { data, error, loading } = useLoad(() => api<R>(`visits/${id}`), [id, tick]);
+  const [email, setEmail] = useState(false); const [editor, setEditor] = useState(false); const [msg, setMsg] = useState<string>();
   const v = data?.visit; const rep = data?.report;
   const todo = data?.actions.filter((a: R) => a.status === 'todo').length ?? 0;
   const st = v ? (v.status === 'validated' && todo === 0 ? 'closed' : v.status) : '';
   return (
-    <Modal wide title={v ? `${v.company} — ${fmtDate(v.ended_at ?? v.started_at ?? v.planned_start)}` : 'Visite'} onClose={onClose} footer={<button onClick={onClose}>Fermer</button>}>
-      {error && <Alert>{error}</Alert>}{loading && <Loading />}
+    <>
+    <Modal wide title={v ? `${v.company} — ${fmtDate(v.ended_at ?? v.started_at ?? v.planned_start)}` : 'Visite'} onClose={onClose} footer={<>
+      {v && <button onClick={() => setEmail(true)}>✉ Envoyer par e-mail</button>}
+      {v && v.author_id === me.id && !['planned', 'organized', 'cancelled', 'deleted'].includes(v.status) && <button className="primary" onClick={() => setEditor(true)}>{v.status === 'validated' || rep?.status === 'validated' ? 'Compte rendu (rouvrir)' : rep ? 'Finaliser le compte rendu' : 'Saisir le compte rendu'}</button>}
+      <button onClick={onClose}>Fermer</button></>}>
+      {msg && <Alert kind="ok">{msg}</Alert>}
+      {error && <Alert>{error}</Alert>}{loading && !data && <Loading />}
       {data && <div className="fiche">
         <section><h3>Visite</h3>
           <dl className="facts">
@@ -113,5 +121,8 @@ export function Detail({ id, onClose }: { id: string; onClose: () => void }) {
         </section>
       </div>}
     </Modal>
+      {email && v && <EmailModal visitId={id} company={v.company} onClose={() => setEmail(false)} onSent={t => { setEmail(false); setMsg(t); setTick(x => x + 1); }} />}
+      {editor && <ReportEditor visitId={id} me={me} onClose={() => { setEditor(false); setTick(x => x + 1); }} onChanged={() => { setTick(x => x + 1); onChanged?.(); }} />}
+    </>
   );
 }

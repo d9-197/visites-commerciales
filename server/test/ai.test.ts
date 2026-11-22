@@ -286,3 +286,25 @@ test('IA : contrôle du compte rendu : règles locales toujours, relecture IA en
   const pv = uuid(), pr = uuid(); await a.push([op('visit', 'create', pv, { company_id: f.f1, status: 'planned' }), op('report', 'create', pr, { visit_id: pv, language: 'fr' })]);
   assert.equal((await reviewAsk(pr, { fields: {}, actions: [] })).status, 409, 'avant le début de la visite');
 });
+
+const B = '/api/back/v1';
+const clientBrief = async (who: string, company: string, body: object = { today: '2026-11-21' }) => (await f.login(who)).call('POST', `${B}/prep/companies/${company}/ai-brief`, body);
+
+test('IA (back) : brief d\'un client pour préparer une réunion : droits, historique validé seulement, cache, sans nom de client', async () => {
+  fake.reply(200, completion(BRIEF));
+  const n0 = fake.requests.length;
+  const r = await clientBrief('mgr1@x.fr', f.f1, { today: '2026-11-21', objective: 'Renégocier le contrat', preparation_notes: 'Apporter les tarifs' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.deepEqual(r.body.brief, BRIEF); assert.equal(r.body.cached, false);
+  const sent = JSON.stringify(fake.requests.at(-1)!.body);
+  assert.ok(sent.includes('Renégocier le contrat') && sent.includes('Apporter les tarifs'), 'objectif et notes de préparation du formulaire');
+  assert.ok(!sent.includes('BROUILLON SECRET') && !sent.includes('Dupont'), 'ni brouillon ni nom du client');
+  assert.equal((await clientBrief('mgr1@x.fr', f.f1, { today: '2026-11-21', objective: 'Renégocier le contrat', preparation_notes: 'Apporter les tarifs' })).body.cached, true);
+  assert.equal(fake.requests.length, n0 + 1, 'servi par le cache');
+  assert.equal((await clientBrief('c2@x.fr', f.f1)).status, 404, 'hors périmètre : client non affecté');
+  assert.equal((await clientBrief('c1@x.fr', f.f1, { bidon: 1 })).status, 400);
+  assert.equal((await clientBrief('admin@x.fr', f.f1)).status, 200, 'administrateur : comme la fiche de préparation');
+  fake.reply(500, { message: 'secret interne' });
+  const bad = await clientBrief('mgr1@x.fr', f.f1, { refresh: true, today: '2026-11-21' });
+  assert.equal(bad.status, 502); assert.ok(!JSON.stringify(bad.body).includes('secret interne'));
+});

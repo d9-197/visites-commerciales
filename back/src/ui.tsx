@@ -77,3 +77,32 @@ export function ClientFilter({ value, onChange }: { value: string[]; onChange: (
     </div>
   );
 }
+
+/** Brief IA d'un client (préparation d'une réunion). `onInsert` : recopie le brief dans un texte (points à aborder). */
+export function BriefPanel({ companyId, objective, notes, plannedStart, onInsert }: { companyId: string; objective?: string; notes?: string; plannedStart?: string | null; onInsert?: (text: string) => void }) {
+  const [res, setRes] = useState<R>(); const [busy, setBusy] = useState(false); const [err, setErr] = useState<string>();
+  const run = async (refresh: boolean) => {
+    setBusy(true); setErr(undefined);
+    try {
+      setRes(await api<R>(`prep/companies/${companyId}/ai-brief`, { method: 'POST', body: { today: new Date().toISOString().slice(0, 10), ...(refresh ? { refresh: true } : {}), ...(objective?.trim() ? { objective: objective.trim() } : {}), ...(notes?.trim() ? { preparation_notes: notes.trim() } : {}), ...(plannedStart ? { planned_start: plannedStart } : {}) } }));
+    } catch (e) { setErr(e instanceof ApiError && e.code === 'ai_unavailable' ? "L'IA n'est pas activée sur ce serveur." : errMsg(e)); } finally { setBusy(false); }
+  };
+  const b = res?.brief as R | null | undefined;
+  const text = b ? [b.summary, b.where_we_left && `Dernière visite : ${b.where_we_left}`, ...(b.to_address ?? []).map((t: string) => `• ${t}`), ...(b.watch_out?.length ? ['Vigilance :', ...b.watch_out.map((t: string) => `• ${t}`)] : []), ...(b.questions?.length ? ['Questions :', ...b.questions.map((t: string) => `• ${t}`)] : [])].filter(Boolean).join('\n') : '';
+  const list = (title: string, items?: string[]) => items && items.length > 0 && <><h4>{title}</h4><ul>{items.map((t, i) => <li key={i}>{t}</li>)}</ul></>;
+  return (
+    <div className="brief">
+      <div className="toolbar"><button onClick={() => void run(!!res)} disabled={busy}>{busy ? 'Préparation…' : res ? '↻ Régénérer le brief' : '✨ Préparer la réunion (IA)'}</button>
+        {b && onInsert && <button onClick={() => onInsert(text)}>Insérer dans les points à aborder</button>}</div>
+      {err && <Alert>{err}</Alert>}
+      {res?.empty && <p className="muted">Pas assez d'informations pour un brief : aucun compte rendu validé ni action ouverte, et pas d'objectif saisi.</p>}
+      {b && <div className="brief-body">
+        {b.summary && <p><strong>{b.summary}</strong></p>}
+        {b.where_we_left && <><h4>Où on en était</h4><p>{b.where_we_left}</p></>}
+        {list('À aborder', b.to_address)}{list('Points de vigilance', b.watch_out)}{list('Questions à poser', b.questions)}
+        {res!.warnings.length > 0 && <Alert kind="warn">À vérifier : {res!.warnings.join(' ')}</Alert>}
+        <p className="muted">Généré par IA à partir de {res!.sources.reports} compte{res!.sources.reports > 1 ? 's' : ''} rendu{res!.sources.reports > 1 ? 's' : ''} validé{res!.sources.reports > 1 ? 's' : ''} et {res!.sources.actions} action{res!.sources.actions > 1 ? 's' : ''} ouverte{res!.sources.actions > 1 ? 's' : ''}{res!.cached ? ' (déjà généré, historique inchangé)' : ''} : relisez avant de vous y fier.</p>
+      </div>}
+    </div>
+  );
+}

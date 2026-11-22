@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api, type R } from '../api';
 import type { Me } from '../App';
-import { Alert, Badge, Card, ClientFilter, Empty, Field, Loading, Modal, Tip, useLoad, errMsg } from '../ui';
+import { Alert, Badge, BriefPanel, Card, ClientFilter, Empty, Field, Loading, Modal, Tip, useLoad, errMsg } from '../ui';
 import { ROLE, REASON, STATUS, STATUS_TONE, TEMP, daysAgo, fmtDate, fmtDateTime, isoToLocal, localToIso } from '../format';
 
 /** Préparation des visites : fiche client, formulaire de préparation, attribution. Les écrans qui les déclenchent (visites, reporting) affichent `dialogs`. */
@@ -136,6 +136,7 @@ function Fiche({ id, onClose, onPlan, onEdit }: { id: string; onClose: () => voi
           <h4>Contacts</h4>
           {data.contacts.length === 0 ? <p className="muted">Aucun contact.</p> : <ul>{data.contacts.map((c: R) => <li key={c.id}><strong>{c.full_name}</strong>{c.job_title ? `, ${c.job_title}` : ''}<br /><small className="muted">{[c.phone, c.email].filter(Boolean).join(' · ')}</small></li>)}</ul>}
         </section>
+        <section className="full"><h3>Préparer la réunion (IA)</h3><BriefPanel companyId={co.id} /></section>
         <section><h3>Points à aborder</h3>
           {data.agenda.length === 0 ? <p className="muted">Rien à signaler : pas de compte rendu validé ni d'action ouverte.</p> : <ul className="agenda">{data.agenda.map((a: R, i: number) => <li key={i} className={a.kind}>{a.text}</li>)}</ul>}
           <h4>Actions ouvertes ({data.open_actions.length})</h4>
@@ -225,6 +226,7 @@ function PlanModal({ me, company, visit, onClose, onDone }: { me: Me; company?: 
         <Field full label="Points à aborder" hint="Visibles dans l'application mobile par la personne attribuée.">
           <textarea rows={5} value={notes} onChange={e => setNotes(e.target.value)} maxLength={5000} />
         </Field>
+        {companyId && <div className="full"><BriefPanel companyId={companyId} objective={objective} notes={notes} plannedStart={when ? localToIso(when) : null} onInsert={t => setNotes(n => [n.trim(), t].filter(Boolean).join('\n'))} /></div>}
         {points.length > 0 && <div className="full"><button type="button" onClick={insertPoints}>Insérer les {points.length} points suggérés (dernier compte rendu, actions ouvertes)</button></div>}
       </div>
       {err && <Alert>{err}</Alert>}

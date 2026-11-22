@@ -41,6 +41,25 @@ export async function api<T = R>(path: string, init?: { method?: string; body?: 
   return (text ? JSON.parse(text) : null) as T;
 }
 
+/** API mobile avec le jeton du back (même compte, mêmes règles) : synchronisation, IA, transcription, e-mail. */
+export async function mobileApi<T = R>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
+  let res: Response;
+  try { res = await authed('mobile/v1/' + path, init); } catch { throw new ApiError(0, 'network', 'Serveur injoignable'); }
+  if (!res.ok) await fail(res);
+  const text = await res.text();
+  return (text ? JSON.parse(text) : null) as T;
+}
+/** Envoi d'un fichier brut (dictée) à l'API mobile. */
+export async function mobileUpload<T = R>(path: string, blob: Blob): Promise<T> {
+  const doSend = () => fetch(ROOT + 'mobile/v1/' + path, { method: 'POST', headers: { 'content-type': blob.type || 'application/octet-stream', 'x-app-version': '1.0.0', ...(tokens ? { authorization: `Bearer ${tokens.access_token}` } : {}) }, body: blob });
+  let res: Response;
+  try { res = await doSend(); } catch { throw new ApiError(0, 'network', 'Serveur injoignable'); }
+  if (res.status === 401) { await authed('back/v1/me'); try { res = await doSend(); } catch { throw new ApiError(0, 'network', 'Serveur injoignable'); } }   // renouvelle le jeton puis réessaie
+  if (!res.ok) await fail(res);
+  return await res.json() as T;
+}
+export const deviceId = () => tokens?.device_id;
+
 export async function download(path: string, filename: string) {
   const res = await authed('back/v1/' + path);
   if (!res.ok) await fail(res);

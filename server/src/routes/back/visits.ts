@@ -48,12 +48,12 @@ export function visitsRouter(pool: Pool) {
        WHERE v.id = $1 AND v.deleted_at IS NULL`, [req.params.id])).rows[0];
     const ok = v && (A.isAdmin || (await pool.query(`SELECT can_read_visit($1,$2) AS ok`, [A.id, v.id])).rows[0].ok);
     if (!ok) throw new HttpError(404, 'not_found', 'Visite inconnue');
-    const report = (await pool.query(`SELECT summary, needs, objections, competitors, decisions, next_step, opportunity_temperature, draft_actions, status, validated_at, no_action FROM visit_report WHERE visit_id = $1`, [v.id])).rows[0] ?? null;
+    const report = (await pool.query(`SELECT id, version, language, sent_to_client_at, summary, needs, objections, competitors, decisions, next_step, opportunity_temperature, draft_actions, status, validated_at, no_action FROM visit_report WHERE visit_id = $1`, [v.id])).rows[0] ?? null;
     const actions = (await pool.query(`SELECT x.id, x.title, x.due_date::text AS due_date, x.status, x.origin, u.display_name AS owner, x.completed_at FROM action_item x JOIN app_user u ON u.id = x.owner_id WHERE x.visit_id = $1 ORDER BY x.due_date NULLS LAST, x.created_at`, [v.id])).rows;
-    const notes = (await pool.query(`SELECT id, kind, body, noted_at FROM visit_note WHERE visit_id = $1 AND deleted_at IS NULL ORDER BY noted_at, created_at`, [v.id])).rows;
+    const notes = (await pool.query(`SELECT id, kind, body, noted_at, author_id FROM visit_note WHERE visit_id = $1 AND deleted_at IS NULL ORDER BY noted_at, created_at`, [v.id])).rows;
     const history = (await pool.query(`SELECT field, old_value, new_value, changed_by_name, changed_at FROM visit_history WHERE visit_id = $1 ORDER BY changed_at, id`, [v.id])).rows;
     const emails = (await pool.query(`SELECT e.created_at, e.recipients, e.parts, e.status, u.display_name AS sender FROM visit_email e JOIN app_user u ON u.id = e.sender_id WHERE e.visit_id = $1 ORDER BY e.created_at`, [v.id])).rows;
-    res.json({ visit: { id: v.id, company_id: v.company_id, company: v.company, author_id: v.author_id, author: v.author, author_status: v.author_status, author_role: v.author_role, org_node_id: v.org_node_id, org_path: v.org_path, created_by_name: v.created_by_name, status: v.status, planned_start: v.planned_start, started_at: v.started_at,
+    res.json({ visit: { id: v.id, version: v.version, company_id: v.company_id, company: v.company, author_id: v.author_id, author: v.author, author_status: v.author_status, author_role: v.author_role, org_node_id: v.org_node_id, org_path: v.org_path, created_by_name: v.created_by_name, status: v.status, planned_start: v.planned_start, started_at: v.started_at,
       ended_at: v.ended_at, location_text: v.location_text, objective: v.objective, preparation_notes: v.preparation_notes }, report, actions, notes, history, emails });
   }));
 

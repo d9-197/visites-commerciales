@@ -3,6 +3,7 @@
 // Usage : BASE_URL=http://127.0.0.1:3000 SHOTS=/dossier node e2e/back.cjs
 const { chromium } = require('playwright');
 const assert = require('node:assert/strict');
+const net = require('node:net');
 const BASE = process.env.BASE_URL ?? 'http://127.0.0.1:3000';
 const SHOTS = process.env.SHOTS;
 const PWD = process.env.SEED_PASSWORD ?? 'demo-mot-de-passe-12';
@@ -20,7 +21,31 @@ const nav = (page, name) => page.getByRole('navigation').getByRole('link', { nam
 const admin = async (page, tab) => { await nav(page, 'Administration'); await page.getByRole('tab', { name: tab }).click(); };
 const dialog = page => page.getByRole('dialog');
 
+/** Serveur SMTP minimal qui garde les messages reçus (envoi d'e-mail depuis le back). */
+const mails = [];
+function startSmtpSink(port) {
+  return new Promise(resolve => {
+    const srv = net.createServer(sock => {
+      let buf = '', data = false, cur = { to: [], raw: '' };
+      const say = l => sock.write(l + '\r\n');
+      say('220 sink ESMTP');
+      sock.on('data', d => {
+        buf += d.toString('utf8');
+        for (;;) {
+          if (data) { const end = buf.indexOf('\r\n.\r\n'); if (end < 0) return; cur.raw = buf.slice(0, end); buf = buf.slice(end + 5); data = false; mails.push(cur); cur = { to: [], raw: '' }; say('250 ok'); continue; }
+          const nl = buf.indexOf('\r\n'); if (nl < 0) return;
+          const line = buf.slice(0, nl); buf = buf.slice(nl + 2);
+          if (/^EHLO|^HELO/i.test(line)) say('250 sink'); else if (/^RCPT TO/i.test(line)) { cur.to.push(/<([^>]+)>/.exec(line)[1]); say('250 ok'); }
+          else if (/^DATA/i.test(line)) { data = true; say('354 go'); } else if (/^QUIT/i.test(line)) { say('221 bye'); sock.end(); } else say('250 ok');
+        }
+      });
+      sock.on('error', () => {});
+    }).listen(port, '127.0.0.1', () => resolve(srv));
+  });
+}
+
 (async () => {
+  const smtp = await startSmtpSink(2525);
   const browser = await chromium.launch();
   const ctx = await browser.newContext({ viewport: { width: 1360, height: 900 }, deviceScaleFactor: 1 });
   const page = await ctx.newPage();
@@ -316,6 +341,67 @@ const dialog = page => page.getByRole('dialog');
   await page.getByText('Objectif de visites', { exact: true }).waitFor();
   await page.getByRole('columnheader', { name: 'Objectif', exact: true }).waitFor();
   await shot(page, 'b7b-objectifs');
+  // objectifs : tous les profils, filtrables
+  await page.getByRole('tab', { name: 'Objectifs mensuels' }).click();
+  await page.getByRole('row', { name: /Manager Démo/ }).waitFor();
+  await page.getByRole('row', { name: /Directeur Démo/ }).waitFor();
+  await page.getByLabel('Profil', { exact: true }).selectOption('manager');
+  await page.getByRole('row', { name: /Directeur Démo/ }).waitFor({ state: 'detached' });
+  await page.getByLabel('Profil', { exact: true }).selectOption('');
+
+  // Clients à visiter : préparer la réunion avec l'IA (brief du client)
+  await page.getByRole('tab', { name: 'Clients à visiter' }).click();
+  await page.getByRole('row', { name: /Dupont SA/ }).getByRole('button', { name: 'Fiche' }).click();
+  await dialog(page).getByRole('button', { name: /Préparer la réunion \(IA\)/ }).click();
+  await dialog(page).getByText(/Pas assez d'informations pour un brief|Relation active avec ce client/).waitFor();
+  await dialog(page).getByRole('button', { name: 'Fermer', exact: true }).last().click();
+
+  // Compte rendu depuis le back : le visiteur auteur saisit, fait relire par l'IA, valide ; envoi par e-mail
+  const tokA = await (await fetch(`${BASE}/api/mobile/v1/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'commercial1@exemple.invalid', password: PWD, device: { platform: 'web', app_version: '1.0.0' } }) })).json();
+  const H = { authorization: `Bearer ${tokA.access_token}`, 'content-type': 'application/json' };
+  const pullA = await (await fetch(`${BASE}/api/mobile/v1/sync/pull?limit=500`, { headers: H })).json();
+  const target = pullA.changes.visits.find(x => x.objective === 'Présenter la gamme 2027');
+  const push = async ops => (await (await fetch(`${BASE}/api/mobile/v1/sync/push`, { method: 'POST', headers: H, body: JSON.stringify({ device_id: tokA.device_id, operations: ops }) })).json()).results;
+  const rid = () => require('node:crypto').randomUUID();
+  let res = await push([{ id: rid(), entity: 'visit', entity_id: target.id, op: 'update', base_version: target.version, payload: { status: 'in_progress', started_at: new Date().toISOString() } }]);
+  assert.equal(res[0].result, 'applied', JSON.stringify(res));
+  res = await push([{ id: rid(), entity: 'note', entity_id: rid(), op: 'create', payload: { visit_id: target.id, kind: 'text', body: 'M. Martin intéressé par l\'offre B, budget 50000 euros', noted_at: new Date().toISOString() } }]);
+  assert.equal(res[0].result, 'applied', JSON.stringify(res));
+  const vc = await browser.newContext({ viewport: { width: 1360, height: 900 } });
+  const vp = await vc.newPage(); vp.on('pageerror', e => errors.push(e.message));
+  await login(vp, 'commercial1@exemple.invalid');
+  await nav(vp, 'Visites'); await vp.getByRole('tab', { name: 'Toutes' }).click();
+  await vp.getByRole('row', { name: /Quincaillerie Test/ }).click();
+  await dialog(vp).getByRole('button', { name: 'Saisir le compte rendu' }).click();
+  const ed = vp.getByRole('dialog', { name: /^Compte rendu/ });
+  await ed.getByText(/budget 50000 euros/).waitFor();                                  // la note durant la visite est là
+  assert.match(await ed.locator('.tip').last().getAttribute('title'), /terminez le rendez-vous/, 'validation impossible : raison au survol');
+  await ed.getByRole('button', { name: 'Fin du rendez-vous' }).click();
+  await ed.getByText('Effectuée', { exact: true }).waitFor();                         // statut mis à jour
+  await ed.getByRole('button', { name: /Générer \(IA\)/ }).click();
+  await vp.getByRole('dialog', { name: "Proposition de l'IA" }).waitFor();
+  await shot(vp, 'b8-cr-proposition-ia');
+  await vp.getByRole('button', { name: 'Appliquer au compte rendu' }).click();
+  assert.match(await ed.getByLabel('Résumé', { exact: true }).inputValue(), /offre B \(réponse simulée\)/, 'résumé appliqué');
+  await ed.getByText('Préparer la démo').waitFor();                                       // actions prévues par l'IA
+  await ed.getByRole('button', { name: /Contrôler \(IA\)/ }).click();
+  await vp.getByText('Les notes évoquent un budget absent du compte rendu (contrôle simulé).').waitFor();
+  await vp.getByRole('button', { name: 'Fermer et corriger' }).click();
+  await shot(vp, 'b8-cr-editeur');
+  await ed.getByRole('button', { name: 'Valider le compte rendu' }).click();
+  await ed.getByText('Compte rendu validé.').waitFor();
+  await ed.getByRole('button', { name: 'Remettre en brouillon' }).waitFor();
+  await ed.getByRole('button', { name: 'Fermer', exact: true }).last().click();
+  // envoi par e-mail depuis le back
+  await dialog(vp).getByRole('button', { name: /Envoyer par e-mail/ }).click();
+  await vp.getByRole('dialog', { name: /Envoyer par e-mail/ }).getByLabel(/Moi \(commercial1@exemple.invalid\)/).waitFor();
+  await vp.getByRole('dialog', { name: /Envoyer par e-mail/ }).getByRole('button', { name: 'Envoyer', exact: true }).click();
+  await vp.getByText(/E-mail envoyé à commercial1@exemple.invalid/).first().waitFor();
+  for (let i = 0; i < 30 && mails.length === 0; i++) await vp.waitForTimeout(100);
+  assert.equal(mails.length, 1); assert.deepEqual(mails[0].to, ['commercial1@exemple.invalid']);
+  assert.ok(/offre B/.test(mails[0].raw.replace(/=\r\n/g, '')) || mails[0].raw.length > 200, 'le message contient le compte rendu');
+  await vc.close();
+
 
   // 7 bis. Réaffecter les visites d'une branche à une autre (pour la vider avant de la supprimer)
   await admin(page, 'Organisation');
@@ -335,12 +421,12 @@ const dialog = page => page.getByRole('dialog');
   await login(mp, 'manager@exemple.invalid');
   assert.equal(await mp.getByRole('navigation').getByRole('link', { name: /Clients|Comptes/ }).count(), 0, 'le manager n\'a pas l\'administration');
   await mp.getByRole('heading', { name: "Reporting d'activité" }).waitFor();
-  assert.equal(await mp.getByRole('cell', { name: /Commercial (Deux|Un)/ }).count() >= 1, true);
+  await mp.getByRole('cell', { name: /Commercial (Deux|Un)/ }).first().waitFor();
   const bad = await mp.evaluate(async () => { const t = JSON.parse(sessionStorage.getItem('vb.tokens')); const r = await fetch('../api/back/v1/users', { headers: { authorization: `Bearer ${t.access_token}` } }); return r.status; });
   assert.equal(bad, 403, 'API des comptes interdite au manager');
   await c3.close();
 
   assert.deepEqual(errors, [], 'aucune erreur JavaScript');
-  await browser.close();
+  await browser.close(); smtp.close();
   console.log('E2E back : OK');
 })().catch(e => { console.error('E2E back : ÉCHEC\n', e); process.exit(1); });

@@ -132,3 +132,10 @@ table.tree td.treecell { min-width: 300px; } .treerow .nodename { white-space: n
 table.targets td, table.targets th { padding: 6px 6px; } table.targets input { width: 64px; text-align: right; } table.targets small.done { display: block; text-align: right; color: var(--muted); } table.targets small.done.ok { color: var(--green); }
 table.targets .stick { position: sticky; left: 0; background: var(--surface); z-index: 1; white-space: nowrap; } table.targets .curmonth { background: var(--accent-soft); } table.targets td.edited input { border-color: var(--accent); background: var(--amber-soft); }
 tr.userrow td { font-size: 13px; }
+
+.brief .brief-body { margin-top: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--grey-soft); } .brief h4 { margin: 10px 0 4px; } .brief ul { margin: 0; padding-left: 18px; }
+
+button.mic { padding: 4px 8px; } button.mic.rec { background: var(--red-soft); color: var(--red); border-color: var(--red); }
+.withmic { display: flex; gap: 6px; align-items: flex-start; } .withmic textarea { flex: 1; } .note-row { display: flex; gap: 6px; align-items: flex-start; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 6px; } .note-row .grow { flex: 1; white-space: pre-wrap; }
+.note-add { display: flex; gap: 6px; align-items: flex-start; } .note-add textarea { flex: 1; } .checks { display: flex; flex-direction: column; gap: 6px; } .report-editor section { margin-bottom: 18px; }
+.issue { border-left: 4px solid var(--line); padding: 6px 10px; margin-bottom: 6px; background: var(--grey-soft); border-radius: 6px; } .issue.warning { border-left-color: var(--red); }

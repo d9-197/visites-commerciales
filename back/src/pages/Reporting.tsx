@@ -3,7 +3,7 @@ import { api, download, type R } from '../api';
 import type { Me } from '../App';
 import { Alert, AuthorState, Badge, BranchSelect, Card, Empty, Field, Loading, useLoad, errMsg } from '../ui';
 import { Suggestions, usePrep } from './Preparation';
-import { fmtDate, isoDay } from '../format';
+import { ROLE, fmtDate, isoDay } from '../format';
 import { CollapseAll, TreeCell, levelName, useCollapsed, useTree, visibleIndexes } from '../tree';
 
 const PRESETS: [string, number][] = [['7 jours', 7], ['30 jours', 30], ['90 jours', 90], ['12 mois', 365]];
@@ -40,14 +40,16 @@ const monthLabel = (m: string) => new Intl.DateTimeFormat('fr-FR', { month: 'sho
 function Targets({ canEdit }: { canEdit: boolean }) {
   const cur = monthOf(new Date());
   const [from, setFrom] = useState(addMonths(cur, -2)); const [to, setTo] = useState(addMonths(cur, 10));
-  const [node, setNode] = useState(''); const [user, setUser] = useState('');
+  const [node, setNode] = useState(''); const [user, setUser] = useState(''); const [role, setRole] = useState(''); const [status, setStatus] = useState('active');
   const branches = useLoad(() => api<R>('org/mine'), []);
   const accessNodes: R[] = branches.data?.access ?? [];
   const people = useLoad(() => api<R>('prep/commerciaux'), []);
   const qs = `from=${from}&to=${to}${node ? `&node_id=${node}` : ''}${user ? `&user_id=${user}` : ''}`;
   const { data, error, loading, reload } = useLoad(() => api<R>(`targets?${qs}`), [qs]);
   const [vals, setVals] = useState<Record<string, string>>({}); const [msg, setMsg] = useState<{ kind: 'ok' | 'error'; text: string }>(); const [busy, setBusy] = useState(false);
-  const rows: R[] = data?.users ?? []; const months: string[] = data?.months ?? [];
+  const allRows: R[] = data?.users ?? []; const months: string[] = data?.months ?? [];
+  // Tous les profils sont listés ; filtres par rôle et statut (les comptes désactivés sont masqués par défaut).
+  const rows = allRows.filter(u => (!role || (role === 'admin' ? u.is_admin : u.role === role)) && (!status || u.status === status));
   const key = (u: string, m: string) => `${u}|${m}`;
   const orig = (u: R, m: string) => (u.targets[m] === undefined ? '' : String(u.targets[m]));
   const cell = (u: R, m: string) => vals[key(u.user_id, m)] ?? orig(u, m);
@@ -63,21 +65,23 @@ function Targets({ canEdit }: { canEdit: boolean }) {
   const total = (u: R) => months.reduce((n, m) => n + (Number(cell(u, m)) || 0), 0);
   return (
     <>
-      <header className="page-head"><div><h1>Objectifs mensuels</h1><p className="muted">Nombre de visites à réaliser par visiteur et par mois. Le reporting d'activité compare les visites effectuées à ces objectifs lorsqu'ils sont définis.</p></div></header>
+      <header className="page-head"><div><h1>Objectifs mensuels</h1><p className="muted">Nombre de visites à réaliser par personne et par mois (tous les profils, filtrables). Le reporting d'activité compare les visites effectuées à ces objectifs lorsqu'ils sont définis.</p></div></header>
       {(error || msg) && <Alert kind={msg?.kind ?? 'error'}>{msg?.text ?? error}</Alert>}
       <Card>
         <div className="toolbar filters">
           {accessNodes.length > 1 && <BranchSelect nodes={accessNodes as any} value={node} onChange={setNode} all="Tous mes départements" label="Département" />}
           {(people.data?.users?.length ?? 0) > 1 && <select aria-label="Visiteur" value={user} onChange={e => setUser(e.target.value)}><option value="">Tous les visiteurs</option>{people.data!.users.map((u: R) => <option key={u.id} value={u.id}>{u.name}</option>)}</select>}
+          <select aria-label="Profil" value={role} onChange={e => setRole(e.target.value)}><option value="">Tous les profils</option><option value="commercial">Visiteurs</option><option value="manager">Responsables</option><option value="directeur">Directeurs</option><option value="admin">Administrateurs</option></select>
+          <select aria-label="Statut du compte" value={status} onChange={e => setStatus(e.target.value)}><option value="">Tous les statuts</option><option value="active">Actifs</option><option value="disabled">Désactivés</option></select>
           <label>De <input type="month" aria-label="Premier mois" value={from} max={to} onChange={e => e.target.value && setFrom(e.target.value)} /></label>
           <label>à <input type="month" aria-label="Dernier mois" value={to} min={from} onChange={e => e.target.value && setTo(e.target.value)} /></label>
           <button className="link" onClick={() => { setFrom(addMonths(cur, -2)); setTo(addMonths(cur, 10)); }}>2 mois précédents + 10 suivants</button>
         </div>
         {loading && !data && <Loading />}
-        {data && (rows.length === 0 ? <Empty>Aucun visiteur ne correspond.</Empty> : <>
-          <div className="scroll"><table className="num targets"><thead><tr><th className="stick">Visiteur</th>{months.map(m => <th key={m} className={m === cur ? 'curmonth' : ''}>{monthLabel(m)}</th>)}<th>Total</th></tr></thead><tbody>
+        {data && (rows.length === 0 ? <Empty>Aucun profil ne correspond.</Empty> : <>
+          <div className="scroll"><table className="num targets"><thead><tr><th className="stick">Utilisateur</th><th>Profil</th>{months.map(m => <th key={m} className={m === cur ? 'curmonth' : ''}>{monthLabel(m)}</th>)}<th>Total</th></tr></thead><tbody>
             {rows.map(u => (
-              <tr key={u.user_id}><td className="stick" style={{ textAlign: 'left' }}>{u.name}<AuthorState status={u.status} role={u.role} /></td>
+              <tr key={u.user_id}><td className="stick" style={{ textAlign: 'left' }}>{u.name}<AuthorState status={u.status} />{u.is_admin && <> <span className="badge violet">Admin</span></>}</td><td style={{ textAlign: 'left' }}>{ROLE[u.role] ?? u.role}</td>
                 {months.map((m, mi) => { const done = u.done[m] ?? 0; const t = Number(cell(u, m)); return (
                   <td key={m} className={`${m === cur ? 'curmonth' : ''}${cell(u, m) !== orig(u, m) ? ' edited' : ''}`}>
                     {canEdit ? <input type="number" min={0} max={9999} aria-label={`Objectif de ${u.name}, ${monthLabel(m)}`} value={cell(u, m)} placeholder="—" onChange={e => setVals(v => ({ ...v, [key(u.user_id, m)]: e.target.value }))}

@@ -263,6 +263,7 @@ paths:
                         name: {type: string}
                         role: {$ref: '#/components/schemas/Role'}
                         status: {type: string, enum: [active, disabled]}
+                        is_admin: {type: boolean}
                         targets: {type: object, additionalProperties: {type: integer}}
                         done: {type: object, additionalProperties: {type: integer}}
         '400': {$ref: 'common.yaml#/components/responses/BadRequest'}
@@ -410,6 +411,59 @@ paths:
                   suggestions: {type: array, items: {$ref: '#/components/schemas/Suggestion'}}
         '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
         '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+  /prep/companies/{id}/ai-brief:
+    post:
+      tags: [Préparation]
+      summary: Brief IA d'un client pour préparer une réunion
+      description: |
+        Synthétise l'historique du client (jusqu'à 5 comptes rendus **validés** et actions ouvertes que l'appelant peut lire ; administrateur : ce que montre la fiche de préparation) avec l'objectif et les notes de préparation saisis dans le formulaire.
+        Jamais les brouillons, notes internes ou privées ; le nom du client n'est pas transmis au fournisseur. Résultat conservé par client et par utilisateur : renvoyé sans nouvel appel tant que l'historique et le texte saisi n'ont pas changé (`cached`), `refresh: true` force la régénération.
+        Sans donnée (`empty: true`) aucun appel à l'IA. Limite de débit et plafond mensuel communs avec l'application mobile.
+      parameters:
+        - {$ref: '#/components/parameters/Id'}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                refresh: {type: boolean}
+                today: {type: string, format: date}
+                objective: {type: [string, 'null'], maxLength: 2000}
+                preparation_notes: {type: [string, 'null'], maxLength: 5000}
+                planned_start: {type: [string, 'null'], format: date-time}
+      responses:
+        '200':
+          description: Brief.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [company_id, empty, brief, warnings, sources, cached]
+                properties:
+                  company_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+                  empty: {type: boolean}
+                  cached: {type: boolean}
+                  brief:
+                    type: [object, 'null']
+                    properties:
+                      summary: {type: string}
+                      where_we_left: {type: string}
+                      to_address: {type: array, items: {type: string}}
+                      watch_out: {type: array, items: {type: string}}
+                      questions: {type: array, items: {type: string}}
+                  warnings: {type: array, items: {type: string}}
+                  sources: {type: object, properties: {reports: {type: integer}, actions: {type: integer}}}
+                  model: {type: string}
+                  generated_at: {type: string, format: date-time}
+        '400': {$ref: 'common.yaml#/components/responses/BadRequest'}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '402': {description: Plafond mensuel atteint (quota_exceeded)., content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+        '429': {$ref: 'common.yaml#/components/responses/TooManyRequests'}
+        '502': {description: "Le service d'IA a échoué (ai_failed).", content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}}
+        '503': {description: "IA non configurée (ai_unavailable).", content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}}
   /prep/companies/{id}:
     get:
       tags: [Préparation]
@@ -1214,6 +1268,7 @@ components:
           type: object
           properties:
             id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+            version: {type: integer, description: "Version de la visite (écritures concurrentes via /mobile/v1/sync/push)."}
             company_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
             company: {type: string}
             author_id: {type: [string, 'null'], format: uuid}
@@ -1237,6 +1292,10 @@ components:
                 - {$ref: '#/components/schemas/ReportContent'}
                 - type: object
                   properties:
+                    id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+                    version: {type: integer}
+                    language: {type: string}
+                    sent_to_client_at: {type: [string, 'null'], format: date-time}
                     status: {type: string, enum: [draft, validated]}
                     validated_at: {type: [string, 'null'], format: date-time}
                     no_action: {type: boolean}
@@ -1263,6 +1322,7 @@ components:
               kind: {type: string, enum: [text, voice, photo]}
               body: {type: [string, 'null']}
               noted_at: {type: string, format: date-time}
+              author_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
         history:
           type: array
           items:

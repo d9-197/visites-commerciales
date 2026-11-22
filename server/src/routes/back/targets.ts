@@ -35,11 +35,10 @@ export function targetsRouter(pool: Pool) {
     const userId = typeof req.query.user_id === 'string' && /^[0-9a-f-]{36}$/i.test(req.query.user_id) ? req.query.user_id : null;
     const first = `${from}-01`; const end = `${shift(to, 1)}-01`;
     const users = (await pool.query(
-      `SELECT u.id AS user_id, u.display_name AS name, u.role, u.status FROM app_user u
-       WHERE ($1::uuid[] IS NULL OR u.id = ANY($1)) AND ($4::uuid IS NULL OR u.id = $4)
-         AND ((u.role = 'commercial' AND u.status = 'active' AND NOT u.is_admin) OR EXISTS (SELECT 1 FROM visit_target t WHERE t.user_id = u.id AND t.month >= $2::date AND t.month < $3::date))
-         AND ($5::uuid[] IS NULL OR EXISTS (SELECT 1 FROM user_org uo WHERE uo.user_id = u.id AND uo.node_id = ANY($5)))
-       ORDER BY u.display_name`, [scope, first, end, userId, nodeFilter])).rows;
+      `SELECT u.id AS user_id, u.display_name AS name, u.role, u.status, u.is_admin FROM app_user u
+       WHERE ($1::uuid[] IS NULL OR u.id = ANY($1)) AND ($2::uuid IS NULL OR u.id = $2)
+         AND ($3::uuid[] IS NULL OR EXISTS (SELECT 1 FROM user_org uo WHERE uo.user_id = u.id AND uo.node_id = ANY($3)))
+       ORDER BY u.display_name`, [scope, userId, nodeFilter])).rows;
     const ids = users.map(u => u.user_id as string);
     const t = ids.length ? (await pool.query(`SELECT user_id, to_char(month, 'YYYY-MM') AS m, target FROM visit_target WHERE user_id = ANY($1::uuid[]) AND month >= $2::date AND month < $3::date`, [ids, first, end])).rows : [];
     const d = ids.length ? (await pool.query(
