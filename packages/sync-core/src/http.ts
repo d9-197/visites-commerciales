@@ -15,6 +15,17 @@ export interface AiProposalResponse {
   warnings: string[];
 }
 
+export interface AiBriefResponse {
+  visit_id: string; empty: boolean; cached: boolean; model?: string; generated_at?: string;
+  brief: { summary: string; where_we_left: string; to_address: string[]; watch_out: string[]; questions: string[] } | null;
+  warnings: string[]; sources: { reports: number; actions: number };
+}
+export interface AiReviewIssue { field: string; severity: 'warning' | 'info'; message: string; source: 'rules' | 'ai' }
+export interface AiReviewResponse { report_id: string; issues: AiReviewIssue[]; ai: { status: 'ok' | 'skipped' | 'unavailable' | 'rate_limited' | 'quota' | 'failed'; model?: string } }
+export interface AiReviewPayload {
+  fields: Record<string, string>; temperature?: string | null; actions: { title: string; due_date?: string | null }[]; no_action?: boolean; notes_text?: string; today?: string;
+}
+
 export interface Tokens { access_token: string; refresh_token: string; device_id: string }
 export type FetchLike = (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string | Blob | ArrayBuffer }) =>
   Promise<{ status: number; text(): Promise<string> }>;
@@ -85,6 +96,14 @@ export class ApiClient implements Transport {
   /** Synthèse par IA des notes d'une visite. Nécessite le réseau ; la proposition n'est enregistrée nulle part côté appareil. */
   aiPropose(reportId: string, sourceText: string, today: string): Promise<AiProposalResponse> {
     return this.call('POST', `/reports/${reportId}/ai-proposals`, { source_text: sourceText, today });
+  }
+  /** Brief avant visite (IA) : historique validé du client, objectif, actions ouvertes. Nécessite le réseau. */
+  aiBrief(visitId: string, today: string, refresh = false): Promise<AiBriefResponse> {
+    return this.call('POST', `/visits/${visitId}/ai-brief`, { today, ...(refresh ? { refresh: true } : {}) });
+  }
+  /** Contrôle du compte rendu avant validation (règles + IA). Nécessite le réseau ; le compte rendu doit exister sur le serveur. */
+  aiReview(reportId: string, payload: AiReviewPayload): Promise<AiReviewResponse> {
+    return this.call('POST', `/reports/${reportId}/ai-review`, payload);
   }
   async push(operations: Operation[]): Promise<OperationResult[]> {
     return (await this.call('POST', '/sync/push', { device_id: this.tokens?.device_id, operations })).results;

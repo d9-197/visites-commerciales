@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, BackHandler, Image, Platform, Pressable, SafeAreaView, ScrollView, Switch, Text, TextInput, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { ApiClient, ApiError, type EmailOptions, NetworkError, SyncEngine, uuidv4, type AiProposalResponse, type Row, type SyncReport } from '@visites/sync-core';
+import { ApiClient, ApiError, type EmailOptions, NetworkError, SyncEngine, uuidv4, type AiProposalResponse, type AiBriefResponse, type AiReviewResponse, type Row, type SyncReport } from '@visites/sync-core';
 import type { SqliteStore } from '@visites/sync-core';
 import { openStore } from './src/expoDb';
 import { clearSession, loadBrand, loadSession, saveBrand, saveSession, saveTokens, type Brand, type OrgNode, type Session, type ThemePref } from './src/session';
@@ -33,6 +33,13 @@ const aiErrorMessage = (e: unknown): string => {
   const code = e instanceof ApiError ? e.code : '';
   return ({ ai_unavailable: 'La synthèse par IA n\'est pas activée sur ce serveur.', quota_exceeded: 'Plafond mensuel d\'IA atteint.', rate_limited: 'Trop de demandes : réessayez dans une minute.',
     ai_failed: 'Le service d\'IA n\'a pas pu répondre. Réessayez.', forbidden: 'Seul l\'auteur de la visite peut lancer la synthèse.' } as Record<string, string>)[code] ?? 'La synthèse a échoué. Réessayez.';
+};
+
+const aiBriefError = (e: unknown): string => {
+  if (e instanceof NetworkError) return 'Hors-ligne : le brief par IA demande une connexion.';
+  const code = e instanceof ApiError ? e.code : '';
+  return ({ ai_unavailable: 'L\'IA n\'est pas activée sur ce serveur.', quota_exceeded: 'Plafond mensuel d\'IA atteint.', rate_limited: 'Trop de demandes : réessayez dans une minute.',
+    ai_failed: 'Le service d\'IA n\'a pas pu répondre. Réessayez.', forbidden: 'Seul l\'auteur de la visite peut préparer le brief.', ai_not_available: 'Le brief se prépare avant ou pendant la visite.' } as Record<string, string>)[code] ?? 'Le brief a échoué.';
 };
 
 const MAX_DICTATION_S = 300;   // arrêt automatique d'une dictée
@@ -581,6 +588,7 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName, offline, open
         {!!v.objective && <Text style={{ color: c.text }}><Text style={{ fontWeight: '700' }}>Objectif : </Text>{v.objective}</Text>}
         {!!v.preparation_notes && <Text style={{ color: c.text }}><Text style={{ fontWeight: '700' }}>À aborder : </Text>{v.preparation_notes}</Text>}
       </View>)}
+    {mine && ['planned', 'organized', 'in_progress'].includes(v.status) && <BriefCard visitId={v.id} ctx={ctx} offline={offline} />}
     {v.status === 'deleted' && <Text style={s.muted}>Cette visite est supprimée : elle est conservée mais n'est plus modifiable.</Text>}
     {mine && v.status === 'in_progress' && <Text style={s.muted}>Quand vous quittez le client. Il restera à valider le compte rendu et à faire les actions ; la visite sera « Terminée » quand tout sera fait.</Text>}
     {isReportLate(v) && <Text style={[s.muted, { color: c.late, fontWeight: '600' }]}>Compte rendu à valider depuis plus de {REPORT_LATE_DAYS} jours.</Text>}
@@ -687,6 +695,7 @@ function ReportScreen({ visitId, data, ctx, act, back, companyName, offline, ope
   const [aiBusy, setAiBusy] = useState(false);
   const [aiErr, setAiErr] = useState<string>();
   const [ai, setAi] = useState<AiProposalResponse>();
+  const [review, setReview] = useState<AiReviewResponse>(); const [reviewBusy, setReviewBusy] = useState(false);
   const [dictating, setDictating] = useState<string | null>(null);
   const [dictErr, setDictErr] = useState<{ id: string; msg: string }>();
   const [actionSheet, setActionSheet] = useState<{ index: number | null } | null>(null);     // ajout (null) ou modification d'une action prévue
@@ -735,6 +744,21 @@ function ReportScreen({ visitId, data, ctx, act, back, companyName, offline, ope
       setAi(await ctx.client.aiPropose(rid, notesText, dateToStr(new Date())));
     } catch (e) { setAiErr(aiErrorMessage(e)); }
     finally { setAiBusy(false); }
+  };
+  // Contrôle avant validation : règles locales + relecture IA du brouillon en cours (même non enregistré). Ne bloque jamais la validation.
+  const runReview = async () => {
+    setReviewBusy(true); setAiErr(undefined);
+    try {
+      let rid = report?.id as string | undefined;
+      if (!rid) rid = await ctx.engine.create('report', { visit_id: visitId, language: ctx.lang, status: 'draft' });
+      const rep = await ctx.engine.sync();
+      if (rep.offline) throw new NetworkError();
+      setReview(await ctx.client.aiReview(rid, {
+        fields: Object.fromEntries(Object.entries(f).filter(([, x]) => x.trim())), temperature: (report?.opportunity_temperature as string | null) ?? null,
+        actions: drafts.map(d => ({ title: d.title, due_date: d.due_date })), no_action: noActionAsked && noAction, notes_text: notesText, today: dateToStr(new Date()),
+      }));
+    } catch (e) { setAiErr(aiBriefError(e).replace('le brief par IA', 'le contrôle par IA').replace('Le brief a échoué.', 'Le contrôle a échoué.')); }
+    finally { setReviewBusy(false); }
   };
   const applyAi = (fields: Record<string, string>, actions: { title: string; due_date: string | null }[]) => {
     const merged = { ...f, ...Object.fromEntries(Object.entries(fields).filter(([, x]) => x.trim())) };   // un champ vide proposé n'efface rien
@@ -809,6 +833,8 @@ function ReportScreen({ visitId, data, ctx, act, back, companyName, offline, ope
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
           <Btn small title={aiBusy ? 'Génération…' : '✨ Générer (IA)'} disabled={!mine || aiBusy || !canGenerate} onPress={generate}
             why={!mine ? "Seul l'auteur de la visite rédige le compte rendu." : `Génération IA indisponible : ${whyNot ?? 'conditions non remplies.'}`} />
+          <Btn small title={reviewBusy ? 'Contrôle…' : '🔎 Contrôler (IA)'} disabled={!mine || reviewBusy || offline || (!hasContent && !notesText.trim())} onPress={() => void runReview()}
+            why={!mine ? "Seul l'auteur de la visite contrôle le compte rendu." : offline ? 'Hors-ligne : le contrôle par IA demande une connexion.' : 'Rien à contrôler : le compte rendu est vide.'} />
           <Btn small title="Enregistrer" disabled={!mine || !!saveBlocker} onPress={() => saveReport(false)} why={!mine ? "Seul l'auteur de la visite rédige le compte rendu." : saveBlocker} />
           <Btn small title="Valider le compte rendu" disabled={!mine || validateBlockers.length > 0} onPress={() => saveReport(true)}
             why={!mine ? "Seul l'auteur de la visite valide le compte rendu." : `Pour valider : ${validateBlockers.join(' ; ')}.`} />
@@ -824,8 +850,56 @@ function ReportScreen({ visitId, data, ctx, act, back, companyName, offline, ope
       initial={actionSheet && actionSheet.index !== null ? drafts[actionSheet.index] : undefined} hint="Créée à la validation du compte rendu."
       onClose={() => setActionSheet(null)}
       onSave={a => { const i = actionSheet!.index; setActionSheet(null); void saveDrafts(i === null ? [...drafts, { id: uuidv4(), title: a.title, due_date: a.due_date, origin: 'manual' }] : drafts.map((d, j) => j === i ? { ...d, ...a } : d)); }} />
+    <Sheet title="Contrôle du compte rendu" visible={!!review} onClose={() => setReview(undefined)}>
+      {review && <>
+        {review.issues.length === 0 && <Text style={s.muted}>Aucune remarque : le compte rendu paraît cohérent.</Text>}
+        {review.issues.map((i, k) => (
+          <View key={k} style={[s.note, { gap: 2, borderLeftWidth: 4, borderLeftColor: i.severity === 'warning' ? c.late : c.line }]}>
+            <Text style={s.muted}>{i.field === 'general' ? 'Général' : i.field === 'actions' ? 'Actions' : (REPORT_FIELDS.find(([k2]) => k2 === i.field)?.[1] ?? i.field)} · {i.severity === 'warning' ? 'à corriger ?' : 'à considérer'}{i.source === 'ai' ? ' · IA' : ''}</Text>
+            <Text style={{ color: c.text }}>{i.message}</Text>
+          </View>))}
+        {review.ai.status !== 'ok' && <Text style={s.muted}>{({ unavailable: 'Relecture IA non activée sur ce serveur : contrôles de base seulement.', skipped: 'Rien à relire par l\'IA : contrôles de base seulement.', rate_limited: 'Trop de demandes d\'IA : contrôles de base seulement.', quota: 'Plafond mensuel d\'IA atteint : contrôles de base seulement.', failed: 'La relecture IA a échoué : contrôles de base seulement.' } as Record<string, string>)[review.ai.status]}</Text>}
+        <Text style={s.muted}>Ces remarques sont des aides : elles ne bloquent pas la validation. L'IA peut se tromper.</Text>
+        <Btn title="Fermer et corriger" onPress={() => setReview(undefined)} />
+        {validateBlockers.length === 0 && <Btn small title="Valider le compte rendu" onPress={() => { setReview(undefined); void saveReport(true); }} />}
+      </>}
+    </Sheet>
     <AiSheet voice={{ ctx, visitId, offline }} result={ai} onClose={() => setAi(undefined)} onApply={applyAi} />
   </>;
+}
+
+/** Brief avant visite généré par IA (historique validé du client, actions ouvertes, objectif). Ne s'enregistre pas dans la visite : c'est une aide à la lecture. */
+function BriefCard({ visitId, ctx, offline }: { visitId: string; ctx: Ctx; offline: boolean }) {
+  const { s, c } = useTheme();
+  const [res, setRes] = useState<AiBriefResponse>(); const [busy, setBusy] = useState(false); const [err, setErr] = useState<string>();
+  const run = async (refresh: boolean) => {
+    setBusy(true); setErr(undefined);
+    try {
+      const rep = await ctx.engine.sync();            // la visite (objectif, notes de préparation) doit être connue du serveur
+      if (rep.offline) throw new NetworkError();
+      setRes(await ctx.client.aiBrief(visitId, todayStr(), refresh));
+    } catch (e) { setErr(aiBriefError(e)); } finally { setBusy(false); }
+  };
+  const list = (title: string, items: string[]) => items.length > 0 && (
+    <View style={{ gap: 2 }}><Text style={{ color: c.text, fontWeight: '700' }}>{title}</Text>{items.map((t, i) => <Text key={i} style={{ color: c.text }}>• {t}</Text>)}</View>);
+  const b = res?.brief;
+  return (
+    <View style={[s.rowCard, { flexDirection: 'column', alignItems: 'stretch', gap: 8 }]} accessibilityLabel="Brief avant visite">
+      <View style={s.rowBetween}><Text style={s.t}>Brief avant visite</Text>
+        <Btn small title={busy ? 'Préparation…' : res ? '↻ Régénérer' : '✨ Préparer (IA)'} disabled={busy || offline} onPress={() => void run(!!res)}
+          why={offline ? 'Hors-ligne : le brief par IA demande une connexion.' : undefined} /></View>
+      {!res && !err && <Text style={s.muted}>Résume l'historique du client (comptes rendus validés, actions ouvertes) et votre objectif.</Text>}
+      {!!err && <Text style={s.err}>{err}</Text>}
+      {res?.empty && <Text style={s.muted}>Pas assez d'informations pour un brief : aucun compte rendu validé, aucune action ouverte, ni objectif pour cette visite.</Text>}
+      {b && <>
+        {!!b.summary && <Text style={{ color: c.text }}>{b.summary}</Text>}
+        {!!b.where_we_left && <View style={{ gap: 2 }}><Text style={{ color: c.text, fontWeight: '700' }}>Où on en était</Text><Text style={{ color: c.text }}>{b.where_we_left}</Text></View>}
+        {list('À aborder', b.to_address)}{list('Points de vigilance', b.watch_out)}{list('Questions à poser', b.questions)}
+        {res!.warnings.length > 0 && <Text style={[s.muted, { color: c.late }]}>À vérifier : {res!.warnings.join(' ')}</Text>}
+        <Text style={s.muted}>Généré par IA à partir de {res!.sources.reports} compte{res!.sources.reports > 1 ? 's' : ''} rendu{res!.sources.reports > 1 ? 's' : ''} validé{res!.sources.reports > 1 ? 's' : ''} et {res!.sources.actions} action{res!.sources.actions > 1 ? 's' : ''} ouverte{res!.sources.actions > 1 ? 's' : ''}{res!.cached ? ' (déjà généré, historique inchangé)' : ''} : relisez avant de vous y fier.</Text>
+      </>}
+    </View>
+  );
 }
 
 /** Section repliable : titre cliquable (▸ / ▾), résumé quand elle est replié, zone libre à droite (ex. micro) toujours accessible. */

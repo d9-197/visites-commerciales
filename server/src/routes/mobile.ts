@@ -7,7 +7,8 @@ import { HttpError, wrap } from '../errors.js';
 import { requireAuth, signAccess, verifyPassword, sha256, randomToken, versionLt } from '../auth.js';
 import { pull } from '../sync/pull.js';
 import { push, pushSchema } from '../sync/push.js';
-import { AiError, type AiServices } from '../ai/index.js';
+import { AiError, type AiServices, type BriefReport } from '../ai/index.js';
+import { reviewByRules } from '../ai/review-rules.js';
 import type { MailService } from '../mail/index.js';
 import { composeVisitEmail } from '../mail/compose.js';
 import { DEFAULT_BRAND_NAME, type Brand } from '../brand.js';
@@ -176,6 +177,121 @@ export function mobileRouter(pool: Pool, cfg: Config, ai?: AiServices, mail?: Ma
       `INSERT INTO ai_usage(user_id, kind, provider, model, tokens_in, tokens_out, cost_cents) VALUES ($1,'llm',$2,$3,$4,$5,$6)`,
       [userId, result.provider, result.model, result.usage.tokensIn, result.usage.tokensOut, result.costCents]);
     res.json({ id, report_id: rep.id, source_text: b.data.source_text, proposal: result.proposal, warnings: result.warnings, provider: result.provider, model: result.model });
+  }));
+
+  // --- Brief avant visite et contrôle du compte rendu (IA) ---
+  const rateOk = (userId: string) => {
+    const now = Date.now(); const recent = (aiCalls.get(userId) ?? []).filter(t => now - t < 60_000);
+    if (recent.length >= Number(process.env.AI_RATE_PER_MIN ?? 10)) return false;
+    aiCalls.set(userId, [...recent, now]); return true;
+  };
+  const budgetOk = async (userId: string) => {
+    if (!ai?.prices) return true;     // plafond appliqué seulement si les tarifs sont connus
+    const q = (await pool.query(
+      `SELECT COALESCE((SELECT sum(cost_cents) FROM ai_usage WHERE user_id = $1 AND created_at >= date_trunc('month', now())), 0) AS used,
+              COALESCE((SELECT ai_budget_cents FROM app_user WHERE id = $1), (SELECT (value #>> '{}')::int FROM app_setting WHERE key = 'ai_monthly_budget_cents')) AS budget`, [userId])).rows[0];
+    return Number(q.used) < Number(q.budget);
+  };
+  const logUsage = (userId: string, rs: { provider: string; model: string; usage: { tokensIn: number | null; tokensOut: number | null }; costCents: number }) =>
+    pool.query(`INSERT INTO ai_usage(user_id, kind, provider, model, tokens_in, tokens_out, cost_cents) VALUES ($1,'llm',$2,$3,$4,$5,$6)`, [userId, rs.provider, rs.model, rs.usage.tokensIn, rs.usage.tokensOut, rs.costCents]);
+  const resolveToday = (d?: string) => {
+    const serverToday = new Date().toISOString().slice(0, 10);
+    return d && Math.abs(new Date(d).getTime() - new Date(serverToday).getTime()) <= 2 * 86_400_000 ? d : serverToday;
+  };
+  const dateRe = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+  const aiHttpError = (e: unknown) => { if (e instanceof AiError) return new HttpError(e.kind === 'unavailable' ? 503 : 502, e.kind === 'unavailable' ? 'ai_unavailable' : 'ai_failed', e.message); return e; };
+
+  /**
+   * Brief avant visite : synthèse de l'historique du client (comptes rendus VALIDÉS que l'utilisateur peut lire, actions ouvertes qu'il peut lire, objectif et notes de
+   * préparation de la visite). Jamais les notes internes, privées, ni les brouillons. Le nom du client n'est pas envoyé au fournisseur. Réservé à l'auteur de la visite.
+   * Le résultat est conservé : tant que l'historique n'a pas changé, il est renvoyé sans nouvel appel (`refresh: true` force la régénération).
+   */
+  r.post('/visits/:id/ai-brief', auth, wrap(async (req, res) => {
+    const b = z.object({ refresh: z.boolean().optional(), today: dateRe.optional() }).safeParse(req.body ?? {});
+    if (!b.success) throw new HttpError(400, 'validation_failed', 'Requête invalide');
+    if (!ai) throw new HttpError(503, 'ai_unavailable', 'Le service d\'IA n\'est pas configuré');
+    const userId = req.auth!.id;
+    const v = (await pool.query(`SELECT id, company_id, author_id, status, objective, preparation_notes, planned_start FROM visit WHERE id = $1 AND deleted_at IS NULL`, [req.params.id])).rows[0];
+    const readable = v && (await pool.query(`SELECT can_read_visit($1,$2) AS ok`, [userId, v.id])).rows[0].ok;
+    if (!v || !readable) throw new HttpError(404, 'not_found', 'Visite inconnue');
+    if (v.author_id !== userId) throw new HttpError(403, 'forbidden', 'Réservé à l\'auteur de la visite');
+    if (!['planned', 'organized', 'in_progress'].includes(v.status)) throw new HttpError(409, 'ai_not_available', 'Le brief se prépare avant ou pendant la visite');
+    const today = resolveToday(b.data.today);
+    const lang = (await pool.query(`SELECT dictation_language FROM app_user WHERE id = $1`, [userId])).rows[0]?.dictation_language ?? 'fr';
+    const reports: BriefReport[] = (await pool.query(
+      `SELECT COALESCE(x.ended_at, x.started_at, x.planned_start) AS at, rp.opportunity_temperature AS temperature, rp.summary, rp.needs, rp.objections, rp.competitors, rp.decisions, rp.next_step
+       FROM visit x JOIN visit_report rp ON rp.visit_id = x.id
+       WHERE x.company_id = $1 AND x.id <> $2 AND x.deleted_at IS NULL AND rp.status = 'validated' AND can_read_visit($3, x.id)
+       ORDER BY COALESCE(x.ended_at, x.started_at, x.planned_start) DESC NULLS LAST LIMIT 5`, [v.company_id, v.id, userId])).rows
+      .map(x => ({ date: x.at ? new Date(x.at).toISOString().slice(0, 10) : null, temperature: x.temperature ?? null, summary: x.summary ?? '', needs: x.needs ?? '', objections: x.objections ?? '', competitors: x.competitors ?? '', decisions: x.decisions ?? '', next_step: x.next_step ?? '' }));
+    const openActions = (await pool.query(
+      `SELECT a.title, a.due_date::text AS due_date FROM action_item a WHERE a.company_id = $1 AND a.status = 'todo' AND can_read_action($2, a.id) ORDER BY a.due_date NULLS LAST, a.created_at LIMIT 15`, [v.company_id, userId])).rows
+      .map(a => ({ title: a.title as string, due_date: (a.due_date as string | null) ?? null, late: !!a.due_date && a.due_date < today }));
+    const objective = (v.objective as string | null)?.trim() || null; const prep = (v.preparation_notes as string | null)?.trim() || null;
+    const plannedStart = v.planned_start ? new Date(v.planned_start).toISOString() : null;
+    const sources = { reports: reports.length, actions: openActions.length };
+    if (reports.length === 0 && openActions.length === 0 && !objective && !prep) {
+      res.json({ visit_id: v.id, empty: true, brief: null, warnings: [], sources, cached: false });     // rien à synthétiser : aucun appel à l'IA
+      return;
+    }
+    const hash = sha256(JSON.stringify({ lang, reports, openActions, objective, prep, plannedStart }));
+    if (!b.data.refresh) {
+      const c = (await pool.query(`SELECT brief, warnings, model, created_at FROM ai_brief WHERE visit_id = $1 AND user_id = $2 AND source_hash = $3`, [v.id, userId, hash])).rows[0];
+      if (c) { res.json({ visit_id: v.id, empty: false, brief: c.brief, warnings: c.warnings, model: c.model, generated_at: c.created_at, sources, cached: true }); return; }
+    }
+    if (!rateOk(userId)) throw new HttpError(429, 'rate_limited', 'Trop de demandes d\'IA, réessayez dans une minute');
+    if (!(await budgetOk(userId))) throw new HttpError(402, 'quota_exceeded', 'Plafond mensuel d\'IA atteint');
+    const glossary = (await pool.query(`SELECT term FROM glossary_term WHERE deleted_at IS NULL AND language = $1 AND (scope = 'global' OR user_id = $2) ORDER BY term LIMIT 50`, [lang, userId])).rows.map(x => x.term as string);
+    let result;
+    try { result = await ai.service.brief({ language: lang, today, objective, preparationNotes: prep, plannedStart, reports, openActions, glossary }); } catch (e) { throw aiHttpError(e); }
+    await pool.query(
+      `INSERT INTO ai_brief(visit_id, user_id, source_hash, brief, warnings, model) VALUES ($1,$2,$3,$4,$5,$6)
+       ON CONFLICT (visit_id, user_id) DO UPDATE SET source_hash = EXCLUDED.source_hash, brief = EXCLUDED.brief, warnings = EXCLUDED.warnings, model = EXCLUDED.model, created_at = now()`,
+      [v.id, userId, hash, result.brief, JSON.stringify(result.warnings), result.model]);
+    await logUsage(userId, result);
+    res.json({ visit_id: v.id, empty: false, brief: result.brief, warnings: result.warnings, model: result.model, generated_at: new Date().toISOString(), sources, cached: false });
+  }));
+
+  const reviewBody = z.object({
+    fields: z.object({ summary: z.string().max(5000).optional(), needs: z.string().max(5000).optional(), objections: z.string().max(5000).optional(),
+      competitors: z.string().max(5000).optional(), decisions: z.string().max(5000).optional(), next_step: z.string().max(5000).optional() }).strict(),
+    temperature: z.enum(['cold', 'warm', 'hot']).nullable().optional(),
+    actions: z.array(z.object({ title: z.string().trim().min(1).max(200), due_date: dateRe.nullable().optional() })).max(30).optional(),
+    no_action: z.boolean().optional(), notes_text: z.string().max(20000).optional(), today: dateRe.optional(),
+  }).strict();
+
+  /**
+   * Contrôle d'un compte rendu avant validation (brouillon envoyé par l'application : il n'est pas encore forcément synchronisé).
+   * Règles locales gratuites (toujours) + relecture par l'IA (si disponible). Ne bloque jamais la validation. Notes de la visite : jamais les notes internes ni privées.
+   * `ai.status` : ok, skipped (rien à relire), unavailable (IA non configurée), rate_limited, quota, failed.
+   */
+  r.post('/reports/:id/ai-review', auth, wrap(async (req, res) => {
+    const b = reviewBody.safeParse(req.body);
+    if (!b.success) throw new HttpError(400, 'validation_failed', 'Compte rendu à contrôler invalide');
+    const userId = req.auth!.id;
+    const rep = (await pool.query(`SELECT r.id, r.language, r.visit_id, r.status AS report_status, v.status AS visit_status, v.author_id FROM visit_report r JOIN visit v ON v.id = r.visit_id WHERE r.id = $1`, [req.params.id])).rows[0];
+    const readable = rep && (await pool.query(`SELECT can_read_visit($1,$2) AS ok`, [userId, rep.visit_id])).rows[0].ok;
+    if (!rep || !readable) throw new HttpError(404, 'not_found', 'Compte rendu inconnu');
+    if (rep.author_id !== userId) throw new HttpError(403, 'forbidden', 'Réservé à l\'auteur de la visite');
+    if (rep.report_status === 'validated' || !['in_progress', 'done'].includes(rep.visit_status)) throw new HttpError(409, 'ai_not_available', 'Le compte rendu est validé ou la visite n\'est pas en fin de rendez-vous');
+    const f = b.data.fields;
+    const input = {
+      language: rep.language as string, today: resolveToday(b.data.today),
+      fields: { summary: f.summary ?? '', needs: f.needs ?? '', objections: f.objections ?? '', competitors: f.competitors ?? '', decisions: f.decisions ?? '', next_step: f.next_step ?? '' },
+      temperature: b.data.temperature ?? null, actions: (b.data.actions ?? []).map(a => ({ title: a.title, due_date: a.due_date ?? null })), noAction: !!b.data.no_action, notes: b.data.notes_text ?? '',
+    };
+    const issues = reviewByRules(input);
+    let status: 'ok' | 'skipped' | 'unavailable' | 'rate_limited' | 'quota' | 'failed' = 'ok'; let model: string | undefined;
+    if (!ai) status = 'unavailable';
+    else if (!input.fields.summary.trim() && !input.notes.trim()) status = 'skipped';
+    else if (!rateOk(userId)) status = 'rate_limited';
+    else if (!(await budgetOk(userId))) status = 'quota';
+    else {
+      try { const rs = await ai.service.review(input); issues.push(...rs.issues); model = rs.model; await logUsage(userId, rs); }
+      catch (e) { if (e instanceof AiError) status = 'failed'; else throw e; }
+    }
+    issues.sort((x, y) => (x.severity === y.severity ? 0 : x.severity === 'warning' ? -1 : 1));
+    res.json({ report_id: rep.id, issues, ai: { status, ...(model ? { model } : {}) } });
   }));
 
   const MAX_AUDIO_BYTES = Number(process.env.AUDIO_MAX_BYTES ?? 25 * 1024 * 1024);

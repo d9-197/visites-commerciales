@@ -40,9 +40,38 @@ export async function errorSnippet(res: Response, max = 300): Promise<string> {
 /** Erreurs de l'IA : le message est neutre (jamais de contenu des notes). */
 export class AiError extends Error { constructor(public kind: 'unavailable' | 'upstream' | 'invalid_output', message: string) { super(message); } }
 
+// --- Brief avant visite ---
+
+export interface BriefReport { date: string | null; temperature: string | null; summary: string; needs: string; objections: string; competitors: string; decisions: string; next_step: string }
+export interface BriefInput {
+  language: string; today: string;
+  objective: string | null; preparationNotes: string | null; plannedStart: string | null;
+  reports: BriefReport[];                                          // comptes rendus validés des visites précédentes, du plus récent au plus ancien
+  openActions: { title: string; due_date: string | null; late: boolean }[];
+  glossary: string[];
+}
+export interface Brief { summary: string; where_we_left: string; to_address: string[]; watch_out: string[]; questions: string[] }
+export interface BriefResult { brief: Brief; warnings: string[]; provider: string; model: string; usage: Usage; costCents: number }
+
+// --- Contrôle du compte rendu avant validation ---
+
+export type ReviewField = 'summary' | 'needs' | 'objections' | 'competitors' | 'decisions' | 'next_step' | 'actions' | 'general';
+export interface ReviewIssue { field: ReviewField; severity: 'warning' | 'info'; message: string; source: 'rules' | 'ai' }
+export interface ReviewInput {
+  language: string; today: string;
+  fields: { summary: string; needs: string; objections: string; competitors: string; decisions: string; next_step: string };
+  temperature: string | null;
+  actions: { title: string; due_date: string | null }[];
+  noAction: boolean;
+  notes: string;                                                    // notes prises pendant la visite (jamais les notes internes ni privées)
+}
+export interface ReviewResult { issues: ReviewIssue[]; provider: string; model: string; usage: Usage; costCents: number }
+
 export interface AiService {
   readonly provider: string;
   structure(input: StructureInput): Promise<StructureResult>;
+  brief(input: BriefInput): Promise<BriefResult>;
+  review(input: ReviewInput): Promise<ReviewResult>;
 }
 
 // --- Transcription vocale (voix vers texte) ---

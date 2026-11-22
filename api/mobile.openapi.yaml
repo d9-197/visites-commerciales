@@ -421,6 +421,130 @@ paths:
         '503':
           description: Transcription non configurée sur ce serveur (ai_unavailable).
           content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}
+  /visits/{visit_id}/ai-brief:
+    post:
+      tags: [IA et qualité]
+      summary: Brief avant visite généré par IA
+      description: |
+        Synthétise l'historique du client pour préparer la visite : comptes rendus **validés** des visites précédentes (5 au plus) que l'utilisateur peut lire, actions ouvertes qu'il peut lire,
+        objectif et notes de préparation de la visite. Jamais les brouillons, les notes internes ni les notes privées. Le nom du client n'est pas transmis au fournisseur.
+        Réservé à l'auteur ; visite à organiser, organisée ou en cours. Le résultat est conservé : tant que l'historique n'a pas changé, il est renvoyé sans nouvel appel (`cached: true`) ;
+        `refresh: true` force la régénération. Sans aucune donnée (`empty: true`), aucun appel à l'IA. `warnings` : nombres ou noms du brief absents de l'historique fourni.
+      parameters:
+        - {name: visit_id, in: path, required: true, schema: {$ref: 'common.yaml#/components/schemas/Uuid'}}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                refresh: {type: boolean}
+                today: {type: string, format: date}
+      responses:
+        '200':
+          description: Brief.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [visit_id, empty, brief, warnings, sources, cached]
+                properties:
+                  visit_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+                  empty: {type: boolean}
+                  cached: {type: boolean}
+                  brief:
+                    type: [object, 'null']
+                    properties:
+                      summary: {type: string}
+                      where_we_left: {type: string}
+                      to_address: {type: array, items: {type: string}}
+                      watch_out: {type: array, items: {type: string}}
+                      questions: {type: array, items: {type: string}}
+                  warnings: {type: array, items: {type: string}}
+                  sources:
+                    type: object
+                    properties: {reports: {type: integer}, actions: {type: integer}}
+                  model: {type: string}
+                  generated_at: {type: string, format: date-time}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '402': {description: Plafond mensuel atteint (quota_exceeded)., content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}}
+        '403': {$ref: 'common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+        '409': {description: "Visite terminée, annulée ou supprimée (ai_not_available).", content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}}
+        '429': {$ref: 'common.yaml#/components/responses/TooManyRequests'}
+        '502': {description: "Le service d'IA a échoué (ai_failed).", content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}}
+        '503': {description: "IA non configurée (ai_unavailable).", content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}}
+  /reports/{report_id}/ai-review:
+    post:
+      tags: [IA et qualité]
+      summary: Contrôle d'un compte rendu avant validation
+      description: |
+        Relit le brouillon envoyé par l'application (pas forcément synchronisé) : **règles locales** toujours exécutées (résumé vide, opportunité chaude sans suite, action sans échéance ou échue,
+        nombre des notes absent du compte rendu…) puis **relecture par l'IA** (contradictions avec les notes, éléments importants omis, formulations vagues, actions manquantes).
+        Ne modifie rien et ne bloque jamais la validation. Si l'IA est indisponible, saturée, au plafond ou en échec, la réponse reste 200 avec les règles locales et `ai.status` l'indique.
+        Réservé à l'auteur ; compte rendu non validé, visite en cours ou terminée. Le nom du client, les notes internes et privées ne sont jamais transmis.
+      parameters:
+        - {name: report_id, in: path, required: true, schema: {$ref: 'common.yaml#/components/schemas/Uuid'}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fields]
+              additionalProperties: false
+              properties:
+                fields:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    summary: {type: string}
+                    needs: {type: string}
+                    objections: {type: string}
+                    competitors: {type: string}
+                    decisions: {type: string}
+                    next_step: {type: string}
+                temperature: {type: [string, 'null'], enum: [cold, warm, hot, null]}
+                actions:
+                  type: array
+                  maxItems: 30
+                  items:
+                    type: object
+                    required: [title]
+                    properties: {title: {type: string}, due_date: {type: [string, 'null'], format: date}}
+                no_action: {type: boolean}
+                notes_text: {type: string, maxLength: 20000, description: Notes prises pendant la visite.}
+                today: {type: string, format: date}
+      responses:
+        '200':
+          description: Remarques.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [report_id, issues, ai]
+                properties:
+                  report_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+                  issues:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        field: {type: string, enum: [summary, needs, objections, competitors, decisions, next_step, actions, general]}
+                        severity: {type: string, enum: [warning, info]}
+                        message: {type: string}
+                        source: {type: string, enum: [rules, ai]}
+                  ai:
+                    type: object
+                    properties:
+                      status: {type: string, enum: [ok, skipped, unavailable, rate_limited, quota, failed]}
+                      model: {type: string}
+        '400': {$ref: 'common.yaml#/components/responses/BadRequest'}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: 'common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+        '409': {description: "Compte rendu validé ou visite pas en fin de rendez-vous (ai_not_available).", content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}}
   /reports/{report_id}/ai-proposals:
     post:
       tags: [IA et qualité]

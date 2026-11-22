@@ -256,6 +256,16 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   assert.ok(!sent[0].body.messages[1].content.includes('À supprimer'), 'une note supprimée n\'est pas envoyée');
   assert.ok(sent[0].body.messages[1].content.includes('Dictée relue'), 'la note dictée (relue) est incluse dans la synthèse');
   assert.ok(!JSON.stringify(sent[0].body).includes('Dupont'), 'le nom du client n\'est pas envoyé');
+  // Contrôle du compte rendu avant validation : règles locales + relecture IA ; ne bloque rien
+  await page.getByRole('button', { name: /Contrôler \(IA\)/ }).click();
+  await page.getByText('Les notes évoquent un budget absent du compte rendu (contrôle simulé).').waitFor();
+  assert.ok(await page.getByText(/Action sans échéance/).first().isVisible(), 'règle locale : action sans échéance');
+  assert.ok(await page.getByText(/ne bloquent pas la validation/).isVisible());
+  const reviewReq = (await (await fetch('http://127.0.0.1:4010/__requests')).json()).at(-1);
+  assert.ok(reviewReq.body.messages[1].content.includes('Dictée relue'), 'les notes de la visite sont envoyées au contrôle');
+  assert.ok(!JSON.stringify(reviewReq.body).includes('Budget réel plus élevé') && !JSON.stringify(reviewReq.body).includes('Dupont'), 'ni notes internes ni nom du client');
+  await shot(page, '3g2-controle-ia');
+  await page.getByRole('button', { name: 'Fermer et corriger' }).click();
   // Dictée directement dans un champ du compte rendu (micro à côté du libellé) : le texte est ajouté à la fin du champ
   const besoinsAvant = await page.getByLabel('Besoins', { exact: true }).inputValue();
   await page.getByRole('button', { name: 'Dicter : Besoins', exact: true }).click();
@@ -643,6 +653,22 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
 
   // 8. Mode sombre : suit le réglage du système par défaut, réglable, conservé après rechargement et déconnexion
   const bg = p => p.evaluate(() => getComputedStyle(document.body).backgroundColor);
+  // Brief avant visite (IA) : historique validé du client + actions ouvertes ; conservé tant que l'historique ne change pas
+  const bctx = await newPhone(browser); const bp = await bctx.newPage(); bp.on('pageerror', e => errors.push(e.message));
+  await login(bp, 'commercial1@exemple.invalid');
+  await bp.getByRole('button', { name: 'Clients', exact: true }).click();
+  await bp.getByText('Dupont SA').click();
+  await bp.getByRole('button', { name: '+ Planifier une visite' }).click();
+  await bp.getByRole('button', { name: /Préparer \(IA\)/ }).click();
+  await bp.getByText('Relation active avec ce client (brief simulé).').waitFor();
+  await bp.getByText('Relancer le devis').waitFor();
+  await bp.getByText(/Généré par IA à partir de \d+ compte/).waitFor();
+  assert.ok(!JSON.stringify((await (await fetch('http://127.0.0.1:4010/__requests')).json()).at(-1).body).includes('Dupont'), 'le nom du client n\'est pas envoyé au brief');
+  await shot(bp, '3i-brief-ia');
+  await bp.getByRole('button', { name: /Régénérer/ }).click();
+  await bp.getByText(/Généré par IA à partir de/).waitFor();
+  await bctx.close();
+
   const dctx = await newPhone(browser, { colorScheme: 'dark' });
   const dp = await dctx.newPage();
   dp.on('pageerror', e => errors.push(e.message));

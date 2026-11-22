@@ -89,3 +89,13 @@ Au démarrage, le journal du back indique si l'IA est active : `docker compose l
 - Information des utilisateurs : prévoir un avertissement clair que les notes sont envoyées à un service tiers, et une décision sur le consentement.
 
 À faire en premier : une clé de test, un jeu de notes réelles (anonymisées) dans chaque langue, et la mesure de la qualité avec les commerciaux.
+
+## 8. Brief avant visite et contrôle du compte rendu
+
+Deux fonctions de plus sur le même fournisseur (`AiService.brief` / `AiService.review`, `prompt.ts`, `mistral.ts`) ; routes `POST /visits/:id/ai-brief` et `POST /reports/:id/ai-review` (`api/mobile.openapi.yaml`).
+
+- **Brief** : envoyé à Mistral = objectif et notes de préparation de la visite, jusqu'à 5 comptes rendus **validés** du client que l'utilisateur peut lire (champs du compte rendu, date, opportunité), actions ouvertes qu'il peut lire. **Jamais** : brouillons, notes internes, notes privées, nom du client, adresse, contacts. **Attention** : ce sont des textes écrits par des collègues (visibles de l'utilisateur) qui partent chez un tiers : même catégorie de données que les notes de la synthèse, mais pas de la seule personne qui déclenche l'appel. À inclure dans l'information des utilisateurs et la décision sur le consentement. Le résultat est conservé dans `ai_brief` (une ligne par visite et utilisateur, supprimée avec la visite) : il est resservi sans appel tant que l'historique n'a pas changé. Sans donnée, aucun appel. Contrôle de la sortie : nombres et noms absents de l'historique signalés (mêmes limites que les garde-fous du §4).
+- **Contrôle du compte rendu** : règles locales déterministes (`review-rules.ts`, gratuites, toujours exécutées) puis relecture par l'IA ; le brouillon est envoyé par l'application (même non synchronisé) avec les notes de la visite. Ne bloque jamais la validation ; si l'IA est indisponible, saturée, au plafond ou en échec, les règles locales sont tout de même renvoyées (`ai.status`).
+- **Coût et limites** : un appel par brief (hors cache) et par contrôle, comptés dans `ai_usage` (`kind = 'llm'`), soumis à la limite de débit et au plafond mensuel déjà en place.
+- **Vérifié** : tests automatisés avec un faux serveur Mistral (droits, moment autorisé, cache, absence de brouillon et de nom de client dans la requête, sorties hors format, pannes) et e2e web. **Non vérifié** : la qualité réelle des briefs et des remarques (aucun appel à Mistral réel, aucun jeu de comptes rendus réels), le comportement sur de longs historiques, les langues autres que le français.
+- **Limite** : le brief n'est pas conservé hors-ligne côté appareil (il se relit en ligne ; le cache serveur évite de repayer l'appel).

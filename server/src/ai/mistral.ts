@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import { buildMessages } from './prompt.js';
-import { checkProposal } from './guards.js';
-import { AiError, defaultAiLog, errorSnippet, type AiLog, type AiService, type StructureInput, type StructureResult } from './types.js';
+import { buildMessages, buildBriefMessages, buildReviewMessages } from './prompt.js';
+import { checkProposal, numbersIn, properNamesIn } from './guards.js';
+import { AiError, defaultAiLog, errorSnippet, type AiLog, type AiService, type Brief, type BriefInput, type BriefResult, type ReviewInput, type ReviewIssue, type ReviewResult, type StructureInput, type StructureResult } from './types.js';
 
 export interface MistralConfig {
   apiKey: string;
@@ -36,6 +36,14 @@ const outputSchema = z.object({
   fields: z.object({ summary: str, needs: str, objections: str, competitors: str, decisions: str, next_step: str }),
   actions: z.array(z.object({ title: z.string().trim().min(1).max(200), due_date: dateOrNull, relative_date: z.boolean().catch(false) })).max(10).catch([]),
 });
+
+const list = z.array(z.string().trim().min(1).max(300)).max(8).catch([]);
+const briefSchema = z.object({ summary: str, where_we_left: str, to_address: list, watch_out: list, questions: list });
+const reviewSchema = z.object({ issues: z.array(z.object({
+  field: z.enum(['summary', 'needs', 'objections', 'competitors', 'decisions', 'next_step', 'actions', 'general']).catch('general'),
+  severity: z.enum(['warning', 'info']).catch('info'),
+  message: z.string().trim().min(1).max(300),
+})).max(8).catch([]) });
 
 export class MistralService implements AiService {
   readonly provider = 'mistral';
@@ -80,5 +88,51 @@ export class MistralService implements AiService {
       proposal, warnings: checkProposal(proposal, input.sourceText, input.today),
       provider: this.provider, model: String(body?.model ?? this.cfg.model), usage: { tokensIn, tokensOut }, costCents,
     };
+  }
+
+  /** Appel de complétion JSON commun au brief et au contrôle : mêmes délais, mêmes erreurs neutres, jamais de contenu journalisé. */
+  private async completeJson(messages: { role: string; content: string }[], label: string): Promise<{ content: unknown; model: string; usage: { tokensIn: number | null; tokensOut: number | null }; costCents: number }> {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), this.cfg.timeoutMs);
+    let res: Response;
+    try {
+      res = await this.doFetch(`${this.cfg.baseUrl}/v1/chat/completions`, {
+        method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${this.cfg.apiKey}` },
+        body: JSON.stringify({ model: this.cfg.model, messages, response_format: { type: 'json_object' }, temperature: 0.2 }), signal: ctl.signal,
+      });
+    } catch { throw new AiError('upstream', 'Le service d\'IA est injoignable.'); }
+    finally { clearTimeout(timer); }
+    if (!res.ok) { this.log(`${label} refuse`, { status: res.status, model: this.cfg.model, reponse: await errorSnippet(res) }); throw new AiError('upstream', `Le service d'IA a répondu avec une erreur (${res.status}).`); }
+    let body: any;
+    try { body = await res.json(); } catch { throw new AiError('invalid_output', 'Réponse du service d\'IA illisible.'); }
+    const tokensIn = Number.isFinite(body?.usage?.prompt_tokens) ? Number(body.usage.prompt_tokens) : null;
+    const tokensOut = Number.isFinite(body?.usage?.completion_tokens) ? Number(body.usage.completion_tokens) : null;
+    const costCents = ((tokensIn ?? 0) * (this.cfg.priceInEurPerM ?? 0) + (tokensOut ?? 0) * (this.cfg.priceOutEurPerM ?? 0)) / 1e6 * 100;
+    return { content: body?.choices?.[0]?.message?.content, model: String(body?.model ?? this.cfg.model), usage: { tokensIn, tokensOut }, costCents };
+  }
+
+  async brief(input: BriefInput): Promise<BriefResult> {
+    const r = await this.completeJson(buildBriefMessages(input), 'brief');
+    let brief: Brief;
+    try { brief = briefSchema.parse(JSON.parse(String(r.content ?? ''))); }
+    catch { this.log('brief hors format', { model: this.cfg.model, longueur: String(r.content ?? '').length }); throw new AiError('invalid_output', 'La réponse du service d\'IA n\'a pas le format attendu.'); }
+    // Contrôles : nombres et noms du brief absents de l'historique fourni (le modèle a pu les inventer).
+    const source = JSON.stringify([input.objective, input.preparationNotes, input.reports, input.openActions]);
+    const srcNumbers = numbersIn(source); const srcText = source.toLocaleLowerCase('fr');
+    const warnings: string[] = []; const seen = new Set<string>();
+    for (const t of [brief.summary, brief.where_we_left, ...brief.to_address, ...brief.watch_out, ...brief.questions]) {
+      for (const n of numbersIn(t)) if (!srcNumbers.has(n) && !seen.has(n)) { seen.add(n); warnings.push(`Nombre absent de l'historique : ${n}.`); }
+      for (const w of properNamesIn(t)) if (!srcText.includes(w.toLocaleLowerCase('fr')) && !seen.has(w)) { seen.add(w); warnings.push(`Nom absent de l'historique : ${w}.`); }
+    }
+    return { brief, warnings, provider: this.provider, model: r.model, usage: r.usage, costCents: r.costCents };
+  }
+
+  async review(input: ReviewInput): Promise<ReviewResult> {
+    const r = await this.completeJson(buildReviewMessages(input), 'controle');
+    let parsed: z.infer<typeof reviewSchema>;
+    try { parsed = reviewSchema.parse(JSON.parse(String(r.content ?? ''))); }
+    catch { this.log('controle hors format', { model: this.cfg.model, longueur: String(r.content ?? '').length }); throw new AiError('invalid_output', 'La réponse du service d\'IA n\'a pas le format attendu.'); }
+    const issues: ReviewIssue[] = parsed.issues.map(i => ({ ...i, source: 'ai' as const }));
+    return { issues, provider: this.provider, model: r.model, usage: r.usage, costCents: r.costCents };
   }
 }
