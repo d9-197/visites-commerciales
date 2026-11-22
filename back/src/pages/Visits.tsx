@@ -1,18 +1,18 @@
 import { useState } from 'react';
 import { api, type R } from '../api';
 import type { Me } from '../App';
-import { Alert, AuthorState, Badge, BranchSelect, Card, Empty, Loading, Modal, useLoad } from '../ui';
+import { Alert, AuthorState, Badge, BranchSelect, Card, ClientFilter, Empty, Loading, Modal, useLoad } from '../ui';
 import { STATUS, STATUS_TONE, TEMP, fmtDateTime, fmtDate } from '../format';
 
 const PAGE = 50;
 export function Visits({ params }: { me: Me; params: URLSearchParams }) {
-  const [q, setQ] = useState(''); const [status, setStatus] = useState(''); const [user, setUser] = useState(params.get('user') ?? '');
+  const [clients, setClients] = useState<string[]>([]); const [status, setStatus] = useState(''); const [user, setUser] = useState(params.get('user') ?? '');
   const [from, setFrom] = useState(''); const [to, setTo] = useState(''); const [offset, setOffset] = useState(0); const [node, setNode] = useState('');
   const branches = useLoad(() => api<R>('org/mine'), []);
   const accessNodes: R[] = branches.data?.access ?? [];
   const [open, setOpen] = useState<string | null>(params.get('open'));
   const users = useLoad(() => api<R>('prep/commerciaux'), []);
-  const qs = `limit=${PAGE}&offset=${offset}&q=${encodeURIComponent(q)}${status ? `&status=${status}` : ''}${user ? `&user_id=${user}` : ''}${from ? `&from=${from}` : ''}${to ? `&to=${to}` : ''}${node ? `&node_id=${node}` : ''}`;
+  const qs = `limit=${PAGE}&offset=${offset}${clients.length ? `&company_ids=${clients.join(',')}` : ''}${status ? `&status=${status}` : ''}${user ? `&user_id=${user}` : ''}${from ? `&from=${from}` : ''}${to ? `&to=${to}` : ''}${node ? `&node_id=${node}` : ''}`;
   const { data, error, loading } = useLoad(() => api<R>(`visits?${qs}`), [qs]);
   const reset = <T,>(set: (v: T) => void) => (v: T) => { set(v); setOffset(0); };
   return (
@@ -20,9 +20,9 @@ export function Visits({ params }: { me: Me; params: URLSearchParams }) {
       <header className="page-head"><div><h1>Visites</h1><p className="muted">Visites, comptes rendus et actions de votre périmètre. Les notes internes ne sont jamais affichées.</p></div></header>
       <Card>
         <div className="toolbar filters">
-          <input type="search" placeholder="Client…" aria-label="Client" value={q} onChange={e => reset(setQ)(e.target.value)} />
+          <ClientFilter value={clients} onChange={reset(setClients)} />
           <select aria-label="Statut" value={status} onChange={e => reset(setStatus)(e.target.value)}><option value="">Tous les statuts</option>{Object.entries(STATUS).filter(([k]) => k !== 'closed').map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
-          {(users.data?.users?.length ?? 0) > 1 && <select aria-label="Commercial" value={user} onChange={e => reset(setUser)(e.target.value)}><option value="">Tous les commerciaux</option>{users.data!.users.map((u: R) => <option key={u.id} value={u.id}>{u.name}</option>)}</select>}
+          {(users.data?.users?.length ?? 0) > 1 && <select aria-label="Commercial" value={user} onChange={e => reset(setUser)(e.target.value)}><option value="">Tous les commerciaux</option><option value="none">Non attribuées</option>{users.data!.users.map((u: R) => <option key={u.id} value={u.id}>{u.name}</option>)}</select>}
           {accessNodes.length > 1 && <BranchSelect nodes={accessNodes as any} value={node} onChange={reset(setNode)} all="Toutes mes branches" label="Branche" />}
           <input type="date" aria-label="Du" value={from} onChange={e => reset(setFrom)(e.target.value)} /><input type="date" aria-label="Au" value={to} onChange={e => reset(setTo)(e.target.value)} />
         </div>
@@ -79,7 +79,7 @@ function Detail({ id, onClose }: { id: string; onClose: () => void }) {
         </section>
         <section><h3>Historique</h3>
           {data.history.length === 0 && data.emails.length === 0 ? <p className="muted">Rien.</p> : <ul>
-            {data.history.map((h: R, i: number) => <li key={i}><small className="muted">{fmtDateTime(h.changed_at)} · {h.changed_by_name}</small><br />{({ planned_start: 'Date prévue', location_text: 'Adresse', org_node: 'Branche', report_validated: 'Compte rendu validé', report_reopened: 'Compte rendu remis en brouillon', visit_deleted: 'Visite supprimée' } as R)[h.field]}{h.new_value ? ` : ${h.old_value ?? '—'} → ${h.new_value}` : ''}</li>)}
+            {data.history.map((h: R, i: number) => <li key={i}><small className="muted">{fmtDateTime(h.changed_at)} · {h.changed_by_name}</small><br />{({ planned_start: 'Date prévue', location_text: 'Adresse', org_node: 'Branche', author: 'Attribution', report_validated: 'Compte rendu validé', report_reopened: 'Compte rendu remis en brouillon', visit_deleted: 'Visite supprimée' } as R)[h.field]}{h.new_value ? ` : ${h.old_value ?? '—'} → ${h.new_value}` : ''}</li>)}
             {data.emails.map((e: R, i: number) => <li key={`e${i}`}><small className="muted">{fmtDateTime(e.created_at)} · {e.sender}</small><br />E-mail {e.status === 'sent' ? 'envoyé' : 'en échec'} à {e.recipients.join(', ')}</li>)}</ul>}
         </section>
       </div>}

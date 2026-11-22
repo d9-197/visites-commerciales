@@ -40,6 +40,7 @@ export function Reporting({ me }: { me: Me }) {
       {loading && !data && <Loading />}
       {data && <>
         <div className="kpis">
+          <Kpi label="Visites à organiser avec le client" value={data.pipeline.to_organize} sub={`${data.pipeline.organized} organisée${data.pipeline.organized > 1 ? 's' : ''} · ${data.pipeline.late} en retard · ${data.pipeline.unassigned} non attribuée${data.pipeline.unassigned > 1 ? 's' : ''}`} />
           <Kpi label="Visites effectuées" value={t.done} sub={`${t.planned} prévue${t.planned > 1 ? 's' : ''} · ${t.in_progress} en cours · ${t.cancelled} annulée${t.cancelled > 1 ? 's' : ''}`} />
           <Kpi label="Comptes rendus validés" value={t.cr_validated} sub={t.avg_cr_delay_days === null ? 'Délai moyen : —' : `Délai moyen de validation : ${t.avg_cr_delay_days} j`} />
           <Kpi label="CR à valider" value={t.cr_pending} tone={t.cr_late > 0 ? 'red' : undefined} sub={t.cr_late > 0 ? `${t.cr_late} en retard (> 2 jours)` : 'Aucun en retard'} />
@@ -71,7 +72,7 @@ export function Reporting({ me }: { me: Me }) {
         <Card title="Par commercial">
           {data.by_user.length === 0 ? <Empty>Aucun commercial dans votre périmètre.</Empty> : (
             <div className="scroll"><table className="num"><thead><tr><th>Commercial</th><th>Prévues</th><th>Effectuées</th><th>Annulées</th><th>CR validés</th><th>CR à valider</th><th>CR en retard</th><th>Délai CR (j)</th><th>Actions à faire</th><th>Actions en retard</th></tr></thead><tbody>
-              {data.by_user.map((u: R) => <tr key={u.user_id}><td><a href={`#/visites?user=${u.user_id}`}>{u.name}</a><AuthorState status={u.status} role={u.role} /></td><td>{u.planned}</td><td>{u.done}</td><td>{u.cancelled}</td><td>{u.cr_validated}</td><td>{u.cr_pending}</td>
+              {data.by_user.map((u: R) => <tr key={u.user_id}><td>{u.user_id ? <a href={`#/visites?user=${u.user_id}`}>{u.name}</a> : <a href="#/visites?user=none">{u.name}</a>}<AuthorState status={u.status} role={u.role} /></td><td>{u.planned}</td><td>{u.done}</td><td>{u.cancelled}</td><td>{u.cr_validated}</td><td>{u.cr_pending}</td>
                 <td className={u.cr_late ? 'red' : ''}>{u.cr_late}</td><td>{u.avg_cr_delay_days ?? '—'}</td><td>{u.actions_todo}</td><td className={u.actions_late ? 'red' : ''}>{u.actions_late}</td></tr>)}
             </tbody></table></div>)}
         </Card>

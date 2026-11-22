@@ -183,7 +183,7 @@ test('back : préparation : suggestions, fiche client, planification pour un com
   assert.equal((await bad({ company_id: f.f1, user_id: f.c3, planned_start: when })).status, 403, 'autre équipe');
   assert.equal((await bad({ company_id: f.f1, user_id: f.c2, planned_start: when })).status, 409, 'client non affecté à ce commercial');
   assert.equal((await bad({ company_id: f.f1, user_id: f.c1, planned_start: 'demain' })).status, 400);
-  assert.equal((await bad({ company_id: f.f1, user_id: f.mgr1, planned_start: when })).status, 409, 'pas pour un manager');
+  assert.equal((await bad({ company_id: f.f1, user_id: f.mgr2, planned_start: when })).status, 403, 'un autre manager : hors périmètre');
   const ok = await bad({ company_id: f.f1, user_id: f.c1, planned_start: when, objective: 'Présenter l\'offre B', preparation_notes: 'Apporter la brochure' });
   assert.equal(ok.status, 201);
   const sync = (await (await f.login('c1@x.fr')).pullAll()).changes.visits.find((v: any) => v.id === ok.body.id);
@@ -232,4 +232,37 @@ test('back : consultation des visites, comptes rendus et actions ; périmètre ;
   assert.equal((await get('mgr2@x.fr', `/visits/${done.id}`)).status, 404, 'hors périmètre');
   const filtered = (await get('dir@x.fr', '/visits?status=done&q=Dupont')).body; assert.ok(filtered.visits.every((v: any) => v.status === 'done'));
   assert.equal((await get('dir@x.fr', '/visits?status=deleted')).status, 200);
+});
+
+test('back : visites non attribuées : préparation sans commercial ni date, attribution, retard, filtre multi-clients', async () => {
+  await setMode(env.pool, 2);
+  const un = await send('mgr1@x.fr', 'POST', '/prep/visits', { company_id: f.f1, objective: 'À répartir' });
+  assert.equal(un.status, 201, JSON.stringify(un.body));
+  assert.equal((await send('c1@x.fr', 'POST', '/prep/visits', { company_id: f.f1, user_id: null })).status, 403, 'un commercial ne prépare pas de visite non attribuée');
+  let list = (await get('mgr1@x.fr', '/prep/visits?user_id=none')).body.visits;
+  assert.deepEqual(list.map((v: any) => v.id), [un.body.id]); assert.equal(list[0].author, 'Non attribuée'); assert.equal(list[0].planned_start, null);
+  assert.equal((await get('mgr2@x.fr', '/prep/visits?user_id=none')).body.visits.length, 0, 'autre branche');
+  // visite en retard : apparaît dans la préparation (aucune borne de dates par défaut)
+  const past = (await send('mgr1@x.fr', 'POST', '/prep/visits', { company_id: f.f1, user_id: f.c1, planned_start: new Date(Date.now() - 10 * 86400000).toISOString() })).body.id;
+  const late = (await get('mgr1@x.fr', '/prep/visits?late=true')).body;
+  assert.deepEqual(late.visits.map((v: any) => v.id), [past]); assert.equal(late.visits[0].late, true);
+  // filtre multi-clients
+  assert.equal((await get('mgr1@x.fr', `/prep/visits?company_ids=${f.f1}`)).body.visits.length >= 2, true);
+  assert.equal((await get('mgr1@x.fr', `/prep/visits?company_ids=${uuid()}`)).body.visits.length, 0);
+  // attribution : commercial de l'équipe oui, autre équipe / client non lisible non
+  assert.equal((await send('mgr1@x.fr', 'PATCH', `/prep/visits/${un.body.id}`, { user_id: f.c3 })).status, 403);
+  assert.equal((await send('mgr1@x.fr', 'PATCH', `/prep/visits/${un.body.id}`, { user_id: f.c2 })).status, 409, 'client non lisible par c2');
+  const c1api = await f.login('c1@x.fr'); const before = (await c1api.pullAll()).changes.visits.some((v: any) => v.id === un.body.id);
+  assert.equal(before, false, 'non attribuée : pas dans l\'appli du commercial');
+  const as = await send('mgr1@x.fr', 'PATCH', `/prep/visits/${un.body.id}`, { user_id: f.c1 });
+  assert.equal(as.status, 200, JSON.stringify(as.body));
+  assert.ok((await (await f.login('c1@x.fr')).pullAll()).changes.visits.some((v: any) => v.id === un.body.id && v.author_id === f.c1), 'arrive chez le commercial');
+  const hist = (await get('mgr1@x.fr', `/visits/${un.body.id}`)).body.history;
+  assert.ok(hist.some((h: any) => h.field === 'author' && h.old_value === 'Non attribuée' && h.new_value === 'c1'));
+  // retirer l'attribution : la visite disparaît de l'appli (révocation)
+  assert.equal((await send('mgr1@x.fr', 'PATCH', `/prep/visits/${un.body.id}`, { user_id: null })).status, 200);
+  assert.equal((await send('c1@x.fr', 'PATCH', `/prep/visits/${un.body.id}`, { user_id: null })).status, 404, 'le commercial ne retire pas');
+  assert.ok((await get('mgr1@x.fr', '/prep/assignees?company_id=' + f.f1)).body.users.some((u: any) => u.id === f.c1));
+  // un client lisible via une visite : nom visible dans l'appli du commercial même sans affectation
+  assert.equal((await env.pool.query(`SELECT can_read_company($1,$2) AS ok`, [f.c1, f.f1])).rows[0].ok, true);
 });

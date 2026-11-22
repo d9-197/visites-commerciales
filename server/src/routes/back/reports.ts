@@ -80,6 +80,10 @@ export function reportsRouter(pool: Pool) {
         cr_validated: v.cr_validated ?? 0, cr_pending: v.cr_pending ?? 0, cr_late: v.cr_late ?? 0, avg_cr_delay_days: v.avg_cr_delay_days === null || v.avg_cr_delay_days === undefined ? null : Number(v.avg_cr_delay_days),
         actions_todo: a.todo ?? 0, actions_late: a.late ?? 0, actions_done: a.done_in_period ?? 0 };
     });
+    // Visites non attribuées (sans auteur) : une ligne à part, pour qu'elles comptent dans les totaux.
+    const un = perUser.find(x => x.user_id === null);
+    if (un) byUser.unshift({ user_id: null as unknown as string, name: 'Non attribuées', role: null as unknown as string, status: 'active', planned: un.planned ?? 0, in_progress: 0, done: 0, cancelled: un.cancelled ?? 0,
+      cr_validated: 0, cr_pending: 0, cr_late: 0, avg_cr_delay_days: null, actions_todo: 0, actions_late: 0, actions_done: 0 });
     const sum = (k: keyof (typeof byUser)[number]) => byUser.reduce((n, u) => n + (Number(u[k]) || 0), 0);
     const delays = byUser.filter(u => u.avg_cr_delay_days !== null && u.cr_validated > 0);
     const totals = {
@@ -107,7 +111,7 @@ export function reportsRouter(pool: Pool) {
     const late = (await pool.query(
       `SELECT v.id AS visit_id, c.name AS company, u.display_name AS author, v.ended_at,
               floor(extract(epoch FROM (now() - v.ended_at)) / 86400)::int AS days
-       FROM visit v JOIN company c ON c.id = v.company_id JOIN app_user u ON u.id = v.author_id
+       FROM visit v JOIN company c ON c.id = v.company_id LEFT JOIN app_user u ON u.id = v.author_id
        WHERE v.status = 'done' AND v.deleted_at IS NULL AND v.ended_at < now() - make_interval(days => $2::int) AND ($1::uuid[] IS NULL OR v.author_id = ANY($1))
          AND ($3::uuid[] IS NULL OR v.org_node_id = ANY($3) OR v.author_id = $4::uuid)
        ORDER BY v.ended_at LIMIT 50`, [ids, REPORT_LATE_DAYS, nodes, viewer])).rows;
@@ -131,7 +135,15 @@ export function reportsRouter(pool: Pool) {
       WHERE ($5::uuid[] IS NULL OR n.id = ANY($5))
       GROUP BY n.id ORDER BY org_path(n.id)`, P)).rows;
 
-    return { period: { from, to }, scope: ids === null ? 'all' : 'team', node_id: nodeId ?? null, totals, by_user: byUser, by_node: byNode, by_week: byWeek, clients, late_reports: late };
+    // Pipeline de préparation, indépendant de la période : visites encore à organiser / organisées, dont en retard et non attribuées.
+    const pipeline = (await pool.query(
+      `SELECT count(*) FILTER (WHERE v.status = 'planned')::int AS to_organize, count(*) FILTER (WHERE v.status = 'organized')::int AS organized,
+              count(*) FILTER (WHERE v.planned_start IS NOT NULL AND v.planned_start + interval '60 minutes' < now())::int AS late,
+              count(*) FILTER (WHERE v.author_id IS NULL)::int AS unassigned
+       FROM visit v WHERE v.deleted_at IS NULL AND v.status IN ('planned','organized') AND ($1::uuid[] IS NULL OR v.author_id = ANY($1) OR v.author_id IS NULL)
+         AND ($2::uuid[] IS NULL OR v.org_node_id = ANY($2) OR v.author_id = $3::uuid)`, [ids, nodes, viewer])).rows[0];
+
+    return { pipeline, period: { from, to }, scope: ids === null ? 'all' : 'team', node_id: nodeId ?? null, totals, by_user: byUser, by_node: byNode, by_week: byWeek, clients, late_reports: late };
   }
 
   r.get('/reports/activity', wrap(async (req, res) => { res.json(await activity(req)); }));

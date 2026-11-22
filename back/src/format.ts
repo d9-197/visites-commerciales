@@ -6,7 +6,7 @@ export const isoDay = (offset = 0) => { const d = new Date(Date.now() + offset *
 export const localToIso = (v: string) => new Date(v).toISOString();
 export const isoToLocal = (v?: string | null) => { if (!v) return ''; const d = new Date(v); const p = (n: number) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; };
 
-export const STATUS: Record<string, string> = { planned: 'À organiser', organized: 'Organisée', in_progress: 'En cours', done: 'Effectuée', validated: 'CR validé', closed: 'Terminée', cancelled: 'Annulée', deleted: 'Supprimée' };
+export const STATUS: Record<string, string> = { planned: 'À organiser avec le client', organized: 'Organisée avec le client', in_progress: 'En cours', done: 'Effectuée', validated: 'CR validé', closed: 'Terminée', cancelled: 'Annulée', deleted: 'Supprimée' };
 export const STATUS_TONE: Record<string, string> = { planned: 'amber', organized: 'blue', in_progress: 'green', done: 'grey', validated: 'violet', closed: 'green', cancelled: 'grey', deleted: 'grey' };
 export const TEMP: Record<string, string> = { cold: 'Froide', warm: 'Tiède', hot: 'Chaude' };
 export const ROLE: Record<string, string> = { commercial: 'Commercial', manager: 'Manager', directeur: 'Directeur' };

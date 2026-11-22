@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { ApiError } from './api';
+import { ApiError, api, type R } from './api';
 
 export const errMsg = (e: unknown) => (e instanceof ApiError ? e.message : 'Une erreur est survenue.');
 
@@ -55,5 +55,25 @@ export function BranchSelect({ nodes, value, onChange, all, label }: { nodes: { 
       {all !== undefined && <option value="">{all}</option>}
       {nodes.map(n => <option key={n.id} value={n.id}>{'  '.repeat(Math.max(0, n.depth - base))}{n.name}</option>)}
     </select>
+  );
+}
+
+/** Filtre « Clients » à choix multiple : liste des clients avec recherche et cases à cocher. `value` = identifiants choisis (vide : tous). */
+export function ClientFilter({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
+  const [open, setOpen] = useState(false); const [q, setQ] = useState('');
+  const list = useLoad(() => api<R>('prep/companies?limit=1000'), []);
+  const all: R[] = list.data?.companies ?? [];
+  const shown = all.filter(c => !q.trim() || `${c.name} ${c.city ?? ''}`.toLowerCase().includes(q.trim().toLowerCase()));
+  const toggle = (id: string) => onChange(value.includes(id) ? value.filter(x => x !== id) : [...value, id]);
+  const label = value.length === 0 ? 'Tous les clients' : value.length === 1 ? (all.find(c => c.id === value[0])?.name ?? '1 client') : `${value.length} clients`;
+  return (
+    <div className="multi">
+      <button type="button" aria-haspopup="listbox" aria-expanded={open} aria-label="Clients" onClick={() => setOpen(o => !o)}>{label} ▾</button>
+      {open && <div className="multi-pop" role="listbox" aria-multiselectable="true" aria-label="Choix des clients">
+        <input type="search" placeholder="Rechercher un client…" value={q} onChange={e => setQ(e.target.value)} autoFocus />
+        <div className="multi-actions"><button type="button" className="link" onClick={() => onChange(shown.map(c => c.id))}>Tout cocher{q ? ' (résultats)' : ''}</button><button type="button" className="link" onClick={() => onChange([])}>Effacer</button><button type="button" className="link" onClick={() => setOpen(false)}>Fermer</button></div>
+        <ul>{shown.length === 0 ? <li className="muted">Aucun client.</li> : shown.map(c => <li key={c.id}><label className="check"><input type="checkbox" checked={value.includes(c.id)} onChange={() => toggle(c.id)} /> {c.name}{c.city ? <small className="muted"> {c.city}</small> : null}</label></li>)}</ul>
+      </div>}
+    </div>
   );
 }

@@ -188,16 +188,21 @@ const dialog = page => page.getByRole('dialog');
   await nav(page, 'Préparation');
   await page.getByRole('row', { name: /Quincaillerie Test/ }).getByText('Jamais visité').waitFor();
   await shot(page, 'b4-suggestions');
-  await page.getByRole('row', { name: /Quincaillerie Test/ }).getByRole('button', { name: 'Préparer' }).click();
+  await page.getByRole('row', { name: /Quincaillerie Test/ }).getByRole('button', { name: 'Fiche' }).click();
   await dialog(page).getByRole('heading', { name: 'Préparer : Quincaillerie Test' }).waitFor();
   await dialog(page).getByText('Mme Test').waitFor();
   await shot(page, 'b5-fiche');
-  await dialog(page).getByRole('button', { name: 'Planifier une visite' }).click();
-  await dialog(page).locator('select').first().selectOption({ label: 'Commercial Un' });
+  await dialog(page).getByRole('button', { name: 'Préparer une visite' }).click();
+  await dialog(page).getByRole('heading', { name: 'Préparer une visite' }).waitFor();
+  const sel = dialog(page).getByLabel('Attribuée à');
+  await sel.selectOption(await sel.locator('option', { hasText: /^Commercial Un/ }).first().getAttribute('value'));
+  await dialog(page).getByLabel('Date et heure prévues').fill('2027-03-15T09:30');
   await dialog(page).getByLabel('Objectif', { exact: true }).fill('Présenter la gamme 2027');
   await dialog(page).getByLabel('Points à aborder').fill('Apporter le catalogue ; parler du contrat cadre');
   await dialog(page).getByRole('button', { name: 'Enregistrer', exact: true }).click();
-  await page.getByRole('row', { name: /Quincaillerie Test/ }).getByText('À organiser').waitFor();   // onglet Planning
+  await page.getByRole('heading', { name: /Commercial Commercial Un|Commercial Un/ }).waitFor();   // zone du commercial (onglet Visites en préparation)
+  await page.getByRole('row', { name: /Quincaillerie Test/ }).getByText('À organiser avec le client').waitFor();
+  await page.getByRole('row', { name: /Quincaillerie Test/ }).getByText('Apporter le catalogue').waitFor();      // les points à aborder saisis sont visibles
   await shot(page, 'b6-planning');
   // le commercial reçoit la visite à sa synchronisation (API mobile)
   const tok = await (await fetch(`${BASE}/api/mobile/v1/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'commercial1@exemple.invalid', password: PWD, device: { platform: 'web', app_version: '1.0.0' } }) })).json();
@@ -210,11 +215,34 @@ const dialog = page => page.getByRole('dialog');
   await page.getByText(/Aucun client à signaler|Dupont SA|Atelier Roux|Import/).first().waitFor();
   assert.equal(await page.getByRole('row', { name: /Quincaillerie Test/ }).count(), 0, 'client déjà planifié : plus suggéré');
   // modification du rendez-vous
-  await page.getByRole('tab', { name: 'Planning' }).click();
-  await page.getByRole('row', { name: /Quincaillerie Test/ }).getByRole('button', { name: 'Modifier' }).click();
+  await page.getByRole('tab', { name: 'Visites en préparation' }).click();
+  await page.getByRole('row', { name: /Quincaillerie Test/ }).getByRole('button', { name: 'Préparer' }).click();
   await dialog(page).getByLabel('Statut').selectOption('organized');
   await dialog(page).getByRole('button', { name: 'Enregistrer', exact: true }).click();
-  await page.getByRole('row', { name: /Quincaillerie Test/ }).getByText('Organisée').waitFor();
+  await page.getByRole('row', { name: /Quincaillerie Test/ }).getByText('Organisée avec le client').waitFor();
+  // visite non attribuée (ni commercial, ni date) : zone à part, puis attribution à un commercial
+  await page.getByRole('button', { name: '+ Préparer une visite' }).click();
+  await dialog(page).getByPlaceholder('Rechercher un client…').fill('Atelier');
+  await dialog(page).getByRole('button', { name: /Atelier Roux/ }).click();
+  await dialog(page).getByLabel('Attribuée à').selectOption('');
+  await dialog(page).getByLabel('Objectif', { exact: true }).fill('À répartir');
+  await dialog(page).getByRole('button', { name: 'Enregistrer', exact: true }).click();
+  if (await dialog(page).getByLabel('Branche de la visite').waitFor({ timeout: 3000 }).then(() => true, () => false)) {   // plusieurs branches possibles : on choisit
+    await dialog(page).getByLabel('Branche de la visite').selectOption({ index: 1 });
+    await dialog(page).getByRole('button', { name: 'Enregistrer', exact: true }).click();
+  }
+  await page.getByRole('heading', { name: /Visites non attribuées/ }).waitFor({ timeout: 8000 }).catch(async e => { await page.screenshot({ path: '/tmp/dbg.png' }); console.log('DBGTEXT', (await page.locator('body').innerText()).slice(0, 1500)); throw e; });
+  await shot(page, 'b6b-non-attribuees');
+  await page.getByRole('row', { name: /Atelier Roux/ }).getByRole('button', { name: 'Attribuer', exact: true }).click();
+  await dialog(page).getByRole('combobox').selectOption({ index: 1 });
+  await dialog(page).getByRole('button', { name: 'Attribuer', exact: true }).click();
+  await page.getByRole('heading', { name: /Visites non attribuées/ }).waitFor({ state: 'detached' });
+  // filtre Clients à choix multiple
+  await page.getByRole('button', { name: 'Clients', exact: true }).click();
+  await page.getByRole('listbox').getByLabel(/Quincaillerie Test/).check();
+  await page.getByRole('button', { name: 'Fermer', exact: true }).click();
+  assert.equal(await page.getByRole('row', { name: /Atelier Roux/ }).count(), 0, 'filtre client : seul le client coché');
+  assert.ok(await page.getByRole('row', { name: /Quincaillerie Test/ }).count() >= 1);
 
   // 6. Visites : la visite planifiée est consultable ; détail
   await nav(page, 'Visites');

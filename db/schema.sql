@@ -271,7 +271,7 @@ CREATE INDEX company_assignment_user_idx ON company_assignment(user_id) WHERE re
 CREATE TABLE visit (
   id            uuid PRIMARY KEY,
   company_id    uuid NOT NULL REFERENCES company(id),
-  author_id     uuid NOT NULL REFERENCES app_user(id),
+  author_id     uuid REFERENCES app_user(id),         -- NULL : visite en préparation non attribuée
   visit_type    text REFERENCES visit_type(code),
   org_node_id   uuid NOT NULL REFERENCES org_node(id),   -- branche de la visite : un nœud de l'auteur, choisi à la création
   objective     text,
@@ -288,7 +288,8 @@ CREATE TABLE visit (
   updated_at    timestamptz NOT NULL DEFAULT now(),
   seq           bigint NOT NULL DEFAULT 0,
   deleted_at    timestamptz,
-  CHECK (ended_at IS NULL OR started_at IS NULL OR ended_at >= started_at)
+  CHECK (ended_at IS NULL OR started_at IS NULL OR ended_at >= started_at),
+  CONSTRAINT visit_author_required CHECK (author_id IS NOT NULL OR status IN ('planned','organized','cancelled','deleted'))
 );
 CREATE TRIGGER visit_seq BEFORE INSERT OR UPDATE ON visit FOR EACH ROW EXECUTE FUNCTION bump_seq();
 CREATE INDEX visit_company_idx ON visit(company_id);
@@ -310,7 +311,7 @@ CREATE TRIGGER visit_contact_seq BEFORE INSERT OR UPDATE ON visit_contact FOR EA
 CREATE TABLE visit_history (
   id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   visit_id        uuid NOT NULL REFERENCES visit(id),
-  field           text NOT NULL CHECK (field IN ('planned_start','location_text','report_validated','report_reopened','visit_deleted','org_node')),
+  field           text NOT NULL CHECK (field IN ('planned_start','location_text','report_validated','report_reopened','visit_deleted','org_node','author')),
   old_value       text,
   new_value       text,
   changed_by      uuid REFERENCES app_user(id),
@@ -685,6 +686,9 @@ CREATE FUNCTION can_read_company(p_user uuid, p_company uuid) RETURNS boolean LA
     SELECT 1 FROM company_assignment a
     JOIN user_hierarchy h ON h.descendant_id = a.user_id
     WHERE a.company_id = p_company AND a.removed_at IS NULL AND h.ancestor_id = p_user
+  ) OR EXISTS (
+    -- Un client dont on voit une visite (préparée par un manager, client réaffecté depuis...) reste lisible : sinon l'appli affiche une visite sans nom de client.
+    SELECT 1 FROM visit v WHERE v.company_id = p_company AND v.deleted_at IS NULL AND can_read_visit(p_user, v.id)
   )
 $$;
 
@@ -708,7 +712,7 @@ CREATE VIEW crm_visit AS
   SELECT v.id, v.company_id, c.crm_id AS company_crm_id, v.author_id, u.email AS author_email,
          v.visit_type, v.objective, v.planned_start, v.planned_end, v.started_at, v.ended_at,
          v.location_text, v.status, v.created_at, v.updated_at, v.seq, v.deleted_at
-  FROM visit v JOIN company c ON c.id = v.company_id JOIN app_user u ON u.id = v.author_id;
+  FROM visit v JOIN company c ON c.id = v.company_id LEFT JOIN app_user u ON u.id = v.author_id;
 
 CREATE VIEW crm_report AS
   SELECT r.id, r.visit_id, r.language, r.summary, r.needs, r.objections, r.competitors, r.decisions,

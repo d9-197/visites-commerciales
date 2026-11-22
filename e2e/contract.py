@@ -96,6 +96,13 @@ cid=sug['suggestions'][0]['id'] if sug['suggestions'] else None
 fiche=t('GET','/prep/companies/{id}',f'/prep/companies/{company}',adm)
 assert fiche['visits'] and any(v['report'] for v in fiche['visits']) and fiche['open_actions'], 'fiche vide'
 t('GET','/prep/visits','/prep/visits',adm)
+st,_=call('POST','/api/back/v1/prep/visits',adm,{'company_id':company,'objective':'Non attribuée','node_id':fiche['visits'][0]['org_node_id']})   # préparation sans commercial ni date
+assert st==201, st
+pv=t('GET','/prep/visits','/prep/visits?user_id=none&late=false',adm,label='non attribuées')
+assert pv['visits'] and pv['visits'][0]['author_id'] is None, 'visite non attribuée attendue'
+t('GET','/prep/visits','/prep/visits?status=planned&company_ids='+company,adm,label='filtre clients')
+t('GET','/prep/assignees',f'/prep/assignees?company_id={company}',adm)
+t('PATCH','/prep/visits/{id}',f'/prep/visits/{pv["visits"][0]["id"]}',adm,body={'objective':'Modifiée'})
 vs=t('GET','/visits','/visits?limit=5',adm)
 vd=t('GET','/visits/{id}',f'/visits/{vid}',adm)
 assert vd['report'] and vd['actions'] and vd['notes'] and vd['history'], 'détail de visite incomplet'

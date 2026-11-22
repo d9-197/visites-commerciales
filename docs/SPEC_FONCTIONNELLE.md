@@ -191,3 +191,12 @@ Détail dans `ARCHITECTURE.md`. Infrastructure : serveur Docker interne en UE (d
 2. Fusion de clients dans le CRM : le CRM fournit-il l'identifiant du client absorbant ? Inconnu. Par défaut : les visites restent sur l'ancien client (inactif) et un administrateur les rattache à la main.
 3. Format et contenu attendus par le CRM pour récupérer visites et CR (champs, fréquence d'appel, historique initial) ?
 4. Documentation complète de l'API du CRM : quotas, identifiant de référence, gestion des suppressions.
+
+## Préparation des visites : visites non attribuées, zones, retards (décision du 22/11)
+
+- « À organiser » signifie **à organiser avec le client** ; « Organisée » : organisée avec le client. Ces visites sont suivies dans toutes les vues du back (Visites, Préparation, Reporting : encadré « à organiser / organisées / en retard / non attribuées »).
+- Une visite peut être **non attribuée** (`author_id` nul, uniquement aux statuts à organiser / organisée / annulée / supprimée). Elle est préparée par un manager, directeur ou administrateur, reste visible des managers et directeurs de sa branche, et s'attribue ensuite à un commercial, un manager ou un directeur (actif, ayant accès à la branche et au client). L'attribution et son retrait sont tracés dans l'historique (champ `author`) ; une visite non attribuée ne peut pas être commencée (pas d'auteur) et n'apparaît dans aucune application mobile avant attribution, sauf celles de leurs branches pour managers/directeurs (lecture seule).
+- Vue « Visites en préparation » : une zone par personne (visites non attribuées en premier), repliables ; **les visites prévues en retard y apparaissent** (aucune borne de dates par défaut ; en retard = date dépassée de plus de 60 minutes sans démarrage). Filtres : clients (choix multiple avec recherche), statut, personne / non attribuées, en retard, dates.
+- « Préparer » ouvre un vrai formulaire de préparation : client, attribution (facultative), date (facultative), objectif, points à aborder (avec insertion des points suggérés issus du dernier compte rendu et des actions ouvertes), statut ; les points à aborder sont visibles dans la liste.
+- Un client dont une visite est lisible par l'utilisateur lui est lisible (nom, adresse, contacts), même sans affectation : l'application mobile n'affiche plus « … » à la place du nom (migration 012).
+- Application mobile : le champ « Adresse du serveur » est retiré de l'écran de connexion (adresse fixée par la configuration de l'application).

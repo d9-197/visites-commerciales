@@ -134,7 +134,7 @@ function Login({ onDone, onBrand }: { onDone: (s: Session) => Promise<void>; onB
   const { s, c, dark } = useTheme();
   const brand = useBrand();
   const [logoBroken, setLogoBroken] = useState(false);
-  const [server, setServer] = useState(DEFAULT_SERVER);
+  const server = DEFAULT_SERVER;     // adresse du serveur fixée par la configuration de l'application (plus de saisie)
   // Marque du serveur saisi (nom et logo de l'entreprise) : relue quand l'adresse change.
   useEffect(() => { const t = setTimeout(() => { void fetchBrand(server).then(b => { if (b) { setLogoBroken(false); onBrand(b); } }); }, 400); return () => clearTimeout(t); }, [server]);
   const [email, setEmail] = useState(''); const [password, setPassword] = useState('');
@@ -148,7 +148,7 @@ function Login({ onDone, onBrand }: { onDone: (s: Session) => Promise<void>; onB
       await onDone({ server, userId: me.id, role: me.role, lang: me.dictation_language, nodes: me.nodes ?? [], tokens });
     } catch (e: any) {
       setErr(e.code === 'invalid_credentials' ? 'Identifiants incorrects.' : e.code === 'account_locked' ? 'Compte verrouillé, réessayez plus tard.'
-        : e.code === 'upgrade_required' ? 'Mettez l\'application à jour.' : 'Connexion impossible. Vérifiez le réseau et l\'adresse du serveur.');
+        : e.code === 'upgrade_required' ? 'Mettez l\'application à jour.' : 'Connexion impossible. Vérifiez votre connexion réseau.');
     } finally { setBusy(false); }
   };
   return (
@@ -157,7 +157,6 @@ function Login({ onDone, onBrand }: { onDone: (s: Session) => Promise<void>; onB
         {!!brand.logoUrl && !logoBroken && <Image source={{ uri: brand.logoUrl }} accessibilityLabel={`Logo ${brand.name}`} onError={() => setLogoBroken(true)} resizeMode="contain" style={{ height: 72, width: 240 }} />}
         <Text style={[s.h1, { textAlign: 'center' }]} accessibilityRole="header">{brand.name}</Text>
       </View>
-      <Label>Adresse du serveur</Label><TextInput accessibilityLabel="Adresse du serveur" placeholderTextColor={c.muted} style={s.input} value={server} onChangeText={setServer} autoCapitalize="none" autoCorrect={false} />
       <Label>E-mail</Label><TextInput accessibilityLabel="E-mail" placeholderTextColor={c.muted} style={s.input} value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" />
       <Label>Mot de passe</Label><TextInput accessibilityLabel="Mot de passe" placeholderTextColor={c.muted} style={s.input} value={password} onChangeText={setPassword} secureTextEntry />
       {err ? <Text style={s.err}>{err}</Text> : null}

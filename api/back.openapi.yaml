@@ -257,13 +257,45 @@ paths:
                         email: {type: string}
                         assigned: {type: boolean}
         '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+  /prep/assignees:
+    get:
+      tags: [Préparation]
+      summary: Personnes à qui attribuer une visite
+      description: "Commerciaux, managers et directeurs actifs de votre périmètre qui ont accès à la branche de la visite (`visit_id`, ou `node_id`) et peuvent lire le client (`company_id`, déduit de `visit_id`). `assigned` : le client leur est affecté. Fournir `visit_id`, ou `company_id`."
+      parameters:
+        - {name: visit_id, in: query, schema: {$ref: 'common.yaml#/components/schemas/Uuid'}}
+        - {name: company_id, in: query, schema: {$ref: 'common.yaml#/components/schemas/Uuid'}}
+        - {name: node_id, in: query, schema: {$ref: 'common.yaml#/components/schemas/Uuid'}}
+      responses:
+        '200':
+          description: Personnes.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [users]
+                properties:
+                  users:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+                        name: {type: string}
+                        email: {type: string}
+                        role: {type: string, enum: [commercial, manager, directeur]}
+                        assigned: {type: boolean}
+        '400': {$ref: 'common.yaml#/components/responses/BadRequest'}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
   /prep/companies:
     get:
       tags: [Préparation]
       summary: Rechercher un client accessible
-      description: "Clients actifs affectés à au moins un utilisateur du périmètre (administrateur : tous les clients affectés). 30 résultats au plus."
+      description: "Clients actifs affectés à au moins un utilisateur du périmètre (administrateur : tous les clients affectés). 30 résultats par défaut ; `limit` jusqu'à 1000 pour alimenter un filtre à choix multiple."
       parameters:
         - {name: q, in: query, schema: {type: string}, description: Nom ou ville.}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 1000, default: 30}}
       responses:
         '200':
           description: Clients.
@@ -295,6 +327,7 @@ paths:
         - {name: days, in: query, schema: {type: integer, minimum: 7, maximum: 730, default: 60}}
         - {name: user_id, in: query, schema: {$ref: 'common.yaml#/components/schemas/Uuid'}}
         - {name: include_planned, in: query, schema: {type: boolean, default: false}}
+        - {name: company_ids, in: query, schema: {type: string}, description: "Limiter à ces clients (identifiants séparés par des virgules)."}
       responses:
         '200':
           description: Suggestions.
@@ -322,12 +355,18 @@ paths:
   /prep/visits:
     get:
       tags: [Préparation]
-      summary: Planning des visites à venir
-      description: "Visites « à organiser » ou « organisées » de vos branches, par date prévue (les non planifiées d'abord). Sans `from`, aujourd'hui ; sans `to`, 60 jours. 500 au plus."
+      summary: Visites en préparation
+      description: |
+        Visites « à organiser **avec le client** » (`planned`) ou « organisées » de vos branches, **attribuées ou non, en retard comprises**, par date prévue (sans date d'abord). 1000 au plus.
+        Aucune borne de dates par défaut : `from` / `to` filtrent sur la date prévue (les visites sans date restent listées). Une visite est `late` quand sa date prévue
+        est dépassée de plus de 60 minutes sans avoir été commencée.
       parameters:
         - {$ref: '#/components/parameters/From'}
         - {$ref: '#/components/parameters/To'}
-        - {name: user_id, in: query, schema: {$ref: 'common.yaml#/components/schemas/Uuid'}}
+        - {name: user_id, in: query, schema: {type: string}, description: "Identifiant d'une personne, ou `none` pour les visites non attribuées."}
+        - {name: company_ids, in: query, schema: {type: string}, description: "Un ou plusieurs clients (identifiants séparés par des virgules)."}
+        - {name: status, in: query, schema: {type: string, enum: [planned, organized]}}
+        - {name: late, in: query, schema: {type: boolean}, description: "true : seulement les visites en retard."}
       responses:
         '200':
           description: Visites.
@@ -338,14 +377,15 @@ paths:
                 required: [visits]
                 properties:
                   visits: {type: array, items: {$ref: '#/components/schemas/PlanningVisit'}}
+                  late_count: {type: integer}
         '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
         '404': {$ref: 'common.yaml#/components/responses/NotFound'}
     post:
       tags: [Préparation]
-      summary: Planifier une visite pour un commercial
+      summary: Préparer une visite (attribuée ou non)
       description: |
-        Crée une visite « à organiser » **au nom du commercial** (`author_id`), `created_by` = l'appelant ; elle arrive dans l'application mobile à la synchronisation suivante.
-        Le commercial doit être dans le périmètre de l'appelant (un commercial ne planifie que pour lui-même), actif, et le client lui être affecté.
+        Crée une visite « à organiser avec le client », `created_by` = l'appelant. `user_id` (commercial, manager ou directeur actif, de votre périmètre, pouvant lire le client) l'attribue : elle arrive dans son application à la synchronisation suivante.
+        `user_id` absent ou null : visite **non attribuée** (réservé aux managers, directeurs et administrateurs ; un commercial prépare pour lui-même) ; elle reste visible des managers et directeurs de sa branche. `planned_start` est facultatif.
         Sans `location_text`, l'adresse du client est utilisée.
       requestBody:
         required: true
@@ -370,7 +410,7 @@ paths:
         required: true
         content: {application/json: {schema: {$ref: '#/components/schemas/PatchPlannedVisit'}}}
       responses:
-        '200': {description: Modifiée., content: {application/json: {schema: {$ref: '#/components/schemas/IdOnly'}}}}
+        '200': {description: "Modifiée. `revoked` : retraits transmis aux appareils (changement d'attribution).", content: {application/json: {schema: {type: object, required: [id], properties: {id: {$ref: 'common.yaml#/components/schemas/Uuid'}, revoked: {type: integer}}}}}}
         '400': {$ref: 'common.yaml#/components/responses/BadRequest'}
         '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
         '404': {$ref: 'common.yaml#/components/responses/NotFound'}
@@ -384,8 +424,8 @@ paths:
       parameters:
         - {name: q, in: query, schema: {type: string}, description: Nom du client.}
         - {name: status, in: query, schema: {$ref: 'common.yaml#/components/schemas/VisitStatus'}}
-        - {name: user_id, in: query, schema: {$ref: 'common.yaml#/components/schemas/Uuid'}}
-        - {name: company_id, in: query, schema: {$ref: 'common.yaml#/components/schemas/Uuid'}}
+        - {name: user_id, in: query, schema: {type: string}, description: "Identifiant d'une personne, ou `none` : visites non attribuées."}
+        - {name: company_ids, in: query, schema: {type: string}, description: "Un ou plusieurs clients (identifiants séparés par des virgules ; `company_id` accepté pour un seul)."}
         - {name: node_id, in: query, schema: {$ref: 'common.yaml#/components/schemas/Uuid'}, description: "Branche et sous-branches (404 hors de vos branches)."}
         - {$ref: '#/components/parameters/From'}
         - {$ref: '#/components/parameters/To'}
@@ -827,6 +867,14 @@ components:
           type: object
           properties: {from: {type: string, format: date}, to: {type: string, format: date}}
         scope: {type: string, enum: [all, team], description: "`all` : administrateur sans filtre ; `team` : périmètre hiérarchique."}
+        pipeline:
+          type: object
+          description: "Visites en préparation, indépendamment de la période : à organiser avec le client, organisées, en retard, non attribuées."
+          properties:
+            to_organize: {type: integer}
+            organized: {type: integer}
+            late: {type: integer}
+            unassigned: {type: integer}
         totals: {$ref: '#/components/schemas/ActivityTotals'}
         by_user: {type: array, items: {$ref: '#/components/schemas/ActivityUser'}}
         by_week:
@@ -967,6 +1015,10 @@ components:
               author: {type: string}
               objective: {type: [string, 'null']}
               preparation_notes: {type: [string, 'null']}
+              author_id: {type: [string, 'null'], format: uuid}
+              location_text: {type: [string, 'null']}
+              org_node_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+              late: {type: boolean}
               report_hidden: {type: boolean, description: "Compte rendu non lisible avec les droits de l'appelant."}
               report:
                 oneOf:
@@ -1009,13 +1061,13 @@ components:
         opportunity_temperature: {oneOf: [{$ref: 'common.yaml#/components/schemas/Temperature'}, {type: 'null'}]}
     PlanVisit:
       type: object
-      required: [company_id, user_id, planned_start]
+      required: [company_id]
       additionalProperties: false
       properties:
         company_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
-        user_id: {$ref: 'common.yaml#/components/schemas/Uuid', description: Commercial qui réalisera la visite.}
+        user_id: {type: [string, 'null'], format: uuid, description: "Personne à qui attribuer la visite ; absent ou null : non attribuée."}
         node_id: {allOf: [{$ref: 'common.yaml#/components/schemas/Uuid'}], description: "Branche de la visite : un nœud du commercial auquel vous avez accès. Facultatif s'il n'y en a qu'un ; sinon 409 `org_node_required` (liste dans `nodes`)."}
-        planned_start: {type: string, format: date-time}
+        planned_start: {type: [string, 'null'], format: date-time}
         location_text: {type: [string, 'null'], maxLength: 500, description: "Défaut : adresse du client."}
         objective: {type: [string, 'null'], maxLength: 2000}
         preparation_notes: {type: [string, 'null'], maxLength: 5000}
@@ -1023,7 +1075,8 @@ components:
       type: object
       additionalProperties: false
       properties:
-        planned_start: {type: string, format: date-time}
+        planned_start: {type: [string, 'null'], format: date-time}
+        user_id: {type: [string, 'null'], format: uuid, description: "Attribuer la visite à cette personne (null : retirer l'attribution). Historique `author`. Un commercial peut seulement se l'attribuer (visite non attribuée qu'il voit)."}
         location_text: {type: [string, 'null'], maxLength: 500}
         objective: {type: [string, 'null'], maxLength: 2000}
         preparation_notes: {type: [string, 'null'], maxLength: 5000}
@@ -1034,8 +1087,13 @@ components:
         id: {$ref: 'common.yaml#/components/schemas/Uuid'}
         company_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
         company: {type: string}
-        author_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
-        author: {type: string}
+        author_id: {type: [string, 'null'], format: uuid, description: "null : visite non attribuée."}
+        author: {type: string, description: "« Non attribuée » si pas d'auteur."}
+        author_role: {type: [string, 'null']}
+        author_status: {type: [string, 'null']}
+        org_node_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+        org_path: {type: [string, 'null']}
+        late: {type: boolean}
         created_by_name: {type: [string, 'null'], description: "Personne qui a planifié la visite (null : le commercial lui-même)."}
         status: {type: string, enum: [planned, organized]}
         planned_start: {type: [string, 'null'], format: date-time}
@@ -1049,10 +1107,10 @@ components:
         id: {$ref: 'common.yaml#/components/schemas/Uuid'}
         company_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
         company: {type: string}
-        author_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
-        author: {type: string}
-        author_status: {type: string, enum: [active, disabled]}
-        author_role: {$ref: '#/components/schemas/Role'}
+        author_id: {type: [string, 'null'], format: uuid, description: "null : visite non attribuée."}
+        author: {type: string, description: "« Non attribuée » sans auteur."}
+        author_status: {type: [string, 'null'], enum: [active, disabled, null]}
+        author_role: {type: [string, 'null'], enum: [commercial, manager, directeur, null]}
         org_node_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
         org_path: {type: string, description: "Branche de la visite."}
         status: {$ref: 'common.yaml#/components/schemas/VisitStatus'}
@@ -1073,7 +1131,7 @@ components:
             id: {$ref: 'common.yaml#/components/schemas/Uuid'}
             company_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
             company: {type: string}
-            author_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+            author_id: {type: [string, 'null'], format: uuid}
             author: {type: string}
             author_status: {type: string, enum: [active, disabled]}
             author_role: {$ref: '#/components/schemas/Role'}

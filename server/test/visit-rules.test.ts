@@ -333,7 +333,7 @@ test('migration : une base existante reçoit le statut « organisée » et l\'hi
     await pool.query(`INSERT INTO visit(id, company_id, author_id, location_text) VALUES ($1,$2,$3,'ancienne')`, [uuid(), co, u]);
     await assert.rejects(pool.query(`UPDATE visit SET status = 'organized'`), /visit_status_check/);
 
-    assert.deepEqual(await migrate(pool), ['001_visite_organisee_et_historique.sql', '002_visite_validee.sql', '003_notes_internes.sql', '004_actions_depuis_compte_rendu.sql', '005_visite_supprimee.sql', '006_regles_compte_rendu.sql', '007_envoi_email.sql', '008_back_office.sql', '009_organisation.sql', '010_historique_branche.sql']);
+    assert.deepEqual(await migrate(pool), ['001_visite_organisee_et_historique.sql', '002_visite_validee.sql', '003_notes_internes.sql', '004_actions_depuis_compte_rendu.sql', '005_visite_supprimee.sql', '006_regles_compte_rendu.sql', '007_envoi_email.sql', '008_back_office.sql', '009_organisation.sql', '010_historique_branche.sql', '011_visites_non_attribuees.sql', '012_client_lisible_via_visite.sql']);
     await pool.query(`UPDATE visit SET status = 'organized'`);                    // maintenant accepté
     // 009 : l'ancienne hiérarchie est convertie en organisation ; la visite existante est rattachée à la branche de son auteur
     const mv = (await pool.query(`SELECT org_path(v.org_node_id) AS path FROM visit v`)).rows[0];

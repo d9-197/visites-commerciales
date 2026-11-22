@@ -86,7 +86,7 @@ export function orgRouter(pool: Pool) {
     if (!(await pool.query(`SELECT 1 FROM org_node WHERE id = $1`, [req.params.id])).rows[0]) throw new HttpError(404, 'not_found', 'Branche inconnue');
     const { rows } = await pool.query(
       `SELECT u.id, u.display_name AS name, u.status, u.role, count(*)::int AS visits
-       FROM visit v JOIN app_user u ON u.id = v.author_id WHERE v.org_node_id = $1 GROUP BY u.id ORDER BY u.display_name`, [req.params.id]);
+       FROM visit v JOIN app_user u ON u.id = v.author_id WHERE v.org_node_id = $1 AND v.author_id IS NOT NULL GROUP BY u.id ORDER BY u.display_name`, [req.params.id]);
     res.json({ authors: rows, total: rows.reduce((n, a) => n + a.visits, 0) });
   }));
 
@@ -113,7 +113,7 @@ export function orgRouter(pool: Pool) {
       }
       let added = 0;
       if (b.data.add_authors && moved.length) {
-        const authors = [...new Set(moved.map(v => v.author_id as string))];
+        const authors = [...new Set(moved.map(v => v.author_id as string).filter(Boolean))];
         added = (await c.query(`INSERT INTO user_org(user_id, node_id) SELECT a, $2 FROM unnest($1::uuid[]) a ON CONFLICT DO NOTHING`, [authors, to])).rowCount ?? 0;
         if (added) await c.query('SELECT rebuild_hierarchy()');
       }
