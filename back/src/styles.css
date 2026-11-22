@@ -128,3 +128,7 @@ table.tree td.treecell { min-width: 300px; } .treerow .nodename { white-space: n
 .iconbtn { padding: 4px 7px; border-radius: 6px; line-height: 1.2; } td.icons { white-space: nowrap; } td.icons .tip { display: inline-block; }
 .members-line { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; } td.members { max-width: 480px; }
 .multi-pop { color: var(--text); } .multi-pop input[type=checkbox] { accent-color: var(--accent); }
+
+table.targets td, table.targets th { padding: 6px 6px; } table.targets input { width: 64px; text-align: right; } table.targets small.done { display: block; text-align: right; color: var(--muted); } table.targets small.done.ok { color: var(--green); }
+table.targets .stick { position: sticky; left: 0; background: var(--surface); z-index: 1; white-space: nowrap; } table.targets .curmonth { background: var(--accent-soft); } table.targets td.edited input { border-color: var(--accent); background: var(--amber-soft); }
+tr.userrow td { font-size: 13px; }

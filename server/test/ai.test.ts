@@ -225,7 +225,7 @@ test('IA : brief avant visite : historique validé seulement, sans nom de client
 
 test('IA : brief : droits, moment, rien à synthétiser (aucun appel), erreurs neutres', async () => {
   const a = await f.login('c1@x.fr');
-  const v = uuid(); await a.push([op('visit', 'create', v, { company_id: f.f2 ?? f.f1, status: 'planned' })]);
+  const v = uuid(); await a.push([op('visit', 'create', v, { company_id: f.f1, status: 'planned' })]);
   assert.equal((await briefAsk(v, 'c2@x.fr')).status, 404, 'un autre visiteur ne voit pas la visite');
   assert.equal((await briefAsk(v, 'mgr1@x.fr')).status, 403, 'réservé à l\'auteur (le responsable lit la visite mais ne génère pas)');
   assert.equal((await briefAsk(uuid())).status, 404);

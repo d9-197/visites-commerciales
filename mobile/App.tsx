@@ -644,14 +644,15 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName, offline, open
     {/* Barre d'actions fixe : changement de statut, e-mail et suppression sur une seule ligne, toujours visibles. */}
     {(v.status !== 'deleted') && (
       <View style={s.actionBar} accessibilityLabel="Actions de la visite">
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
           {v.status === 'planned' && <Btn small title="Organisée" label="Visite organisée avec le client" onPress={() => setStatus('organized')} disabled={!mine} why="Seul l'auteur de la visite change son statut." />}
           {(v.status === 'planned' || v.status === 'organized') && <Btn small title="Démarrer" label="Démarrer la visite" onPress={() => setStatus('in_progress', { started_at: new Date().toISOString() })} disabled={!mine} why="Seul l'auteur de la visite change son statut." />}
           {v.status === 'in_progress' && <Btn small title="Fin du rendez-vous" onPress={() => visitNotes.length === 0 ? setConfirmEnd(true) : setStatus('done', { ended_at: new Date().toISOString() })} disabled={!mine} why="Seul l'auteur de la visite change son statut." />}
-          <View style={{ flex: 1 }} />
-          <Btn small title="✉" label="Envoyer par e-mail" align="right" onPress={() => setEmailSheet(true)} />
-          <Btn small danger title="🗑" label="Supprimer la visite" align="right" onPress={() => setConfirmDelete(true)} disabled={!canDeleteVisit(ctx.role as UserRole, mine) || todoCount > 0}
+          <View style={{ flexDirection: 'row', gap: 8, marginLeft: 'auto' }}>
+          <Btn small title="E-mail" label="Envoyer par e-mail" align="right" onPress={() => setEmailSheet(true)} />
+          <Btn small danger title="Supprimer" label="Supprimer la visite" align="right" onPress={() => setConfirmDelete(true)} disabled={!canDeleteVisit(ctx.role as UserRole, mine) || todoCount > 0}
             why={!canDeleteVisit(ctx.role as UserRole, mine) ? 'La suppression est réservée au visiteur auteur de la visite et au directeur.' : `Suppression impossible : ${todoCount} action${todoCount > 1 ? 's' : ''} à faire. Terminez-les ou annulez-les d'abord.`} />
+          </View>
         </View>
       </View>)}
     <EmailSheet visible={emailSheet} visitId={visitId} ctx={ctx} offline={offline} onClose={() => setEmailSheet(false)} />

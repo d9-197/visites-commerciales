@@ -228,7 +228,11 @@ const dialog = page => page.getByRole('dialog');
   // le client prévu n'est plus suggéré (visite déjà planifiée)
   await nav(page, 'Reporting'); await page.getByRole('tab', { name: 'Clients à visiter' }).click();
   await page.getByText(/Aucun client à signaler|Dupont SA|Atelier Roux|Import/).first().waitFor();
-  assert.equal(await page.getByRole('row', { name: /Quincaillerie Test/ }).count(), 0, 'client déjà planifié : plus suggéré');
+  await page.getByLabel(/Inclure les clients qui ont déjà une visite prévue/).waitFor();
+  assert.equal(await page.getByRole('row', { name: /Quincaillerie Test/ }).count() >= 1, true, 'case cochée par défaut : le client déjà planifié est listé');
+  await page.getByLabel(/Inclure les clients qui ont déjà une visite prévue/).uncheck();
+  await page.getByRole('row', { name: /Quincaillerie Test/ }).waitFor({ state: 'detached' });
+  await page.getByLabel(/Inclure les clients qui ont déjà une visite prévue/).check();
   // modification du rendez-vous
   await nav(page, 'Visites');
   await page.getByRole('row', { name: /Quincaillerie Test/ }).getByRole('button', { name: 'Préparer', exact: true }).click();
@@ -285,8 +289,9 @@ const dialog = page => page.getByRole('dialog');
   // 7. Reporting : indicateurs et export
   await nav(page, 'Reporting');
   await page.getByText('Visites effectuées', { exact: true }).waitFor();
-  await page.getByRole('heading', { name: 'Par visiteur' }).waitFor();
-  await page.getByRole('heading', { name: /Par département/ }).waitFor();                 // consolidation par branche
+  await page.getByRole('heading', { name: /Total par visiteur/ }).waitFor();
+  await page.getByRole('heading', { name: /Par département/ }).waitFor();
+  await page.getByRole('row').filter({ hasText: 'Visiteur' }).filter({ hasText: 'Commercial Un' }).first().waitFor();     // sous chaque département : ses visiteurs et leurs chiffres                 // consolidation par branche
   await page.getByRole('button', { name: 'Agence Grenoble' }).first().waitFor();
   await page.getByRole('button', { name: 'Replier le département Agence Lyon' }).click();            // repli aussi dans le reporting par branche
   await page.getByRole('row').filter({ hasText: 'Équipe Nord' }).waitFor({ state: 'detached' });
@@ -301,7 +306,10 @@ const dialog = page => page.getByRole('dialog');
   await shot(page, 'b7-reporting');
   // objectifs mensuels : définis par visiteur, repris par le reporting d'activité
   await page.getByRole('tab', { name: 'Objectifs mensuels' }).click();
-  await page.getByLabel('Objectif de Commercial Un').fill('4');
+  const thisMonth = new Intl.DateTimeFormat('fr-FR', { month: 'short', year: '2-digit' }).format(new Date());
+  await page.getByLabel(`Objectif de Commercial Un, ${thisMonth}`).fill('4');            // tableau : une colonne par mois
+  await page.getByRole('columnheader', { name: /Total/ }).waitFor();
+  assert.equal(await page.getByRole('columnheader').count() >= 14, true, '13 mois + visiteur + total');
   await page.getByRole('button', { name: /^Enregistrer/ }).click();
   await page.getByText('Objectifs enregistrés.').waitFor();
   await page.getByRole('tab', { name: 'Activité' }).click();
@@ -327,7 +335,7 @@ const dialog = page => page.getByRole('dialog');
   await login(mp, 'manager@exemple.invalid');
   assert.equal(await mp.getByRole('navigation').getByRole('link', { name: /Clients|Comptes/ }).count(), 0, 'le manager n\'a pas l\'administration');
   await mp.getByRole('heading', { name: "Reporting d'activité" }).waitFor();
-  assert.equal(await mp.getByRole('cell', { name: 'Commercial Deux' }).count() + await mp.getByRole('cell', { name: 'Commercial Un' }).count() >= 1, true);
+  assert.equal(await mp.getByRole('cell', { name: /Commercial (Deux|Un)/ }).count() >= 1, true);
   const bad = await mp.evaluate(async () => { const t = JSON.parse(sessionStorage.getItem('vb.tokens')); const r = await fetch('../api/back/v1/users', { headers: { authorization: `Bearer ${t.access_token}` } }); return r.status; });
   assert.equal(bad, 403, 'API des comptes interdite au manager');
   await c3.close();

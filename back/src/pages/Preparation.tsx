@@ -19,7 +19,7 @@ export function usePrep(me: Me, onChanged: () => void) {
 }
 
 export function Suggestions({ version, onFiche, onPlan }: { version: number; onFiche: (id: string) => void; onPlan: (c: R) => void }) {
-  const [days, setDays] = useState(60); const [user, setUser] = useState(''); const [incl, setIncl] = useState(false); const [clients, setClients] = useState<string[]>([]);
+  const [days, setDays] = useState(60); const [user, setUser] = useState(''); const [incl, setIncl] = useState(true); const [clients, setClients] = useState<string[]>([]);
   const users = useLoad(() => api<R>('prep/commerciaux'), []);
   const { data, error, loading } = useLoad(() => api<R>(`prep/suggestions?days=${days}&include_planned=${incl}${user ? `&user_id=${user}` : ''}${clients.length ? `&company_ids=${clients.join(',')}` : ''}`), [days, user, incl, clients, version]);
   return (

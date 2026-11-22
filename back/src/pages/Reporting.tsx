@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { api, download, type R } from '../api';
 import type { Me } from '../App';
 import { Alert, AuthorState, Badge, BranchSelect, Card, Empty, Field, Loading, useLoad, errMsg } from '../ui';
@@ -33,42 +33,63 @@ export function Reporting({ me, params }: { me: Me; params: URLSearchParams }) {
 }
 
 const monthOf = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+const addMonths = (m: string, n: number) => { const d = new Date(Number(m.slice(0, 4)), Number(m.slice(5, 7)) - 1 + n, 1); return monthOf(d); };
+const monthLabel = (m: string) => new Intl.DateTimeFormat('fr-FR', { month: 'short', year: '2-digit' }).format(new Date(Number(m.slice(0, 4)), Number(m.slice(5, 7)) - 1, 1));
 
-/** Objectif de visites par visiteur et par mois (visites effectuées ou dont le compte rendu est validé). */
+/** Objectifs de visites par visiteur : un tableau, une colonne par mois (par défaut les 2 mois précédents et les 10 suivants), modifiable en place. */
 function Targets({ canEdit }: { canEdit: boolean }) {
-  const [month, setMonth] = useState(monthOf(new Date()));
-  const { data, error, loading, reload } = useLoad(() => api<R>(`targets?month=${month}`), [month]);
+  const cur = monthOf(new Date());
+  const [from, setFrom] = useState(addMonths(cur, -2)); const [to, setTo] = useState(addMonths(cur, 10));
+  const [node, setNode] = useState(''); const [user, setUser] = useState('');
+  const branches = useLoad(() => api<R>('org/mine'), []);
+  const accessNodes: R[] = branches.data?.access ?? [];
+  const people = useLoad(() => api<R>('prep/commerciaux'), []);
+  const qs = `from=${from}&to=${to}${node ? `&node_id=${node}` : ''}${user ? `&user_id=${user}` : ''}`;
+  const { data, error, loading, reload } = useLoad(() => api<R>(`targets?${qs}`), [qs]);
   const [vals, setVals] = useState<Record<string, string>>({}); const [msg, setMsg] = useState<{ kind: 'ok' | 'error'; text: string }>(); const [busy, setBusy] = useState(false);
-  const rows: R[] = data?.users ?? [];
-  const cur = (u: R) => vals[u.user_id] ?? (u.target === null ? '' : String(u.target));
-  const dirty = rows.filter(u => cur(u) !== (u.target === null ? '' : String(u.target)));
-  const bad = dirty.some(u => cur(u) !== '' && !/^\d{1,4}$/.test(cur(u)));
+  const rows: R[] = data?.users ?? []; const months: string[] = data?.months ?? [];
+  const key = (u: string, m: string) => `${u}|${m}`;
+  const orig = (u: R, m: string) => (u.targets[m] === undefined ? '' : String(u.targets[m]));
+  const cell = (u: R, m: string) => vals[key(u.user_id, m)] ?? orig(u, m);
+  const dirty = rows.flatMap(u => months.filter(m => cell(u, m) !== orig(u, m)).map(m => ({ u, m })));
+  const bad = dirty.some(({ u, m }) => cell(u, m) !== '' && !/^\d{1,4}$/.test(cell(u, m)));
   const save = async () => {
     setBusy(true); setMsg(undefined);
-    try { await api('targets', { method: 'PUT', body: { month, targets: dirty.map(u => ({ user_id: u.user_id, target: cur(u) === '' ? null : Number(cur(u)) })) } }); setVals({}); reload(); setMsg({ kind: 'ok', text: 'Objectifs enregistrés.' }); }
+    try { await api('targets', { method: 'PUT', body: { targets: dirty.map(({ u, m }) => ({ user_id: u.user_id, month: m, target: cell(u, m) === '' ? null : Number(cell(u, m)) })) } }); setVals({}); reload(); setMsg({ kind: 'ok', text: 'Objectifs enregistrés.' }); }
     catch (e) { setMsg({ kind: 'error', text: errMsg(e) }); } finally { setBusy(false); }
   };
-  const copyPrev = async () => {
-    const d = new Date(`${month}-01T12:00:00`); d.setMonth(d.getMonth() - 1);
-    try { const p = await api<R>(`targets?month=${monthOf(d)}`); const next: Record<string, string> = {}; for (const u of p.users as R[]) if (u.target !== null) next[u.user_id] = String(u.target); setVals(next); } catch (e) { setMsg({ kind: 'error', text: errMsg(e) }); }
-  };
+  // Recopie la valeur d'un mois sur tous les mois suivants de la ligne (à enregistrer ensuite).
+  const fillRight = (u: R, m: string) => { const v = cell(u, m); setVals(cur2 => { const n = { ...cur2 }; for (const mm of months.filter(x => x > m)) n[key(u.user_id, mm)] = v; return n; }); };
+  const total = (u: R) => months.reduce((n, m) => n + (Number(cell(u, m)) || 0), 0);
   return (
     <>
-      <header className="page-head"><div><h1>Objectifs mensuels</h1><p className="muted">Nombre de visites à réaliser par visiteur et par mois. Le reporting d'activité compare les visites effectuées à ces objectifs lorsqu'ils sont définis.</p></div>
-        <div className="toolbar"><Field label="Mois"><input type="month" value={month} onChange={e => { setMonth(e.target.value); setVals({}); }} /></Field></div></header>
+      <header className="page-head"><div><h1>Objectifs mensuels</h1><p className="muted">Nombre de visites à réaliser par visiteur et par mois. Le reporting d'activité compare les visites effectuées à ces objectifs lorsqu'ils sont définis.</p></div></header>
       {(error || msg) && <Alert kind={msg?.kind ?? 'error'}>{msg?.text ?? error}</Alert>}
       <Card>
+        <div className="toolbar filters">
+          {accessNodes.length > 1 && <BranchSelect nodes={accessNodes as any} value={node} onChange={setNode} all="Tous mes départements" label="Département" />}
+          {(people.data?.users?.length ?? 0) > 1 && <select aria-label="Visiteur" value={user} onChange={e => setUser(e.target.value)}><option value="">Tous les visiteurs</option>{people.data!.users.map((u: R) => <option key={u.id} value={u.id}>{u.name}</option>)}</select>}
+          <label>De <input type="month" aria-label="Premier mois" value={from} max={to} onChange={e => e.target.value && setFrom(e.target.value)} /></label>
+          <label>à <input type="month" aria-label="Dernier mois" value={to} min={from} onChange={e => e.target.value && setTo(e.target.value)} /></label>
+          <button className="link" onClick={() => { setFrom(addMonths(cur, -2)); setTo(addMonths(cur, 10)); }}>2 mois précédents + 10 suivants</button>
+        </div>
         {loading && !data && <Loading />}
-        {data && (rows.length === 0 ? <Empty>Aucun visiteur dans votre périmètre.</Empty> : <>
-          <div className="scroll"><table className="num"><thead><tr><th>Visiteur</th><th>Objectif du mois</th><th>Visites effectuées</th><th>Atteinte</th></tr></thead><tbody>
-            {rows.map(u => { const t = u.target; const pct = t ? Math.round(u.done * 100 / t) : null; return (
-              <tr key={u.user_id}><td style={{ textAlign: 'left' }}>{u.name}<AuthorState status={u.status} role={u.role} /></td>
-                <td>{canEdit ? <input type="number" min={0} max={9999} style={{ width: 90 }} aria-label={`Objectif de ${u.name}`} value={cur(u)} onChange={e => setVals(v => ({ ...v, [u.user_id]: e.target.value }))} placeholder="—" /> : (t ?? '—')}</td>
-                <td>{u.done}</td><td>{pct === null ? '—' : <Badge tone={pct >= 100 ? 'green' : pct >= 60 ? 'amber' : 'red'}>{pct} %</Badge>}</td></tr>); })}
+        {data && (rows.length === 0 ? <Empty>Aucun visiteur ne correspond.</Empty> : <>
+          <div className="scroll"><table className="num targets"><thead><tr><th className="stick">Visiteur</th>{months.map(m => <th key={m} className={m === cur ? 'curmonth' : ''}>{monthLabel(m)}</th>)}<th>Total</th></tr></thead><tbody>
+            {rows.map(u => (
+              <tr key={u.user_id}><td className="stick" style={{ textAlign: 'left' }}>{u.name}<AuthorState status={u.status} role={u.role} /></td>
+                {months.map((m, mi) => { const done = u.done[m] ?? 0; const t = Number(cell(u, m)); return (
+                  <td key={m} className={`${m === cur ? 'curmonth' : ''}${cell(u, m) !== orig(u, m) ? ' edited' : ''}`}>
+                    {canEdit ? <input type="number" min={0} max={9999} aria-label={`Objectif de ${u.name}, ${monthLabel(m)}`} value={cell(u, m)} placeholder="—" onChange={e => setVals(v => ({ ...v, [key(u.user_id, m)]: e.target.value }))}
+                      onKeyDown={e => { if (e.key === 'Enter' && mi < months.length - 1) fillRight(u, m); }} title="Entrée : recopier sur les mois suivants" /> : (orig(u, m) || '—')}
+                    {done > 0 && <small className={`done ${t > 0 && done >= t ? 'ok' : ''}`}>{done} faite{done > 1 ? 's' : ''}</small>}
+                  </td>); })}
+                <td><strong>{total(u) || '—'}</strong></td></tr>))}
           </tbody></table></div>
           {canEdit && <div className="toolbar" style={{ marginTop: 12 }}>
             <button className="primary" disabled={busy || dirty.length === 0 || bad} title={bad ? 'Objectifs : nombres entiers de 0 à 9999 (vide : pas d\'objectif).' : dirty.length === 0 ? 'Aucune modification.' : undefined} onClick={() => void save()}>{busy ? 'Enregistrement…' : `Enregistrer${dirty.length ? ` (${dirty.length})` : ''}`}</button>
-            <button onClick={() => void copyPrev()} title="Reprend les objectifs du mois précédent (à enregistrer ensuite)">Reprendre le mois précédent</button>
+            {dirty.length > 0 && <button onClick={() => setVals({})}>Annuler les modifications</button>}
+            <span className="muted">Astuce : Entrée dans une case recopie sa valeur sur les mois suivants de la ligne. « n faites » : visites effectuées ou dont le compte rendu est validé.</span>
           </div>}
         </>)}
       </Card>
@@ -88,7 +109,16 @@ function Activity({ me }: { me: Me }) {
   const t = data?.totals; const c = data?.clients;
   const multi = (users.data?.users?.length ?? 0) > 1;
   // Par département : même arbre que dans Organisation (niveaux colorés, départements repliables) ; les totaux sont déjà consolidés.
-  const byNode: R[] = (data?.by_node ?? []).map((n: R) => ({ ...n, id: n.node_id }));
+  // Lignes de l'arbre : chaque département (chiffres consolidés avec ses sous-départements), suivi de ses visiteurs (leurs chiffres dans ce département), puis de ses sous-départements.
+  const [showUsers, setShowUsers] = useState(true);
+  const byNode: R[] = useMemo(() => {
+    const nodeUsers: R[] = data?.by_node_user ?? []; const out: R[] = [];
+    for (const n of (data?.by_node ?? []) as R[]) {
+      out.push({ ...n, id: n.node_id, kind: 'node' });
+      if (showUsers) for (const u of nodeUsers.filter(x => x.node_id === n.node_id)) out.push({ ...u, id: `u:${n.node_id}:${u.user_id ?? 'none'}`, depth: n.depth + 1, kind: 'user' });
+    }
+    return out;
+  }, [data, showUsers]);
   const treeInfo = useTree(byNode as any);
   const [collapsed, setCollapsed] = useCollapsed('vb.report.collapsed');
   const shown = visibleIndexes(byNode as any, collapsed);
@@ -127,20 +157,28 @@ function Activity({ me }: { me: Me }) {
               </tbody></table>)}
           </Card>
         </div>
-        {byNode.length > 1 && <Card title="Par département (consolidé avec les sous-départements)" actions={<CollapseAll nodes={byNode as any} infos={treeInfo} collapsed={collapsed} set={setCollapsed} />}>
-          <div className="scroll"><table className="num tree"><thead><tr><th>Département</th><th>Niveau</th><th>Membres</th><th>Prévues</th><th>Effectuées</th><th>Annulées</th><th>CR validés</th><th>CR à valider</th><th>CR en retard</th></tr></thead><tbody>
+        {byNode.length > 0 && <Card title="Par département et par visiteur" actions={<><label className="check"><input type="checkbox" checked={showUsers} onChange={e => setShowUsers(e.target.checked)} /> Afficher les visiteurs</label><CollapseAll nodes={byNode as any} infos={treeInfo} collapsed={collapsed} set={setCollapsed} /></>}>
+          <div className="scroll"><table className="num tree"><thead><tr><th>Département / visiteur</th><th>Niveau</th><th>Membres</th><th>Prévues</th><th>Effectuées</th><th>Annulées</th><th>CR validés</th><th>CR à valider</th><th>CR en retard</th></tr></thead><tbody>
             {shown.map(i => { const n = byNode[i]!; const f = treeInfo[i]!; const closed = f.subs > 0 && collapsed.has(n.id); return (
+              n.kind === 'user' ? (
+              <tr key={n.id} className={`lv lv${Math.min(f.rel, 5)} userrow`}>
+                <td className="treecell"><TreeCell rel={f.rel} info={f} name={n.name} open={false} closed={false} onToggle={() => {}}>
+                  {n.user_id ? <a className="nodename" href={`#/visites?user=${n.user_id}`}>{n.name}</a> : <a className="nodename" href="#/visites?user=none">{n.name}</a>}<AuthorState status={n.status} role={n.role} />
+                </TreeCell></td>
+                <td style={{ textAlign: 'left' }}><span className="muted">Visiteur</span></td>
+                <td /><td>{n.planned}</td><td>{n.done}</td><td>{n.cancelled}</td><td>{n.cr_validated}</td><td>{n.cr_pending}</td><td className={n.cr_late ? 'red' : ''}>{n.cr_late}</td></tr>
+              ) : (
               <tr key={n.id} className={`lv lv${Math.min(f.rel, 5)}`}>
                 <td className="treecell"><TreeCell rel={f.rel} info={f} name={n.name} open={f.subs > 0 && !closed} closed={closed} onToggle={() => { const c = new Set(collapsed); if (c.has(n.id)) c.delete(n.id); else c.add(n.id); setCollapsed(c); }}>
                   <button type="button" className="link nodename" onClick={() => setNode(n.node_id)} title="Descendre dans ce département">{n.name}</button>
                   {closed && <span className="badge grey" title={`${f.subs} sous-département${f.subs > 1 ? 's' : ''} replié${f.subs > 1 ? 's' : ''} (compris dans les totaux)`}>+{f.subs}</span>}
                 </TreeCell></td>
                 <td style={{ textAlign: 'left' }}><span className={`lvtag lv${Math.min(f.rel, 5)}`}>{levelName(f.rel)}</span></td>
-                <td>{n.members}</td><td>{n.planned}</td><td>{n.done}</td><td>{n.cancelled}</td><td>{n.cr_validated}</td><td>{n.cr_pending}</td><td className={n.cr_late ? 'red' : ''}>{n.cr_late}</td></tr>); })}
+                <td>{n.members}</td><td>{n.planned}</td><td>{n.done}</td><td>{n.cancelled}</td><td>{n.cr_validated}</td><td>{n.cr_pending}</td><td className={n.cr_late ? 'red' : ''}>{n.cr_late}</td></tr>)); })}
           </tbody></table></div>
-          <p className="muted">Chaque ligne cumule les visites du département et de ses sous-départements, y compris quand elles sont repliées ; cliquez sur le nom d'un département pour descendre dedans.</p>
+          <p className="muted">Une ligne de département cumule ses visites et celles de ses sous-départements (y compris repliés) ; les lignes de visiteurs donnent leurs chiffres dans ce seul département (leur total, objectifs compris, est dans « Total par visiteur »). Cliquez sur le nom d'un département pour descendre dedans.</p>
         </Card>}
-        <Card title="Par visiteur">
+        <Card title="Total par visiteur (tous départements)">
           {data.by_user.length === 0 ? <Empty>Aucun visiteur dans votre périmètre.</Empty> : (
             <div className="scroll"><table className="num"><thead><tr><th>Visiteur</th>{data.targets_defined && <th>Objectif</th>}{data.targets_defined && <th>Atteinte</th>}<th>Prévues</th><th>Effectuées</th><th>Annulées</th><th>CR validés</th><th>CR à valider</th><th>CR en retard</th><th>Délai CR (j)</th><th>Actions à faire</th><th>Actions en retard</th></tr></thead><tbody>
               {data.by_user.map((u: R) => <tr key={u.user_id}><td>{u.user_id ? <a href={`#/visites?user=${u.user_id}`}>{u.name}</a> : <a href="#/visites?user=none">{u.name}</a>}<AuthorState status={u.status} role={u.role} /></td>{data.targets_defined && <td>{u.target ?? '—'}</td>}{data.targets_defined && <td>{u.target ? <Badge tone={u.done >= u.target ? 'green' : u.done * 100 >= u.target * 60 ? 'amber' : 'red'}>{Math.round(u.done * 100 / u.target)} %</Badge> : '—'}</td>}<td>{u.planned}</td><td>{u.done}</td><td>{u.cancelled}</td><td>{u.cr_validated}</td><td>{u.cr_pending}</td>

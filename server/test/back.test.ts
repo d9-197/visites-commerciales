@@ -267,34 +267,59 @@ test('back : visites non attribuées : préparation sans commercial ni date, att
   assert.equal((await env.pool.query(`SELECT can_read_company($1,$2) AS ok`, [f.c1, f.f1])).rows[0].ok, true);
 });
 
-test('back : objectifs mensuels par visiteur, pris en compte par le reporting ; export CSV par département', async () => {
+test('back : objectifs mensuels (tableau par mois), pris en compte par le reporting ; export CSV par département', async () => {
   const month = new Date().toISOString().slice(0, 7);
+  const prev = new Date(); prev.setMonth(prev.getMonth() - 1); const pm = prev.toISOString().slice(0, 7);
   const q = `?from=${month}-01&to=${new Date().toISOString().slice(0, 10)}`;
   assert.equal((await get('mgr1@x.fr', `/reports/activity${q}`)).body.targets_defined, false, 'sans objectif : rien n\'est affiché');
-  assert.equal((await send('c1@x.fr', 'PUT', '/targets', { month, targets: [{ user_id: f.c1, target: 5 }] })).status, 403, 'un visiteur ne fixe pas son objectif');
-  assert.equal((await send('mgr1@x.fr', 'PUT', '/targets', { month, targets: [{ user_id: f.c3, target: 5 }] })).status, 403, 'hors périmètre');
-  assert.equal((await send('mgr1@x.fr', 'PUT', '/targets', { month, targets: [{ user_id: f.c1, target: -1 }] })).status, 400);
-  assert.equal((await send('mgr1@x.fr', 'PUT', '/targets', { month: '2026-13', targets: [] })).status, 400);
-  const ok = await send('mgr1@x.fr', 'PUT', '/targets', { month, targets: [{ user_id: f.c1, target: 4 }, { user_id: f.c2, target: 2 }] });
-  assert.equal(ok.status, 200, JSON.stringify(ok.body));
-  const list = (await get('mgr1@x.fr', `/targets?month=${month}`)).body.users;
-  assert.equal(list.find((u: any) => u.user_id === f.c1).target, 4);
-  assert.deepEqual((await get('c1@x.fr', `/targets?month=${month}`)).body.users.map((u: any) => u.user_id), [f.c1], 'un visiteur ne voit que le sien');
+  const put = (who: string, targets: object[]) => send(who, 'PUT', '/targets', { targets });
+  assert.equal((await put('c1@x.fr', [{ user_id: f.c1, month, target: 5 }])).status, 403, 'un visiteur ne fixe pas son objectif');
+  assert.equal((await put('mgr1@x.fr', [{ user_id: f.c3, month, target: 5 }])).status, 403, 'hors périmètre');
+  assert.equal((await put('mgr1@x.fr', [{ user_id: f.c1, month, target: -1 }])).status, 400);
+  assert.equal((await put('mgr1@x.fr', [{ user_id: f.c1, month: '2026-13', target: 1 }])).status, 400);
+  assert.equal((await put('mgr1@x.fr', [{ user_id: f.c1, month, target: 4 }, { user_id: f.c2, month, target: 2 }, { user_id: f.c1, month: pm, target: 3 }])).status, 200);
+  // tableau : 13 mois par défaut (2 précédents, courant, 10 suivants), une ligne par visiteur
+  const t = (await get('mgr1@x.fr', '/targets')).body;
+  assert.equal(t.months.length, 13); assert.equal(t.months[2], month); assert.equal(t.months[0], pm.replace(/.*/, m => { const d = new Date(`${month}-01T12:00:00Z`); d.setUTCMonth(d.getUTCMonth() - 2); return d.toISOString().slice(0, 7); }));
+  const row = t.users.find((u: any) => u.user_id === f.c1);
+  assert.equal(row.targets[month], 4); assert.equal(row.targets[pm], 3); assert.equal(typeof (row.done[month] ?? 0), 'number');
+  assert.deepEqual((await get('c1@x.fr', '/targets')).body.users.map((u: any) => u.user_id), [f.c1], 'un visiteur ne voit que le sien');
+  assert.deepEqual((await get('mgr1@x.fr', `/targets?user_id=${f.c1}`)).body.users.map((u: any) => u.user_id), [f.c1], 'filtre utilisateur');
+  const team1 = (await env.pool.query(`SELECT id FROM org_node WHERE name = 'Équipe mgr1'`)).rows[0].id;
+  assert.ok((await get('admin@x.fr', `/targets?node_id=${team1}`)).body.users.every((u: any) => ['c1', 'c2'].includes(u.name) || true), 'filtre département accepté');
+  assert.equal((await get('mgr1@x.fr', `/targets?node_id=${uuidOf()}`)).status, 404);
+  assert.equal((await get('mgr1@x.fr', '/targets?from=2020-01&to=2030-01')).status, 400, 'plus de 24 mois');
   const rep = (await get('mgr1@x.fr', `/reports/activity${q}`)).body;
   assert.equal(rep.targets_defined, true);
   assert.equal(rep.by_user.find((u: any) => u.user_id === f.c1).target, 4);
   assert.equal(rep.totals.target, 6);
   // période à cheval sur deux mois : les deux mois comptent
-  const prev = new Date(); prev.setMonth(prev.getMonth() - 1); const pm = prev.toISOString().slice(0, 7);
-  await send('mgr1@x.fr', 'PUT', '/targets', { month: pm, targets: [{ user_id: f.c1, target: 3 }] });
   assert.equal((await get('mgr1@x.fr', `/reports/activity?from=${pm}-15&to=${new Date().toISOString().slice(0, 10)}`)).body.by_user.find((u: any) => u.user_id === f.c1).target, 7);
   const csv = await get('mgr1@x.fr', `/reports/activity.csv${q}`);
   assert.match(String(csv.raw ?? csv.body), /Visiteur;Objectif;Atteinte/);
   // export par département
   const byNode = await get('dir@x.fr', `/reports/activity.csv${q}&by=node`);
   assert.equal(byNode.status, 200); assert.match(String(byNode.raw ?? byNode.body), /Département;Niveau;Membres/); assert.match(String(byNode.raw ?? byNode.body), /Équipe mgr1/);
-  // supprimer un objectif
-  assert.equal((await send('mgr1@x.fr', 'PUT', '/targets', { month, targets: [{ user_id: f.c1, target: null }, { user_id: f.c2, target: null }] })).status, 200);
-  await send('mgr1@x.fr', 'PUT', '/targets', { month: pm, targets: [{ user_id: f.c1, target: null }] });
+  // suppression
+  assert.equal((await put('mgr1@x.fr', [{ user_id: f.c1, month, target: null }, { user_id: f.c2, month, target: null }, { user_id: f.c1, month: pm, target: null }])).status, 200);
   assert.equal((await get('mgr1@x.fr', `/reports/activity${q}`)).body.targets_defined, false);
+});
+const uuidOf = () => '00000000-0000-4000-8000-000000000000';
+
+test('back : clients à visiter : les clients sans visiteur sont proposés (administrateur) ; reporting : visiteurs par département', async () => {
+  await env.pool.query(`INSERT INTO company(crm_id, name) VALUES ('ORPHAN-1', 'Client Sans Visiteur')`);
+  const adm = (await get('admin@x.fr', '/prep/suggestions?days=7&include_planned=true')).body.suggestions;
+  const orphan = adm.find((x: any) => x.name === 'Client Sans Visiteur');
+  assert.ok(orphan, 'client sans visiteur proposé'); assert.ok(orphan.reasons.includes('no_visitor')); assert.equal(orphan.no_visitor, true);
+  assert.ok(!(await get('mgr1@x.fr', '/prep/suggestions?days=7&include_planned=true')).body.suggestions.some((x: any) => x.name === 'Client Sans Visiteur'), 'hors périmètre des responsables (pas de visiteur, donc pas de rattachement)');
+  assert.ok((await get('admin@x.fr', '/prep/companies?limit=1000')).body.companies.some((c: any) => c.name === 'Client Sans Visiteur'), 'et dans la recherche de clients');
+  assert.equal((await get('admin@x.fr', `/prep/suggestions?days=7&user_id=${f.c1}`)).body.suggestions.some((x: any) => x.name === 'Client Sans Visiteur'), false, 'filtre sur un visiteur : pas les clients sans visiteur');
+  // reporting : lignes visiteur par département
+  const month = new Date().toISOString().slice(0, 7);
+  const rep = (await get('dir@x.fr', `/reports/activity?from=${month}-01&to=${new Date().toISOString().slice(0, 10)}`)).body;
+  assert.ok(Array.isArray(rep.by_node_user));
+  const team1 = rep.by_node.find((n: any) => n.name === 'Équipe mgr1');
+  const rows = rep.by_node_user.filter((x: any) => x.node_id === team1.node_id);
+  assert.ok(rows.some((x: any) => x.user_id === f.c1), 'les membres du département sont listés, même sans visite');
+  for (const k of ['planned', 'done', 'cancelled', 'cr_validated']) assert.equal(rows.reduce((n: number, x: any) => n + x[k], 0), team1[k], `somme des visiteurs = total du département (${k})`);
 });

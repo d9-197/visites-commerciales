@@ -140,6 +140,33 @@ export function reportsRouter(pool: Pool) {
       WHERE ($5::uuid[] IS NULL OR n.id = ANY($5))
       GROUP BY n.id ORDER BY org_path(n.id)`, P)).rows;
 
+    // Visiteurs par département : chiffres de chaque utilisateur DANS chaque département (visites dont le département est celui-ci, sans les sous-départements),
+    // pour que la somme des lignes d'un département + de ses sous-départements retombe sur le total consolidé. Les membres sans visite apparaissent à zéro.
+    const nodeUserStats = (await pool.query(`${VISITS}
+      SELECT vv.org_node_id AS node_id, vv.author_id AS user_id,
+        count(*) FILTER (WHERE vv.status IN ('planned','organized'))::int AS planned,
+        count(*) FILTER (WHERE vv.status = 'in_progress')::int AS in_progress,
+        count(*) FILTER (WHERE vv.status IN ('done','validated'))::int AS done,
+        count(*) FILTER (WHERE vv.status = 'cancelled')::int AS cancelled,
+        count(*) FILTER (WHERE r.status = 'validated')::int AS cr_validated,
+        count(*) FILTER (WHERE vv.status = 'done')::int AS cr_pending,
+        count(*) FILTER (WHERE vv.status = 'done' AND vv.ended_at < now() - make_interval(days => $4::int))::int AS cr_late
+      FROM vv LEFT JOIN visit_report r ON r.visit_id = vv.id WHERE ($5::uuid[] IS NULL OR vv.org_node_id = ANY($5)) GROUP BY vv.org_node_id, vv.author_id`, P)).rows;
+    const members = (await pool.query(
+      `SELECT uo.node_id, u.id AS user_id FROM user_org uo JOIN app_user u ON u.id = uo.user_id
+       WHERE u.status = 'active' AND u.role = 'commercial' AND NOT u.is_admin AND ($1::uuid[] IS NULL OR u.id = ANY($1)) AND ($2::uuid[] IS NULL OR uo.node_id = ANY($2))`, [assignIds, nodes])).rows;
+    const nuIds = [...new Set([...nodeUserStats.map(x => x.user_id as string | null), ...members.map(x => x.user_id as string)])].filter((x): x is string => !!x);
+    const nuUsers = nuIds.length ? (await pool.query(`SELECT id, display_name, role, status FROM app_user WHERE id = ANY($1::uuid[])`, [nuIds])).rows : [];
+    const zero = { planned: 0, in_progress: 0, done: 0, cancelled: 0, cr_validated: 0, cr_pending: 0, cr_late: 0 };
+    const nuKeys = new Map<string, { node_id: string; user_id: string | null }>();
+    for (const x of nodeUserStats) nuKeys.set(`${x.node_id}|${x.user_id ?? ''}`, { node_id: x.node_id, user_id: x.user_id });
+    for (const x of members) nuKeys.set(`${x.node_id}|${x.user_id}`, { node_id: x.node_id, user_id: x.user_id });
+    const byNodeUser = [...nuKeys.entries()].map(([k, v]) => {
+      const st = nodeUserStats.find(x => `${x.node_id}|${x.user_id ?? ''}` === k) ?? zero; const u = nuUsers.find(x => x.id === v.user_id);
+      return { node_id: v.node_id, user_id: v.user_id, name: v.user_id ? (u?.display_name ?? 'Inconnu') : 'Non attribuées', role: u?.role ?? null, status: u?.status ?? 'active',
+        planned: st.planned, in_progress: st.in_progress, done: st.done, cancelled: st.cancelled, cr_validated: st.cr_validated, cr_pending: st.cr_pending, cr_late: st.cr_late };
+    }).sort((a, b) => String(a.name).localeCompare(String(b.name), 'fr'));
+
     // Pipeline de préparation, indépendant de la période : visites encore à organiser / organisées, dont en retard et non attribuées.
     const pipeline = (await pool.query(
       `SELECT count(*) FILTER (WHERE v.status = 'planned')::int AS to_organize, count(*) FILTER (WHERE v.status = 'organized')::int AS organized,
@@ -148,7 +175,7 @@ export function reportsRouter(pool: Pool) {
        FROM visit v WHERE v.deleted_at IS NULL AND v.status IN ('planned','organized') AND ($1::uuid[] IS NULL OR v.author_id = ANY($1) OR v.author_id IS NULL)
          AND ($2::uuid[] IS NULL OR v.org_node_id = ANY($2) OR v.author_id = $3::uuid)`, [ids, nodes, viewer])).rows[0];
 
-    return { targets_defined: targets.length > 0, pipeline, period: { from, to }, scope: ids === null ? 'all' : 'team', node_id: nodeId ?? null, totals, by_user: byUser, by_node: byNode, by_week: byWeek, clients, late_reports: late };
+    return { targets_defined: targets.length > 0, pipeline, period: { from, to }, scope: ids === null ? 'all' : 'team', node_id: nodeId ?? null, totals, by_user: byUser, by_node: byNode, by_node_user: byNodeUser, by_week: byWeek, clients, late_reports: late };
   }
 
   r.get('/reports/activity', wrap(async (req, res) => { res.json(await activity(req)); }));

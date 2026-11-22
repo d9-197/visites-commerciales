@@ -91,8 +91,8 @@ t('GET','/reports/activity','/reports/activity',adm,label='admin')
 t('GET','/prep/commerciaux','/prep/commerciaux',mgr)
 t('GET','/targets','/targets',adm)
 uid=call('GET','/api/back/v1/prep/commerciaux',adm)[1]['users'][0]['id']
-t('PUT','/targets','/targets',adm,body={'month':'2026-11','targets':[{'user_id':uid,'target':5}]})
-t('GET','/targets','/targets?month=2026-11',adm,label='targets défini')
+t('PUT','/targets','/targets',adm,body={'targets':[{'user_id':uid,'month':'2026-11','target':5}]})
+t('GET','/targets','/targets?from=2026-10&to=2027-01',adm,label='targets défini')
 t('GET','/prep/companies','/prep/companies?q=D',adm)
 sug=t('GET','/prep/suggestions','/prep/suggestions?days=7&include_planned=true',adm)
 assert any(x['id']==company for x in sug['suggestions']), 'la fiche de préparation doit être exercée avec des visites'

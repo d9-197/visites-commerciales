@@ -11,5 +11,5 @@ export const STATUS_TONE: Record<string, string> = { planned: 'amber', organized
 export const TEMP: Record<string, string> = { cold: 'Froide', warm: 'Tiède', hot: 'Chaude' };
 export const ROLE: Record<string, string> = { commercial: 'Visiteur', manager: 'Responsable', directeur: 'Directeur' };
 export const REASON: Record<string, [string, string]> = {
-  never_visited: ['Jamais visité', 'amber'], stale: ['Sans visite récente', 'amber'], late_actions: ['Actions en retard', 'red'], hot_no_followup: ['Opportunité chaude sans suite', 'red'],
+  no_visitor: ['Sans visiteur', 'red'], never_visited: ['Jamais visité', 'amber'], stale: ['Sans visite récente', 'amber'], late_actions: ['Actions en retard', 'red'], hot_no_followup: ['Opportunité chaude sans suite', 'red'],
 };

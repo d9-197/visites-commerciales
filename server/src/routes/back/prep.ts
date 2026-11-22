@@ -37,7 +37,8 @@ export function prepRouter(pool: Pool) {
     const limit = Math.min(Math.max(Number(req.query.limit ?? 30) || 30, 1), 1000);     // la liste complète (filtres à choix multiple) : jusqu'à 1000
     const { rows } = await pool.query(
       `SELECT c.id, c.name, c.city, c.sector FROM company c WHERE c.status = 'active' AND c.deleted_at IS NULL AND ($2 = '' OR c.name ILIKE '%'||$2||'%' OR c.city ILIKE '%'||$2||'%')
-         AND EXISTS (SELECT 1 FROM company_assignment a WHERE a.company_id = c.id AND a.removed_at IS NULL AND ($1::uuid[] IS NULL OR a.user_id = ANY($1)))
+         AND (EXISTS (SELECT 1 FROM company_assignment a WHERE a.company_id = c.id AND a.removed_at IS NULL AND ($1::uuid[] IS NULL OR a.user_id = ANY($1)))
+              OR ($1::uuid[] IS NULL AND NOT EXISTS (SELECT 1 FROM company_assignment a WHERE a.company_id = c.id AND a.removed_at IS NULL)))     -- administrateur : aussi les clients sans visiteur
        ORDER BY c.name LIMIT $3`, [scope, q, limit]);
     res.json({ companies: rows });
   }));
@@ -98,9 +99,12 @@ export function prepRouter(pool: Pool) {
     const { rows } = await pool.query(
       `WITH cs AS (
          SELECT c.id, c.name, c.city, c.sector FROM company c
-         WHERE c.status = 'active' AND c.deleted_at IS NULL AND ($4::uuid[] IS NULL OR c.id = ANY($4)) AND EXISTS (SELECT 1 FROM company_assignment a WHERE a.company_id = c.id AND a.removed_at IS NULL AND ($1::uuid[] IS NULL OR a.user_id = ANY($1)))
+         WHERE c.status = 'active' AND c.deleted_at IS NULL AND ($4::uuid[] IS NULL OR c.id = ANY($4))
+           AND (EXISTS (SELECT 1 FROM company_assignment a WHERE a.company_id = c.id AND a.removed_at IS NULL AND ($1::uuid[] IS NULL OR a.user_id = ANY($1)))
+                OR ($1::uuid[] IS NULL AND NOT EXISTS (SELECT 1 FROM company_assignment a WHERE a.company_id = c.id AND a.removed_at IS NULL)))     -- administrateur sans filtre : aussi les clients sans visiteur
        )
        SELECT cs.id, cs.name, cs.city, cs.sector,
+         NOT EXISTS (SELECT 1 FROM company_assignment a WHERE a.company_id = cs.id AND a.removed_at IS NULL) AS no_visitor,
          (SELECT max(COALESCE(v.ended_at, v.started_at, v.planned_start)) FROM visit v WHERE v.company_id = cs.id AND v.deleted_at IS NULL AND ${NV} AND v.status IN ('done','validated','in_progress')) AS last_visit_at,
          (SELECT min(v.planned_start) FROM visit v WHERE v.company_id = cs.id AND v.deleted_at IS NULL AND ${NV} AND v.status IN ('planned','organized') AND v.planned_start >= now() - interval '1 day') AS next_visit_at,
          (SELECT count(*)::int FROM action_item x WHERE x.company_id = cs.id AND x.status = 'todo' AND x.due_date < current_date AND (x.visit_id IS NULL OR EXISTS (SELECT 1 FROM visit v WHERE v.id = x.visit_id AND ${NV}))) AS late_actions,
@@ -114,11 +118,12 @@ export function prepRouter(pool: Pool) {
     const out = rows.map(c => {
       const sinceDays = c.last_visit_at ? Math.floor((now - new Date(c.last_visit_at).getTime()) / 86400000) : null;
       const reasons: string[] = [];
+      if (c.no_visitor) reasons.push('no_visitor');
       if (sinceDays === null) reasons.push('never_visited');
       else if (sinceDays >= days) reasons.push('stale');
       if (c.late_actions > 0) reasons.push('late_actions');
       if (c.last_temperature === 'hot' && !c.next_visit_at) reasons.push('hot_no_followup');
-      const score = (reasons.includes('hot_no_followup') ? 40 : 0) + (c.late_actions > 0 ? 30 + Math.min(c.late_actions, 5) * 2 : 0) + (sinceDays === null ? 25 : sinceDays >= days ? Math.min(sinceDays, 365) / 10 : 0);
+      const score = (c.no_visitor ? 20 : 0) + (reasons.includes('hot_no_followup') ? 40 : 0) + (c.late_actions > 0 ? 30 + Math.min(c.late_actions, 5) * 2 : 0) + (sinceDays === null ? 25 : sinceDays >= days ? Math.min(sinceDays, 365) / 10 : 0);
       return { ...c, days_since_last_visit: sinceDays, reasons, score: Math.round(score * 10) / 10 };
     }).filter(c => c.reasons.length > 0 && (includePlanned || !c.next_visit_at)).sort((a, b) => b.score - a.score || a.name.localeCompare(b.name, 'fr')).slice(0, 200);
     res.json({ days, suggestions: out });
