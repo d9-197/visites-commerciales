@@ -61,28 +61,35 @@ test('note interne : écriture réservée aux commerciaux qui voient la visite ;
   assert.ok(tomb?.deleted_at, 'la suppression est transmise à la hiérarchie');
 });
 
-test('note interne : un autre commercial qui voit la visite (mode 1) peut écrire la sienne ; elle est lue par SA hiérarchie, pas par celle de l\'auteur de la visite', async () => {
+test('note interne : un autre commercial de la même branche qui voit la visite (mode 1) peut écrire la sienne ; lue par les managers de la branche, pas par un manager d\'une autre branche', async () => {
   await setMode(env.pool, 1);
+  await env.pool.query(`INSERT INTO company_assignment(company_id, user_id) VALUES ($1,$2) ON CONFLICT (company_id, user_id) DO UPDATE SET removed_at = NULL`, [f.f1, f.c2]);
   const id = uuid();
-  const r = (await (await f.login('c3@x.fr')).push([op('internal_note', 'create', id, { visit_id: visit, body: 'Vu par l\'équipe de c3' })])).body.results[0];
+  const r = (await (await f.login('c2@x.fr')).push([op('internal_note', 'create', id, { visit_id: visit, body: 'Vu par l\'équipe de la branche' })])).body.results[0];
   assert.equal(r.result, 'applied');
-  assert.equal((await internalOf('mgr2@x.fr')).some(n => n.id === id), true, 'manager de c3');
-  assert.equal((await internalOf('mgr1@x.fr')).some(n => n.id === id), false, 'pas le manager de c1');
-  assert.equal((await internalOf('c1@x.fr')).some(n => n.id === id), false, 'ni c1 lui-même');
-  assert.equal((await internalOf('dir@x.fr')).some(n => n.id === id), true, 'le directeur est au-dessus des deux');
+  assert.equal((await internalOf('mgr1@x.fr')).some(n => n.id === id), true, 'manager de la branche');
+  assert.equal((await internalOf('mgr2@x.fr')).some(n => n.id === id), false, 'pas le manager d\'une autre branche');
+  assert.equal((await internalOf('c1@x.fr')).some(n => n.id === id), false, 'ni c1 : pas l\'auteur');
+  assert.equal((await internalOf('dir@x.fr')).some(n => n.id === id), true, 'le directeur est au-dessus (consolidé)');
+  // un commercial d\'une autre branche ne voit pas la visite : il ne peut pas y écrire
+  const other = (await (await f.login('c3@x.fr')).push([op('internal_note', 'create', uuid(), { visit_id: visit, body: 'x' })])).body.results[0];
+  assert.equal(other.result, 'rejected'); assert.equal(other.code, 'not_found');
   await setMode(env.pool, 2);
+  await env.pool.query(`UPDATE company_assignment SET removed_at = now() WHERE company_id = $1 AND user_id = $2`, [f.f1, f.c2]);
 });
 
-test('note interne : changement de supérieur : l\'ancien manager reçoit un retrait d\'accès, le nouveau la reçoit', async () => {
+test('note interne : un manager retiré de la branche reçoit un retrait d\'accès ; le directeur au-dessus la garde', async () => {
   const c1 = await f.login('c1@x.fr'); const id = uuid();
   await c1.push([op('internal_note', 'create', id, { visit_id: visit, body: 'Pour la hiérarchie' })]);
   const mgr1 = await f.login('mgr1@x.fr'); const first = await mgr1.pullAll();
   assert.ok(first.changes.internal_notes?.some(n => n.id === id));
   const admin = await f.login('admin@x.fr');
-  assert.equal((await admin.call('PATCH', `/api/admin/v1/users/${f.c1}`, { manager_id: f.mgr2 })).status, 200);
+  const node = async (name: string) => (await env.pool.query(`SELECT id FROM org_node WHERE name = $1`, [name])).rows[0].id;
+  assert.equal((await admin.call('PATCH', `/api/admin/v1/users/${f.mgr1}`, { node_ids: [await node('Équipe mgr2')] })).status, 200);   // mgr1 quitte la branche
   const next = await mgr1.pullAll(first.cursor);
-  assert.ok(next.revocations.some(r => r.entity === 'internal_note' && r.entity_id === id), 'ancien manager : retrait');
-  assert.ok((await internalOf('mgr2@x.fr')).some(n => n.id === id), 'nouveau manager : lecture');
+  assert.ok(next.revocations.some(r => r.entity === 'internal_note' && r.entity_id === id), 'manager retiré : retrait');
+  assert.ok((await internalOf('dir@x.fr')).some(n => n.id === id), 'directeur : lecture conservée');
+  assert.equal((await admin.call('PATCH', `/api/admin/v1/users/${f.mgr1}`, { node_ids: [await node('Équipe mgr1')] })).status, 200);
 });
 
 test('notes durant visite : l\'auteur modifie ou supprime ; un autre ne le peut pas ; la suppression est transmise', async () => {
@@ -90,11 +97,11 @@ test('notes durant visite : l\'auteur modifie ou supprime ; un autre ne le peut 
   await c1.push([op('note', 'create', n, { visit_id: visit, kind: 'text', body: 'Brouillon' })]);
   assert.equal((await c1.push([op('note', 'update', n, { body: 'Version corrigée' })])).body.results[0].result, 'applied');
   const other = (await (await f.login('mgr2@x.fr')).push([op('note', 'update', n, { body: 'x' })])).body.results[0];
-  assert.equal(other.result, 'rejected');   // visite devenue visible à mgr2 par le changement de supérieur, mais la note n'est pas la sienne
+  assert.equal(other.result, 'rejected');   // mgr2 n'est pas dans la branche et la note n'est pas la sienne
   assert.ok(['forbidden', 'not_found'].includes(other.code));
   const body = (await env.pool.query(`SELECT body, deleted_at FROM visit_note WHERE id = $1`, [n])).rows[0];
   assert.equal(body.body, 'Version corrigée');
   assert.equal((await c1.push([op('note', 'delete', n, {})])).body.results[0].result, 'applied');
-  const tomb = ((await (await f.login('mgr2@x.fr')).pullAll()).changes.notes ?? []).find(x => x.id === n);
+  const tomb = ((await (await f.login('dir@x.fr')).pullAll()).changes.notes ?? []).find(x => x.id === n);
   assert.ok(tomb?.deleted_at, 'suppression transmise');
 });

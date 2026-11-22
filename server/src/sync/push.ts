@@ -36,7 +36,7 @@ function optional<T extends Record<string, z.ZodTypeAny>>(o: T): { [K in keyof T
 }
 
 const S = {
-  visitCreate: z.object({ company_id: uuid, ...optional(VISIT_FIELDS) }).strict(),
+  visitCreate: z.object({ company_id: uuid, org_node_id: uuid.optional(), ...optional(VISIT_FIELDS) }).strict(),
   visitUpdate: z.object(optional(VISIT_FIELDS)).strict(),
   reportCreate: z.object({ visit_id: uuid, language: z.enum(['fr', 'en', 'es', 'it', 'de', 'nl']), ...optional(REPORT_FIELDS) }).strict(),
   reportUpdate: z.object(optional(REPORT_FIELDS)).strict(),
@@ -183,7 +183,15 @@ async function handle(ctx: Ctx): Promise<Applied> {
         const p = parse(S.visitCreate, op.payload);
         if (p.status === 'validated') throw new Reject('validation_failed', 'Le statut « validée » est attribué automatiquement');
         await companyReadable(c, userId, p.company_id);
-        await insert(c, 'visit', { id, author_id: userId, ...p });
+        // Branche de la visite : un nœud de l'auteur ; choisi par lui quand il est affecté à plusieurs nœuds.
+        const nodes = (await c.query(`SELECT node_id FROM user_org WHERE user_id = $1`, [userId])).rows.map(r => r.node_id as string);
+        const { org_node_id: wanted, ...rest } = p;
+        let node = wanted;
+        if (node) { if (!nodes.includes(node)) throw new Reject('validation_failed', "Cette branche n'est pas l'une des vôtres"); }
+        else if (nodes.length === 1) node = nodes[0];
+        else if (nodes.length === 0) throw new Reject('no_org_node', "Vous n'êtes affecté à aucune branche : contactez l'administrateur");
+        else throw new Reject('org_node_required', 'Choisissez la branche de la visite');
+        await insert(c, 'visit', { id, author_id: userId, org_node_id: node, ...rest });
         return { version: 1, fields: Object.keys(p) };
       }
       if (op.op === 'update') {

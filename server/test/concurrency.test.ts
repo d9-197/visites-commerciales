@@ -12,7 +12,7 @@ test('scénario 9 : une transaction qui valide en retard n\'est pas manquée gr�
   await env.pool.query(`SELECT setval('change_seq', 1000)`);   // numéros assez grands pour que le recul du curseur joue
 
   const t1 = await env.pool.connect(), t2 = await env.pool.connect();
-  const ins = (c: typeof t1, id: string) => c.query(`INSERT INTO visit(id, company_id, author_id) VALUES ($1,$2,$3)`, [id, f.f1, f.c1]);
+  const ins = (c: typeof t1, id: string) => c.query(`INSERT INTO visit(id, company_id, author_id, org_node_id) VALUES ($1,$2,$3,(SELECT node_id FROM user_org WHERE user_id = $3 LIMIT 1))`, [id, f.f1, f.c1]);
   const late = uuid(), early = uuid();
   await t1.query('BEGIN'); await ins(t1, late);     // numéro 1001, validera en dernier
   await t2.query('BEGIN'); await ins(t2, early);    // numéro 1002, validera en premier
@@ -34,7 +34,7 @@ test('scénario 9, contrôle négatif : sans recouvrement, la ligne en retard es
   await env.pool.query(`SELECT setval('change_seq', 1000)`);
   const t1 = await env.pool.connect(), t2 = await env.pool.connect();
   const late = uuid(), early = uuid();
-  const ins = (c: typeof t1, id: string) => c.query(`INSERT INTO visit(id, company_id, author_id) VALUES ($1,$2,$3)`, [id, f.f1, f.c1]);
+  const ins = (c: typeof t1, id: string) => c.query(`INSERT INTO visit(id, company_id, author_id, org_node_id) VALUES ($1,$2,$3,(SELECT node_id FROM user_org WHERE user_id = $3 LIMIT 1))`, [id, f.f1, f.c1]);
   await t1.query('BEGIN'); await ins(t1, late);
   await t2.query('BEGIN'); await ins(t2, early); await t2.query('COMMIT');
   const first = await a.pullAll();
@@ -59,9 +59,12 @@ test('scénario 8 : 200 utilisateurs synchronisent en même temps, chacun ne voi
   const env = await setup(); envs.push(env);
   const N = 200;
   const users: { email: string; company: string }[] = [];
+  const root = (await env.pool.query(`INSERT INTO org_node(name) VALUES ('Entreprise') RETURNING id`)).rows[0].id as string;
+  await env.pool.query('SELECT rebuild_org()');
   for (let i = 0; i < N; i++) {
     const email = `u${i}@x.fr`;
     const id = await createUser(env.pool, email, 'commercial');
+    await env.pool.query(`INSERT INTO user_org(user_id, node_id) VALUES ($1,$2)`, [id, root]);
     users.push({ email, company: await createCompany(env.pool, `C-${i}`, [id]) });
   }
   const t0 = Date.now();

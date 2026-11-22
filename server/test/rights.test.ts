@@ -19,6 +19,9 @@ before(async () => {
 });
 after(async () => { await env.close(); });
 
+/** Affecte le client f1 à ces commerciaux (administration). */
+const assign = async (...users: string[]) => (await (await f.login('admin@x.fr')).call('PUT', `/api/admin/v1/companies/${f.f1}/assignments`, { user_ids: users })).body;
+
 const sees = async (email: string) => (await (await f.login(email)).pullAll()).changes.visits?.some(v => v.id === visit) ?? false;
 
 test('scénario 5, mode 2 : auteur et hiérarchie seulement', async () => {
@@ -28,12 +31,13 @@ test('scénario 5, mode 2 : auteur et hiérarchie seulement', async () => {
     { c1: true, c2: false, c3: false, mgr1: true, mgr2: false, dir: true, admin: false });
 });
 
-test('scénario 5, mode 1 : plus les commerciaux du client et leur hiérarchie', async () => {
+test('scénario 5, mode 1 : plus les commerciaux du client QUI SONT DANS LA MÊME BRANCHE ; pas ceux d\'une autre branche, même sur le même client', async () => {
   await setMode(env.pool, 1);
+  await assign(f.c1, f.c2, f.c3);      // c2 est dans la branche de c1, c3 dans une autre
   assert.deepEqual(
     { c1: await sees('c1@x.fr'), c2: await sees('c2@x.fr'), c3: await sees('c3@x.fr'), mgr1: await sees('mgr1@x.fr'), mgr2: await sees('mgr2@x.fr'), dir: await sees('dir@x.fr'), admin: await sees('admin@x.fr') },
-    { c1: true, c2: false, c3: true, mgr1: true, mgr2: true, dir: true, admin: false });
-  await setMode(env.pool, 2);
+    { c1: true, c2: true, c3: false, mgr1: true, mgr2: false, dir: true, admin: false });
+  await assign(f.c1, f.c3); await setMode(env.pool, 2);
 });
 
 test('scénario 6 : la note privée n\'apparaît que chez son auteur, jamais ailleurs ni dans l\'API CRM', async () => {
@@ -67,11 +71,15 @@ test('une note privée d\'un autre auteur est introuvable (404 logique), pas int
 
 test('un commercial ne modifie ni la visite ni les actions d\'un collègue', async () => {
   await setMode(env.pool, 1);
-  const c3 = await f.login('c3@x.fr');
+  await assign(f.c1, f.c2, f.c3);
+  const c3 = await f.login('c2@x.fr');       // collègue de la même branche, voit la visite en mode 1
   const r = await c3.push([op('visit', 'update', visit, { status: 'cancelled' }, 1), op('note', 'create', uuid(), { visit_id: visit, kind: 'text', body: 'x' })]);
   assert.equal(r.body.results[0].code, 'forbidden');
   assert.equal(r.body.results[1].code, 'forbidden');
-  await setMode(env.pool, 2);
+  // un commercial d'une autre branche ne la connaît même pas
+  const other = await (await f.login('c3@x.fr')).push([op('visit', 'update', visit, { status: 'cancelled' }, 1)]);
+  assert.equal(other.body.results[0].code, 'not_found');
+  await assign(f.c1, f.c3); await setMode(env.pool, 2);
 });
 
 test('le client de l\'API mobile ne peut pas appeler l\'administration ; un administrateur le peut', async () => {
@@ -84,13 +92,14 @@ test('le client de l\'API mobile ne peut pas appeler l\'administration ; un admi
 
 test('scénario 4 : retrait d\'une affectation : l\'appareil reçoit les retraits d\'accès', async () => {
   await setMode(env.pool, 1);
-  const c3 = await f.login('c3@x.fr');
+  await assign(f.c1, f.c2);
+  const c3 = await f.login('c2@x.fr');       // c2 : même branche que c1
   const first = await c3.pullAll();
   assert.ok(first.changes.visits?.some(v => v.id === visit));
   assert.ok(first.changes.companies?.some(c => c.id === f.f1));
 
   const admin = await f.login('admin@x.fr');
-  const r = await admin.call('PUT', `/api/admin/v1/companies/${f.f1}/assignments`, { user_ids: [f.c1] });   // c3 est retiré
+  const r = await admin.call('PUT', `/api/admin/v1/companies/${f.f1}/assignments`, { user_ids: [f.c1] });   // c2 est retiré
   assert.equal(r.status, 200);
   assert.ok(r.body.revoked > 0);
 
@@ -109,7 +118,8 @@ test('scénario 4 : retrait d\'une affectation : l\'appareil reçoit les retrait
 
 test('scénario 4 : changement de mode de visibilité : confirmation exigée, puis retraits d\'accès', async () => {
   await setMode(env.pool, 1);
-  const mgr2 = await f.login('mgr2@x.fr');
+  await assign(f.c1, f.c2, f.c3);
+  const mgr2 = await f.login('c2@x.fr');       // visible par le seul mode 1 (collègue de la branche)
   const first = await mgr2.pullAll();
   assert.ok(first.changes.visits?.some(v => v.id === visit));
 
@@ -126,20 +136,22 @@ test('scénario 4 : changement de mode de visibilité : confirmation exigée, pu
   assert.ok(next.revocations.some(x => x.entity === 'visit' && x.entity_id === visit));
 });
 
-test('changement de supérieur : la hiérarchie est reconstruite et les accès retirés', async () => {
-  const mgr1 = await f.login('mgr1@x.fr');
-  const first = await mgr1.pullAll();
-  assert.ok(first.changes.visits?.some(v => v.id === visit));
+test('changement de branche d\'un utilisateur : ses visites restent dans leur branche ; les nouvelles vont dans la nouvelle', async () => {
+  const mgr1 = await f.login('mgr1@x.fr'); const mgr2 = await f.login('mgr2@x.fr');
+  assert.ok((await mgr1.pullAll()).changes.visits?.some(v => v.id === visit));
+  const node = async (name: string) => (await env.pool.query(`SELECT id FROM org_node WHERE name = $1`, [name])).rows[0].id;
   const admin = await f.login('admin@x.fr');
-  const r = await admin.call('PATCH', `/api/admin/v1/users/${f.c1}`, { manager_id: f.mgr2 });   // c1 passe chez mgr2
+  const r = await admin.call('PATCH', `/api/admin/v1/users/${f.c1}`, { node_ids: [await node('Équipe mgr2')] });   // c1 passe chez mgr2
   assert.equal(r.status, 200);
-  const next = await mgr1.pullAll(first.cursor);
-  assert.ok(next.revocations.some(x => x.entity === 'visit' && x.entity_id === visit));
-  assert.ok((await (await f.login('mgr2@x.fr')).pullAll()).changes.visits?.some(v => v.id === visit));
-  // cycle refusé : mgr2 ne peut pas avoir pour supérieur son propre subordonné c1
-  const cyc = await admin.call('PATCH', `/api/admin/v1/users/${f.mgr2}`, { manager_id: f.c1 });
-  assert.equal(cyc.status, 409);
-  assert.equal(cyc.body.code, 'hierarchy_cycle');
+  // la visite déjà créée appartient toujours à l'ancienne branche
+  assert.ok((await mgr1.pullAll()).changes.visits?.some(v => v.id === visit), 'ancienne branche : visite conservée');
+  assert.equal((await mgr2.pullAll()).changes.visits?.some(v => v.id === visit) ?? false, false, 'nouvelle branche : pas les anciennes visites');
+  // une nouvelle visite de c1 appartient à la nouvelle branche
+  const v2 = uuid();
+  assert.equal((await (await f.login('c1@x.fr')).push([op('visit', 'create', v2, { company_id: f.f1, status: 'planned' })])).body.results[0].result, 'applied');
+  assert.ok((await mgr2.pullAll()).changes.visits?.some(v => v.id === v2), 'nouvelle branche : nouvelle visite');
+  assert.equal((await mgr1.pullAll()).changes.visits?.some(v => v.id === v2) ?? false, false, 'ancienne branche : pas la nouvelle visite');
+  await admin.call('PATCH', `/api/admin/v1/users/${f.c1}`, { node_ids: [await node('Équipe mgr1')] });
 });
 
 void M;

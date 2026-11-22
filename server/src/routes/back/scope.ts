@@ -14,6 +14,25 @@ export async function scopeUsers(pool: Pool, req: Request): Promise<string[] | n
   return ids.includes(a.id) ? ids : [a.id, ...ids];
 }
 
+/**
+ * Branches accessibles à l'utilisateur : ses nœuds et leurs descendants (administrateur : tout, `null`).
+ * Une visite n'est visible dans l'application back que si son auteur est l'utilisateur lui-même ou si elle appartient à l'une de ces branches
+ * (et, pour un commercial, `scopeUsers` le limite à lui-même).
+ */
+export async function scopeNodes(pool: Pool, req: Request): Promise<string[] | null> {
+  if (req.auth!.isAdmin) return null;
+  const { rows } = await pool.query(`SELECT DISTINCT c.descendant_id FROM user_org uo JOIN org_closure c ON c.ancestor_id = uo.node_id WHERE uo.user_id = $1`, [req.auth!.id]);
+  return rows.map(r => r.descendant_id as string);
+}
+
+/** Sous-arbre d'un nœud (le nœud et ses descendants), limité aux branches accessibles ; `null` si le nœud est inconnu ou hors périmètre. */
+export async function subtree(pool: Pool, nodeId: unknown, allowed: string[] | null): Promise<string[] | null> {
+  if (typeof nodeId !== 'string' || !/^[0-9a-f-]{36}$/i.test(nodeId)) return null;
+  if (allowed !== null && !allowed.includes(nodeId)) return null;
+  const ids = (await pool.query(`SELECT descendant_id FROM org_closure WHERE ancestor_id = $1`, [nodeId])).rows.map(r => r.descendant_id as string);
+  return ids.length ? (allowed === null ? ids : ids.filter(i => allowed.includes(i))) : null;
+}
+
 export const requireAdmin = (req: Request) => { if (!req.auth!.isAdmin) throw new HttpError(403, 'forbidden', 'Droit administrateur requis'); };
 
 export const inScope = (scope: string[] | null, userId: string) => scope === null || scope.includes(userId);

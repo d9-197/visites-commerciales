@@ -99,7 +99,8 @@ test(`[${kind}] moteur : une opération refusée retire la création locale`, as
 
 test(`[${kind}] moteur : retrait d\'accès côté serveur : l\'appareil supprime la donnée et ses dépendances`, async () => {
   await setMode(env.pool, 1);
-  const c3 = await device(kind, 'c3@x.fr', f.c3);
+  await env.pool.query(`INSERT INTO company_assignment(company_id, user_id) VALUES ($1,$2) ON CONFLICT (company_id, user_id) DO UPDATE SET removed_at = NULL`, [f.f1, f.c2]);
+  const c3 = await device(kind, 'c2@x.fr', f.c2);       // collègue de la même branche, qui voit la visite en mode 1
   const c1 = await device(kind, 'c1@x.fr', f.c1);
   await c1.engine.sync();
   const company = (await c1.store.list('companies'))[0]!;

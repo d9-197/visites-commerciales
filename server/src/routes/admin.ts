@@ -8,41 +8,40 @@ import { requireAuth, hashPassword } from '../auth.js';
 import { withRevocations, previewModeImpact } from '../sync/revocations.js';
 
 // Sous-ensemble de l'API d'administration, suffisant pour le prototype de synchro et de droits.
-// Écarts avec api/admin.openapi.yaml : la création d'utilisateur fixe directement le mot de passe (pas de lien d'activation).
+// Écarts avec api/admin.openapi.yaml : la création d'utilisateur fixe directement le mot de passe (pas de lien d'activation) ; le supérieur (manager_id) est remplacé par l'affectation aux nœuds de l'organisation (node_ids).
 export function adminRouter(pool: Pool, cfg: Config) {
   const r = express.Router();
   r.use(requireAuth(pool, cfg, { admin: true }));
 
+  // Comptes : affectation aux nœuds de l'organisation (voir aussi /api/back/v1/users, plus complet).
   r.post('/users', wrap(async (req, res) => {
     const b = z.object({
       email: z.string().email(), display_name: z.string(), role: z.enum(['commercial', 'manager', 'directeur']), password: z.string().min(12),
-      is_admin: z.boolean().optional(), manager_id: z.string().uuid().optional(),
+      is_admin: z.boolean().optional(), node_ids: z.array(z.string().uuid()).optional(),
     }).safeParse(req.body);
     if (!b.success) throw new HttpError(400, 'validation_failed', 'Requête invalide');
     const d = b.data;
     const u = await tx(pool, async c => {
       const row = (await c.query(
-        `INSERT INTO app_user(email, display_name, role, is_admin, manager_id, password_hash) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id, email, display_name, role, manager_id`,
-        [d.email, d.display_name, d.role, d.is_admin ?? false, d.manager_id ?? null, await hashPassword(d.password)])).rows[0];
+        `INSERT INTO app_user(email, display_name, role, is_admin, password_hash) VALUES ($1,$2,$3,$4,$5) RETURNING id, email, display_name, role`,
+        [d.email, d.display_name, d.role, d.is_admin ?? false, await hashPassword(d.password)])).rows[0];
+      for (const n of new Set(d.node_ids ?? [])) await c.query(`INSERT INTO user_org(user_id, node_id) VALUES ($1,$2)`, [row.id, n]);
       await c.query('SELECT rebuild_hierarchy()');
       return row;
-    }).catch(e => { if (e.code === '23505') throw new HttpError(409, 'email_taken', 'E-mail déjà utilisé'); throw e; });
+    }).catch(e => { if (e.code === '23505') throw new HttpError(409, 'email_taken', 'E-mail déjà utilisé'); if (e.code === '23503') throw new HttpError(404, 'not_found', 'Branche inconnue'); throw e; });
     res.status(201).json({ user: u });
   }));
 
   r.patch('/users/:id', wrap(async (req, res) => {
-    const b = z.object({ manager_id: z.string().uuid().nullable() }).safeParse(req.body);
+    const b = z.object({ node_ids: z.array(z.string().uuid()) }).safeParse(req.body);
     if (!b.success) throw new HttpError(400, 'validation_failed', 'Requête invalide');
     const out = await tx(pool, c => withRevocations(c, async () => {
       const cur = (await c.query(`SELECT id FROM app_user WHERE id = $1`, [req.params.id])).rows[0];
       if (!cur) throw new HttpError(404, 'not_found', 'Utilisateur inconnu');
-      if (b.data.manager_id) {
-        const cycle = (await c.query(`SELECT 1 FROM user_hierarchy WHERE ancestor_id = $1 AND descendant_id = $2`, [req.params.id, b.data.manager_id])).rows[0];
-        if (cycle) throw new HttpError(409, 'hierarchy_cycle', 'Le supérieur ne peut pas être un subordonné');
-      }
-      await c.query(`UPDATE app_user SET manager_id = $2 WHERE id = $1`, [req.params.id, b.data.manager_id]);
+      await c.query(`DELETE FROM user_org WHERE user_id = $1`, [req.params.id]);
+      for (const n of new Set(b.data.node_ids)) await c.query(`INSERT INTO user_org(user_id, node_id) VALUES ($1,$2)`, [req.params.id, n]);
       await c.query('SELECT rebuild_hierarchy()');
-    }));
+    })).catch(e => { if (e.code === '23503') throw new HttpError(404, 'not_found', 'Branche inconnue'); throw e; });
     res.json({ id: req.params.id, revoked: out.revoked });
   }));
 

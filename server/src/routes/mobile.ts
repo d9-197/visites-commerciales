@@ -104,10 +104,12 @@ export function mobileRouter(pool: Pool, cfg: Config, ai?: AiServices, mail?: Ma
 
   r.get('/me', auth, wrap(async (req, res) => {
     const u = (await pool.query(`SELECT id, display_name, email, role, ui_language, dictation_language FROM app_user WHERE id = $1`, [req.auth!.id])).rows[0];
+    // Branches de l'utilisateur (une visite se crée dans l'une d'elles).
+    const nodes = (await pool.query(`SELECT n.id, n.name, org_path(n.id) AS path FROM user_org uo JOIN org_node n ON n.id = uo.node_id WHERE uo.user_id = $1 ORDER BY org_path(n.id)`, [req.auth!.id])).rows;
     const st = Object.fromEntries((await pool.query(`SELECT key, value FROM app_setting`)).rows.map(r => [r.key, r.value]));
     const langs = (await pool.query(`SELECT code FROM language WHERE enabled`)).rows.map(r => r.code);
     res.json({
-      ...u, enabled_languages: langs,
+      ...u, nodes, enabled_languages: langs,
       settings: { offline_window_days: Number(st.offline_window_days), audio_retention_days: Number(st.audio_retention_days) },
       min_app_version: cfg.minAppVersion, server_time: new Date().toISOString(),
     });
@@ -234,7 +236,7 @@ export function mobileRouter(pool: Pool, cfg: Config, ai?: AiServices, mail?: Ma
     const me = (await pool.query(`SELECT id, email, display_name, role FROM app_user WHERE id = $1`, [userId])).rows[0];
     const chain = (await pool.query(
       `SELECT u.id, u.email, u.display_name, u.role FROM user_hierarchy h JOIN app_user u ON u.id = h.ancestor_id
-       WHERE h.descendant_id = $1 AND h.ancestor_id <> $1 AND u.status = 'active' ORDER BY h.depth`, [userId])).rows;
+       WHERE h.descendant_id = $1 AND h.ancestor_id <> $1 AND u.status = 'active' AND can_read_visit(u.id, $2) ORDER BY h.depth`, [userId, visitId])).rows;
     return { v, me, chain };
   }
 

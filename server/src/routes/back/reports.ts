@@ -3,7 +3,7 @@ import type { Pool } from '../../db.js';
 import { wrap } from '../../errors.js';
 import { REPORT_LATE_DAYS } from '@visites/sync-core';
 import { toCsv } from '../../csv.js';
-import { scopeUsers, day, inScope } from './scope.js';
+import { scopeUsers, scopeNodes, subtree, day, inScope } from './scope.js';
 import { HttpError } from '../../errors.js';
 
 const addDays = (d: string, n: number) => new Date(Date.parse(d) + n * 86400000).toISOString().slice(0, 10);
@@ -21,17 +21,30 @@ export function reportsRouter(pool: Pool) {
     const userId = typeof req.query.user_id === 'string' ? req.query.user_id : undefined;
     if (userId && !inScope(scope, userId)) throw new HttpError(404, 'not_found', 'Utilisateur hors de votre périmètre');
     const ids = userId ? [userId] : scope;     // null = tout
-    const P = [ids, from, addDays(to, 1), REPORT_LATE_DAYS];
+    // Branches : celles de l'utilisateur et leurs descendantes ; `node_id` descend dans une branche (consolidée avec ses sous-branches).
+    const allowedNodes = await scopeNodes(pool, req);
+    const nodeId = typeof req.query.node_id === 'string' && req.query.node_id ? req.query.node_id : undefined;
+    let nodes = allowedNodes;
+    if (nodeId) {
+      const sub = await subtree(pool, nodeId, allowedNodes);
+      if (!sub) throw new HttpError(404, 'not_found', 'Branche hors de votre périmètre');
+      nodes = sub;
+    }
+    const viewer = nodeId ? null : req.auth!.id;     // ses propres visites comptent toujours, sauf quand on regarde une branche précise
+    const P = [ids, from, addDays(to, 1), REPORT_LATE_DAYS, nodes, viewer];
 
     // Visites de la période : date de référence = fin du rendez-vous, sinon début, sinon date prévue.
     const VISITS = `WITH vv AS (
-      SELECT v.id, v.author_id, v.company_id, v.status, v.ended_at, COALESCE(v.ended_at, v.started_at, v.planned_start) AS ref
+      SELECT v.id, v.author_id, v.company_id, v.org_node_id, v.status, v.ended_at, COALESCE(v.ended_at, v.started_at, v.planned_start) AS ref
       FROM visit v WHERE v.deleted_at IS NULL AND v.status <> 'deleted' AND ($1::uuid[] IS NULL OR v.author_id = ANY($1))
+        AND ($4::int IS NOT NULL) AND ($5::uuid[] IS NULL OR v.org_node_id = ANY($5) OR v.author_id = $6::uuid)
         AND COALESCE(v.ended_at, v.started_at, v.planned_start) >= $2::date AND COALESCE(v.ended_at, v.started_at, v.planned_start) < $3::date)`;
 
     const users = (await pool.query(
       `SELECT u.id, u.display_name, u.role FROM app_user u WHERE u.status = 'active' AND u.role = 'commercial' AND ($1::uuid[] IS NULL OR u.id = ANY($1))
-         AND (NOT u.is_admin OR EXISTS (SELECT 1 FROM visit v WHERE v.author_id = u.id) OR EXISTS (SELECT 1 FROM company_assignment a WHERE a.user_id = u.id AND a.removed_at IS NULL)) ORDER BY u.display_name`, [ids])).rows;
+         AND (NOT u.is_admin OR EXISTS (SELECT 1 FROM visit v WHERE v.author_id = u.id) OR EXISTS (SELECT 1 FROM company_assignment a WHERE a.user_id = u.id AND a.removed_at IS NULL))
+         AND ($2::uuid[] IS NULL OR EXISTS (SELECT 1 FROM user_org uo WHERE uo.user_id = u.id AND uo.node_id = ANY($2)))
+       ORDER BY u.display_name`, [ids, nodeId ? nodes : null])).rows;
 
     const perUser = (await pool.query(`${VISITS}
       SELECT vv.author_id AS user_id,
@@ -50,7 +63,9 @@ export function reportsRouter(pool: Pool) {
         count(*) FILTER (WHERE a.status = 'todo')::int AS todo,
         count(*) FILTER (WHERE a.status = 'todo' AND a.due_date < current_date)::int AS late,
         count(*) FILTER (WHERE a.status = 'done' AND a.completed_at >= $2::date AND a.completed_at < $3::date)::int AS done_in_period
-       FROM action_item a WHERE ($1::uuid[] IS NULL OR a.owner_id = ANY($1)) GROUP BY a.owner_id`, [ids, from, addDays(to, 1)])).rows;
+       FROM action_item a LEFT JOIN visit v ON v.id = a.visit_id
+       WHERE ($1::uuid[] IS NULL OR a.owner_id = ANY($1)) AND (v.id IS NULL OR $4::uuid[] IS NULL OR v.org_node_id = ANY($4) OR v.author_id = $5::uuid)
+       GROUP BY a.owner_id`, [ids, from, addDays(to, 1), nodes, viewer])).rows;
 
     const byUser = users.map(u => {
       const v = perUser.find(x => x.user_id === u.id) ?? {}; const a = actions.find(x => x.user_id === u.id) ?? {};
@@ -67,7 +82,7 @@ export function reportsRouter(pool: Pool) {
     };
 
     const byWeek = (await pool.query(`${VISITS}
-      SELECT to_char(date_trunc('week', vv.ref), 'YYYY-MM-DD') AS week, count(*)::int AS done FROM vv WHERE vv.status IN ('done','validated') GROUP BY 1 ORDER BY 1`, P.slice(0, 3))).rows;
+      SELECT to_char(date_trunc('week', vv.ref), 'YYYY-MM-DD') AS week, count(*)::int AS done FROM vv WHERE vv.status IN ('done','validated') GROUP BY 1 ORDER BY 1`, P)).rows;
 
     // Clients du périmètre (affectés à au moins un utilisateur du périmètre) : visités dans la période / sans visite depuis 90 jours.
     const clients = (await pool.query(
@@ -75,19 +90,41 @@ export function reportsRouter(pool: Pool) {
                    WHERE c.status = 'active' AND c.deleted_at IS NULL AND ($1::uuid[] IS NULL OR a.user_id = ANY($1)))
        SELECT count(*)::int AS total,
          count(*) FILTER (WHERE EXISTS (SELECT 1 FROM visit v WHERE v.company_id = cs.id AND v.deleted_at IS NULL AND v.status IN ('done','validated','in_progress')
+              AND ($4::uuid[] IS NULL OR v.org_node_id = ANY($4) OR v.author_id = $5::uuid)
               AND COALESCE(v.ended_at, v.started_at, v.planned_start) >= $2::date AND COALESCE(v.ended_at, v.started_at, v.planned_start) < $3::date))::int AS visited,
          count(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM visit v WHERE v.company_id = cs.id AND v.deleted_at IS NULL AND v.status IN ('done','validated','in_progress')
+              AND ($4::uuid[] IS NULL OR v.org_node_id = ANY($4) OR v.author_id = $5::uuid)
               AND COALESCE(v.ended_at, v.started_at, v.planned_start) >= now() - interval '90 days'))::int AS not_visited_90d
-       FROM cs`, [ids, from, addDays(to, 1)])).rows[0];
+       FROM cs`, [ids, from, addDays(to, 1), nodes, viewer])).rows[0];
 
     const late = (await pool.query(
       `SELECT v.id AS visit_id, c.name AS company, u.display_name AS author, v.ended_at,
               floor(extract(epoch FROM (now() - v.ended_at)) / 86400)::int AS days
        FROM visit v JOIN company c ON c.id = v.company_id JOIN app_user u ON u.id = v.author_id
        WHERE v.status = 'done' AND v.deleted_at IS NULL AND v.ended_at < now() - make_interval(days => $2::int) AND ($1::uuid[] IS NULL OR v.author_id = ANY($1))
-       ORDER BY v.ended_at LIMIT 50`, [ids, REPORT_LATE_DAYS])).rows;
+         AND ($3::uuid[] IS NULL OR v.org_node_id = ANY($3) OR v.author_id = $4::uuid)
+       ORDER BY v.ended_at LIMIT 50`, [ids, REPORT_LATE_DAYS, nodes, viewer])).rows;
 
-    return { period: { from, to }, scope: ids === null ? 'all' : 'team', totals, by_user: byUser, by_week: byWeek, clients, late_reports: late };
+    // Consolidation par branche : chaque nœud cumule ses visites et celles de ses sous-branches (celles que l'utilisateur peut voir).
+    const byNode = (await pool.query(`${VISITS}
+      SELECT n.id AS node_id, n.parent_id, n.name, org_path(n.id) AS path,
+        (SELECT max(c2.depth) FROM org_closure c2 WHERE c2.descendant_id = n.id)::int AS depth,
+        (SELECT count(*)::int FROM user_org uo WHERE uo.node_id = n.id) AS members,
+        count(vv.id) FILTER (WHERE vv.status IN ('planned','organized'))::int AS planned,
+        count(vv.id) FILTER (WHERE vv.status = 'in_progress')::int AS in_progress,
+        count(vv.id) FILTER (WHERE vv.status IN ('done','validated'))::int AS done,
+        count(vv.id) FILTER (WHERE vv.status = 'cancelled')::int AS cancelled,
+        count(vv.id) FILTER (WHERE r.status = 'validated')::int AS cr_validated,
+        count(vv.id) FILTER (WHERE vv.status = 'done')::int AS cr_pending,
+        count(vv.id) FILTER (WHERE vv.status = 'done' AND vv.ended_at < now() - make_interval(days => $4::int))::int AS cr_late
+      FROM org_node n
+      LEFT JOIN org_closure c ON c.ancestor_id = n.id
+      LEFT JOIN vv ON vv.org_node_id = c.descendant_id
+      LEFT JOIN visit_report r ON r.visit_id = vv.id
+      WHERE ($5::uuid[] IS NULL OR n.id = ANY($5))
+      GROUP BY n.id ORDER BY org_path(n.id)`, P)).rows;
+
+    return { period: { from, to }, scope: ids === null ? 'all' : 'team', node_id: nodeId ?? null, totals, by_user: byUser, by_node: byNode, by_week: byWeek, clients, late_reports: late };
   }
 
   r.get('/reports/activity', wrap(async (req, res) => { res.json(await activity(req)); }));

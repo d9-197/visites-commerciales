@@ -37,6 +37,14 @@ export async function setup(over: Partial<Config> = {}, appOpts: Parameters<type
   };
 }
 
+/** Rattache un utilisateur à la racine de l'organisation (créée au besoin) : pour les tests qui créent des utilisateurs hors de la fixture. */
+export async function joinRoot(pool: Pool, userId: string) {
+  let root = (await pool.query(`SELECT id FROM org_node WHERE parent_id IS NULL LIMIT 1`)).rows[0]?.id;
+  if (!root) { root = (await pool.query(`INSERT INTO org_node(name) VALUES ('Entreprise') RETURNING id`)).rows[0].id; await pool.query('SELECT rebuild_org()'); }
+  await pool.query(`INSERT INTO user_org(user_id, node_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [userId, root]);
+  await pool.query('SELECT rebuild_hierarchy()');
+}
+
 export const PASSWORD = 'mot-de-passe-de-test-12';
 let hashed: string | undefined;
 
@@ -126,6 +134,7 @@ export async function fixture(env: TestEnv) {
   const c2 = await createUser(pool, 'c2@x.fr', 'commercial', mgr1);
   const c3 = await createUser(pool, 'c3@x.fr', 'commercial', mgr2);
   const admin = await createUser(pool, 'admin@x.fr', 'commercial', undefined, true);
+  await pool.query('SELECT convert_managers_to_org()');   // organisation arborescente équivalente à la hiérarchie : une équipe par manager, la direction au-dessus
   const f1 = await createCompany(pool, 'CRM-F1', [c1, c3], 'Dupont SA');
   const contact = await createContact(pool, f1, 'CT-1');
   const login = async (email: string, deviceId?: string) => { const a = new Api(base); const r = await a.login(email, PASSWORD, deviceId); if (r.status !== 200) throw new Error(`login ${email}: ${r.status}`); return a; };

@@ -32,13 +32,14 @@ test('adresse, visite « à organiser » : toute personne qui voit la visite peu
 });
 
 test('adresse, visite organisée : les commerciaux seulement ; manager et directeur refusés', async () => {
-  await setMode(env.pool, 1);                                     // mode 1 : c3, affecté au client, voit la visite
+  await setMode(env.pool, 1);                                     // mode 1 : c2, de la même branche et affecté au client, voit la visite
+  await env.pool.query(`INSERT INTO company_assignment(company_id, user_id) VALUES ($1,$2) ON CONFLICT (company_id, user_id) DO UPDATE SET removed_at = NULL`, [f.f1, f.c2]);
   const { v } = await newVisit();
   const org = await upd('c1@x.fr', v, { status: 'organized' });
   assert.equal(org.result, 'applied');
   assert.equal((await upd('mgr1@x.fr', v, { location_text: 'par le manager' }, 2)).code, 'locked_status');
   assert.equal((await upd('dir@x.fr', v, { location_text: 'par le directeur' }, 2)).code, 'locked_status');
-  const byCommercial = await upd('c3@x.fr', v, { location_text: 'par un autre commercial du client' }, 2);
+  const byCommercial = await upd('c2@x.fr', v, { location_text: 'par un autre commercial du client' }, 2);
   assert.equal(byCommercial.result, 'applied');
   assert.equal((await upd('c1@x.fr', v, { location_text: 'par l\'auteur' }, 3)).result, 'applied');
   await setMode(env.pool, 2);
@@ -202,7 +203,7 @@ test('suppression : auteur commercial ou directeur ; refus manager et autre comm
   // l'auteur supprime sa visite
   const { a, v } = await newVisit();
   assert.equal((await upd('mgr1@x.fr', v, { status: 'deleted' })).code, 'forbidden');
-  assert.equal((await upd('c3@x.fr', v, { status: 'deleted' })).code, 'forbidden');
+  assert.equal((await upd('c3@x.fr', v, { status: 'deleted' })).code, 'not_found', 'autre branche : la visite est inconnue');
   const del = await upd('c1@x.fr', v, { status: 'deleted' });
   assert.equal(del.result, 'applied');
   // la visite supprimée reste lisible (synchronisée) et ne bouge plus
@@ -323,6 +324,7 @@ test('migration : une base existante reçoit le statut « organisée » et l\'hi
   try {
     assert.deepEqual(await migrate(pool), [], 'base vide : schéma complet, migrations marquées appliquées');
     // on fait revenir la base à l'état d'avant la migration 001, avec une visite existante
+    await pool.query(`ALTER TABLE visit DROP COLUMN org_node_id; DROP TABLE user_org; DROP TABLE org_closure; DROP TABLE org_node CASCADE`);   // avant l'organisation (009)
     await pool.query(`ALTER TABLE visit_report DROP COLUMN draft_actions; DROP FUNCTION can_read_internal_note(uuid, uuid); DROP TABLE internal_note; DROP VIEW crm_visit_history; DROP TABLE visit_history; DELETE FROM schema_migrations;
       ALTER TABLE visit DROP CONSTRAINT visit_status_check;
       ALTER TABLE visit ADD CONSTRAINT visit_status_check CHECK (status IN ('planned','in_progress','done','cancelled'))`);
@@ -331,8 +333,12 @@ test('migration : une base existante reçoit le statut « organisée » et l\'hi
     await pool.query(`INSERT INTO visit(id, company_id, author_id, location_text) VALUES ($1,$2,$3,'ancienne')`, [uuid(), co, u]);
     await assert.rejects(pool.query(`UPDATE visit SET status = 'organized'`), /visit_status_check/);
 
-    assert.deepEqual(await migrate(pool), ['001_visite_organisee_et_historique.sql', '002_visite_validee.sql', '003_notes_internes.sql', '004_actions_depuis_compte_rendu.sql', '005_visite_supprimee.sql', '006_regles_compte_rendu.sql', '007_envoi_email.sql', '008_back_office.sql']);
+    assert.deepEqual(await migrate(pool), ['001_visite_organisee_et_historique.sql', '002_visite_validee.sql', '003_notes_internes.sql', '004_actions_depuis_compte_rendu.sql', '005_visite_supprimee.sql', '006_regles_compte_rendu.sql', '007_envoi_email.sql', '008_back_office.sql', '009_organisation.sql']);
     await pool.query(`UPDATE visit SET status = 'organized'`);                    // maintenant accepté
+    // 009 : l'ancienne hiérarchie est convertie en organisation ; la visite existante est rattachée à la branche de son auteur
+    const mv = (await pool.query(`SELECT org_path(v.org_node_id) AS path FROM visit v`)).rows[0];
+    assert.match(mv.path, /^Entreprise › Équipe M$/);
+    assert.equal((await pool.query(`SELECT count(*)::int n FROM user_org`)).rows[0].n, 1);
     assert.equal((await pool.query(`SELECT count(*)::int n FROM visit WHERE location_text = 'ancienne'`)).rows[0].n, 1, 'données conservées');
     assert.equal((await pool.query(`SELECT count(*)::int n FROM visit_history`)).rows[0].n, 0);
     assert.deepEqual(await migrate(pool), [], 'rejouer ne fait rien');

@@ -10,15 +10,24 @@ await migrate(pool);
 if (process.env.NODE_ENV === 'production' && !process.env.SEED_PASSWORD) { console.error('SEED_PASSWORD est obligatoire en production.'); process.exit(1); }
 const pwd = process.env.SEED_PASSWORD ?? 'demo-mot-de-passe-12';
 const h = await hashPassword(pwd);
-const mk = async (email: string, name: string, role: string, manager?: string, admin = false) =>
-  (await pool.query(`INSERT INTO app_user(email, display_name, role, manager_id, is_admin, password_hash) VALUES ($1,$2,$3,$4,$5,$6)
-                     ON CONFLICT (email) DO UPDATE SET display_name = $2 RETURNING id`, [email, name, role, manager ?? null, admin, h])).rows[0].id as string;
+const mk = async (email: string, name: string, role: string, admin = false) =>
+  (await pool.query(`INSERT INTO app_user(email, display_name, role, is_admin, password_hash) VALUES ($1,$2,$3,$4,$5)
+                     ON CONFLICT (email) DO UPDATE SET display_name = $2 RETURNING id`, [email, name, role, admin, h])).rows[0].id as string;
 const dir = await mk('directeur@exemple.invalid', 'Directeur Démo', 'directeur');
-const mgr = await mk('manager@exemple.invalid', 'Manager Démo', 'manager', dir);
-await mk('commercial1@exemple.invalid', 'Commercial Un', 'commercial', mgr);
-await mk('commercial2@exemple.invalid', 'Commercial Deux', 'commercial', mgr);
-await mk('admin@exemple.invalid', 'Admin IT', 'commercial', undefined, true);
-await pool.query('SELECT rebuild_hierarchy()');
+const mgr = await mk('manager@exemple.invalid', 'Manager Démo', 'manager');
+const c1 = await mk('commercial1@exemple.invalid', 'Commercial Un', 'commercial');
+const c2 = await mk('commercial2@exemple.invalid', 'Commercial Deux', 'commercial');
+await mk('admin@exemple.invalid', 'Admin IT', 'commercial', true);
+
+// Organisation : Entreprise > Agence Lyon. Le directeur est à la racine (il voit tout, de façon consolidée) ; le manager et les commerciaux sont dans l'agence.
+const node = async (name: string, parent: string | null) =>
+  ((await pool.query(`SELECT id FROM org_node WHERE name = $1 AND parent_id IS NOT DISTINCT FROM $2`, [name, parent])).rows[0]
+    ?? (await pool.query(`INSERT INTO org_node(name, parent_id) VALUES ($1,$2) RETURNING id`, [name, parent])).rows[0]).id as string;
+const root = await node('Entreprise', null);
+const lyon = await node('Agence Lyon', root);
+const member = (u: string, n: string) => pool.query(`INSERT INTO user_org(user_id, node_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [u, n]);
+await member(dir, root); await member(mgr, lyon); await member(c1, lyon); await member(c2, lyon);
+await pool.query('SELECT rebuild_org()');
 
 await importCrm(pool, [
   { crm_id: 'D-001', name: 'Dupont SA', address_line: '12 rue des Lilas', postal_code: '69003', city: 'Lyon', country: 'France', sector: 'Industrie', contacts: [{ crm_id: 'D-001-1', full_name: 'M. Martin', job_title: 'Directeur achats' }], sales_emails: ['commercial1@exemple.invalid'] },

@@ -87,18 +87,103 @@ CREATE TABLE user_hierarchy (
 );
 CREATE INDEX user_hierarchy_desc_idx ON user_hierarchy(descendant_id);
 
+-- Organisation arborescente : nœuds, fermeture, affectation des utilisateurs (un ou plusieurs nœuds, même rôle partout).
+CREATE TABLE org_node (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  parent_id  uuid REFERENCES org_node(id),
+  name       text NOT NULL CHECK (length(btrim(name)) > 0),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE org_closure (
+  ancestor_id   uuid NOT NULL REFERENCES org_node(id) ON DELETE CASCADE,
+  descendant_id uuid NOT NULL REFERENCES org_node(id) ON DELETE CASCADE,
+  depth         int  NOT NULL,
+  PRIMARY KEY (ancestor_id, descendant_id)
+);
+CREATE INDEX org_closure_desc_idx ON org_closure(descendant_id);
+CREATE TABLE user_org (
+  user_id uuid NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  node_id uuid NOT NULL REFERENCES org_node(id),
+  PRIMARY KEY (user_id, node_id)
+);
+CREATE INDEX user_org_node_idx ON user_org(node_id);
+
+
+-- Hiérarchie des utilisateurs : dérivée de l'organisation arborescente.
+-- « Supervise » : un manager ou directeur supervise les utilisateurs affectés à un nœud de sa branche (lui-même inclus, profondeur 0).
 CREATE FUNCTION rebuild_hierarchy() RETURNS void LANGUAGE sql AS $$
   DELETE FROM user_hierarchy;
-  WITH RECURSIVE t(ancestor_id, descendant_id, depth) AS (
-    SELECT id, id, 0 FROM app_user
+  INSERT INTO user_hierarchy(ancestor_id, descendant_id, depth)
+  SELECT ancestor_id, descendant_id, min(depth) FROM (
+    SELECT id AS ancestor_id, id AS descendant_id, 0 AS depth FROM app_user
     UNION ALL
-    SELECT u.manager_id, t.descendant_id, t.depth + 1
-    FROM t JOIN app_user u ON u.id = t.ancestor_id
-    WHERE u.manager_id IS NOT NULL AND t.depth < 10   -- garde-fou contre un cycle
-  )
-  INSERT INTO user_hierarchy SELECT DISTINCT ON (ancestor_id, descendant_id) ancestor_id, descendant_id, depth
-  FROM t ORDER BY ancestor_id, descendant_id, depth;
+    SELECT vo.user_id, uu.user_id, c.depth + 1
+    FROM user_org vo
+    JOIN app_user v ON v.id = vo.user_id AND v.role IN ('manager', 'directeur')
+    JOIN org_closure c ON c.ancestor_id = vo.node_id
+    JOIN user_org uu ON uu.node_id = c.descendant_id
+    WHERE uu.user_id <> vo.user_id
+  ) x GROUP BY ancestor_id, descendant_id;
 $$;
+
+-- Reconstruit la fermeture de l'arbre, puis la hiérarchie des utilisateurs. À appeler après toute modification de l'arbre ou des affectations.
+CREATE FUNCTION rebuild_org() RETURNS void LANGUAGE sql AS $$
+  DELETE FROM org_closure;
+  WITH RECURSIVE t(ancestor_id, descendant_id, depth) AS (
+    SELECT id, id, 0 FROM org_node
+    UNION ALL
+    SELECT p.parent_id, t.descendant_id, t.depth + 1 FROM t JOIN org_node p ON p.id = t.ancestor_id WHERE p.parent_id IS NOT NULL AND t.depth < 30
+  )
+  INSERT INTO org_closure(ancestor_id, descendant_id, depth)
+  SELECT DISTINCT ON (ancestor_id, descendant_id) ancestor_id, descendant_id, depth FROM t ORDER BY ancestor_id, descendant_id, depth;
+  SELECT rebuild_hierarchy();
+$$;
+
+-- L'utilisateur a-t-il accès à ce nœud (l'un de ses nœuds, ou un nœud de sa branche) ?
+CREATE FUNCTION org_access(p_user uuid, p_node uuid) RETURNS boolean LANGUAGE sql STABLE AS $$
+  SELECT EXISTS (SELECT 1 FROM user_org uo JOIN org_closure c ON c.ancestor_id = uo.node_id WHERE uo.user_id = p_user AND c.descendant_id = p_node)
+$$;
+-- Manager ou directeur ayant accès au nœud : voit tout ce qui s'y trouve, branches comprises.
+CREATE FUNCTION org_supervises(p_user uuid, p_node uuid) RETURNS boolean LANGUAGE sql STABLE AS $$
+  SELECT org_access(p_user, p_node) AND EXISTS (SELECT 1 FROM app_user u WHERE u.id = p_user AND u.role IN ('manager', 'directeur'))
+$$;
+
+-- Chemin lisible d'un nœud : « Entreprise › Rhône › Agence Lyon ».
+CREATE FUNCTION org_path(p_node uuid) RETURNS text LANGUAGE sql STABLE AS $$
+  SELECT string_agg(n.name, ' › ' ORDER BY c.depth DESC) FROM org_closure c JOIN org_node n ON n.id = c.ancestor_id WHERE c.descendant_id = p_node
+$$;
+
+-- Conversion de l'ancienne hiérarchie (manager_id) : un nœud « Équipe X » par utilisateur qui supervise quelqu'un ou qui n'a pas de supérieur ;
+-- les autres utilisateurs rejoignent l'équipe de leur supérieur ; les équipes de premier niveau sont sous un nœud « Entreprise ».
+-- Même visibilité qu'avant. Sans effet si l'arbre existe déjà.
+CREATE FUNCTION convert_managers_to_org() RETURNS void LANGUAGE plpgsql AS $$
+DECLARE root uuid; r record; nid uuid; parent uuid;
+BEGIN
+  IF EXISTS (SELECT 1 FROM org_node) THEN RETURN; END IF;
+  INSERT INTO org_node(name) VALUES ('Entreprise') RETURNING id INTO root;
+  CREATE TEMP TABLE _team(user_id uuid PRIMARY KEY, node_id uuid) ON COMMIT DROP;
+  FOR r IN
+    WITH RECURSIVE t(id, manager_id, depth) AS (
+      SELECT id, manager_id, 0 FROM app_user WHERE manager_id IS NULL
+      UNION ALL
+      SELECT u.id, u.manager_id, t.depth + 1 FROM app_user u JOIN t ON u.manager_id = t.id WHERE t.depth < 20)
+    SELECT t.id, t.manager_id, a.display_name, EXISTS (SELECT 1 FROM app_user s WHERE s.manager_id = t.id) AS lead
+    FROM t JOIN app_user a ON a.id = t.id ORDER BY t.depth, a.display_name
+  LOOP
+    IF r.manager_id IS NULL OR r.lead THEN
+      parent := CASE WHEN r.manager_id IS NULL THEN root ELSE (SELECT node_id FROM _team WHERE user_id = r.manager_id) END;
+      INSERT INTO org_node(parent_id, name) VALUES (parent, 'Équipe ' || r.display_name) RETURNING id INTO nid;
+      INSERT INTO _team VALUES (r.id, nid);
+      INSERT INTO user_org VALUES (r.id, nid);
+    ELSE
+      INSERT INTO user_org VALUES (r.id, (SELECT node_id FROM _team WHERE user_id = r.manager_id));
+    END IF;
+  END LOOP;
+  PERFORM rebuild_org();
+END $$;
+
+
 
 CREATE TABLE device (
   id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -188,6 +273,7 @@ CREATE TABLE visit (
   company_id    uuid NOT NULL REFERENCES company(id),
   author_id     uuid NOT NULL REFERENCES app_user(id),
   visit_type    text REFERENCES visit_type(code),
+  org_node_id   uuid NOT NULL REFERENCES org_node(id),   -- branche de la visite : un nœud de l'auteur, choisi à la création
   objective     text,
   preparation_notes text,                             -- points à aborder, saisis avant la visite (application back)
   created_by    uuid REFERENCES app_user(id),         -- personne qui a planifié la visite pour le commercial (NULL : l'auteur lui-même)
@@ -206,6 +292,7 @@ CREATE TABLE visit (
 );
 CREATE TRIGGER visit_seq BEFORE INSERT OR UPDATE ON visit FOR EACH ROW EXECUTE FUNCTION bump_seq();
 CREATE INDEX visit_company_idx ON visit(company_id);
+CREATE INDEX visit_org_idx ON visit(org_node_id);
 CREATE INDEX visit_author_planned_idx ON visit(author_id, planned_start);
 CREATE INDEX visit_seq_idx ON visit(seq);
 
@@ -327,12 +414,11 @@ CREATE TRIGGER internal_note_seq BEFORE INSERT OR UPDATE ON internal_note FOR EA
 CREATE INDEX internal_note_visit_idx ON internal_note(visit_id);
 CREATE INDEX internal_note_seq_idx ON internal_note(seq);
 
--- Lisible par l'auteur et par sa hiérarchie (la fermeture contient l'utilisateur lui-même), indépendamment du mode de visibilité des comptes rendus.
-CREATE OR REPLACE FUNCTION can_read_internal_note(p_user uuid, p_note uuid) RETURNS boolean LANGUAGE sql STABLE AS $$
+-- Lisible par l'auteur et par les managers/directeurs ayant accès à la branche de la visite, indépendamment du mode de visibilité des comptes rendus.
+CREATE FUNCTION can_read_internal_note(p_user uuid, p_note uuid) RETURNS boolean LANGUAGE sql STABLE AS $$
   SELECT EXISTS (
-    SELECT 1 FROM internal_note n
-    JOIN user_hierarchy h ON h.descendant_id = n.author_id
-    WHERE n.id = p_note AND h.ancestor_id = p_user
+    SELECT 1 FROM internal_note n JOIN visit v ON v.id = n.visit_id
+    WHERE n.id = p_note AND (n.author_id = p_user OR org_supervises(p_user, v.org_node_id))
   )
 $$;
 
@@ -578,18 +664,17 @@ CREATE FUNCTION visibility_mode() RETURNS int LANGUAGE sql STABLE AS
 $$ SELECT COALESCE((SELECT (value #>> '{}')::int FROM app_setting WHERE key = 'report_visibility_mode'), 2) $$;
 
 -- Un utilisateur voit-il cette visite (et son compte rendu) ?
---  mode 2 : l'auteur et sa hiérarchie.
---  mode 1 : mode 2, plus les commerciaux affectés au client et leur hiérarchie.
+--  mode 2 : l'auteur et les managers/directeurs ayant accès à la branche (nœud) de la visite.
+--  mode 1 : mode 2, plus les commerciaux affectés au client qui ont accès à cette branche.
 -- Les administrateurs IT ne voient PAS le contenu par ce seul rôle (décision à valider).
 CREATE FUNCTION can_read_visit(p_user uuid, p_visit uuid) RETURNS boolean LANGUAGE sql STABLE AS $$
   SELECT EXISTS (
     SELECT 1 FROM visit v
     WHERE v.id = p_visit AND (
-      EXISTS (SELECT 1 FROM user_hierarchy h WHERE h.ancestor_id = p_user AND h.descendant_id = v.author_id)
-      OR (visibility_mode() = 1 AND EXISTS (
-            SELECT 1 FROM company_assignment a
-            JOIN user_hierarchy h ON h.descendant_id = a.user_id
-            WHERE a.company_id = v.company_id AND a.removed_at IS NULL AND h.ancestor_id = p_user))
+      v.author_id = p_user
+      OR org_supervises(p_user, v.org_node_id)
+      OR (visibility_mode() = 1 AND org_access(p_user, v.org_node_id) AND EXISTS (
+            SELECT 1 FROM company_assignment a WHERE a.company_id = v.company_id AND a.user_id = p_user AND a.removed_at IS NULL))
     )
   )
 $$;
@@ -608,8 +693,9 @@ CREATE FUNCTION can_read_action(p_user uuid, p_action uuid) RETURNS boolean LANG
   SELECT EXISTS (
     SELECT 1 FROM action_item x
     WHERE x.id = p_action AND (
-      x.author_id = p_user
-      OR EXISTS (SELECT 1 FROM user_hierarchy h WHERE h.ancestor_id = p_user AND h.descendant_id = x.owner_id))
+      x.author_id = p_user OR x.owner_id = p_user
+      OR (x.visit_id IS NOT NULL AND EXISTS (SELECT 1 FROM visit v WHERE v.id = x.visit_id AND org_supervises(p_user, v.org_node_id)))
+      OR (x.visit_id IS NULL AND EXISTS (SELECT 1 FROM user_hierarchy h WHERE h.ancestor_id = p_user AND h.descendant_id = x.owner_id)))
   )
 $$;
 

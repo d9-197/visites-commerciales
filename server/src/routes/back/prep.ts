@@ -5,7 +5,7 @@ import type { Pool } from '../../db.js';
 import { tx } from '../../db.js';
 import { HttpError, wrap } from '../../errors.js';
 import { VISIT_HISTORY_FIELDS } from '@visites/sync-core';
-import { scopeUsers, inScope, day } from './scope.js';
+import { scopeUsers, scopeNodes, inScope, day } from './scope.js';
 
 const uuid = z.string().uuid();
 const ts = z.string().datetime({ offset: true });
@@ -56,21 +56,23 @@ export function prepRouter(pool: Pool) {
     const days = Math.min(Math.max(Number(req.query.days ?? 60) || 60, 7), 730);
     const includePlanned = req.query.include_planned === 'true';
     const ids = uid ? [uid] : scope;
+    const nodes = await scopeNodes(pool, req);
+    const NV = `($2::uuid[] IS NULL OR v.org_node_id = ANY($2) OR v.author_id = $3::uuid)`;   // visites de mes branches (ou les miennes)
     const { rows } = await pool.query(
       `WITH cs AS (
          SELECT c.id, c.name, c.city, c.sector FROM company c
          WHERE c.status = 'active' AND c.deleted_at IS NULL AND EXISTS (SELECT 1 FROM company_assignment a WHERE a.company_id = c.id AND a.removed_at IS NULL AND ($1::uuid[] IS NULL OR a.user_id = ANY($1)))
        )
        SELECT cs.id, cs.name, cs.city, cs.sector,
-         (SELECT max(COALESCE(v.ended_at, v.started_at, v.planned_start)) FROM visit v WHERE v.company_id = cs.id AND v.deleted_at IS NULL AND v.status IN ('done','validated','in_progress')) AS last_visit_at,
-         (SELECT min(v.planned_start) FROM visit v WHERE v.company_id = cs.id AND v.deleted_at IS NULL AND v.status IN ('planned','organized') AND v.planned_start >= now() - interval '1 day') AS next_visit_at,
-         (SELECT count(*)::int FROM action_item x WHERE x.company_id = cs.id AND x.status = 'todo' AND x.due_date < current_date) AS late_actions,
-         (SELECT count(*)::int FROM action_item x WHERE x.company_id = cs.id AND x.status = 'todo') AS open_actions,
-         (SELECT rp.opportunity_temperature FROM visit_report rp JOIN visit v ON v.id = rp.visit_id WHERE v.company_id = cs.id AND rp.status = 'validated' AND v.deleted_at IS NULL
+         (SELECT max(COALESCE(v.ended_at, v.started_at, v.planned_start)) FROM visit v WHERE v.company_id = cs.id AND v.deleted_at IS NULL AND ${NV} AND v.status IN ('done','validated','in_progress')) AS last_visit_at,
+         (SELECT min(v.planned_start) FROM visit v WHERE v.company_id = cs.id AND v.deleted_at IS NULL AND ${NV} AND v.status IN ('planned','organized') AND v.planned_start >= now() - interval '1 day') AS next_visit_at,
+         (SELECT count(*)::int FROM action_item x WHERE x.company_id = cs.id AND x.status = 'todo' AND x.due_date < current_date AND (x.visit_id IS NULL OR EXISTS (SELECT 1 FROM visit v WHERE v.id = x.visit_id AND ${NV}))) AS late_actions,
+         (SELECT count(*)::int FROM action_item x WHERE x.company_id = cs.id AND x.status = 'todo' AND (x.visit_id IS NULL OR EXISTS (SELECT 1 FROM visit v WHERE v.id = x.visit_id AND ${NV}))) AS open_actions,
+         (SELECT rp.opportunity_temperature FROM visit_report rp JOIN visit v ON v.id = rp.visit_id WHERE v.company_id = cs.id AND rp.status = 'validated' AND v.deleted_at IS NULL AND ${NV}
             ORDER BY COALESCE(v.ended_at, v.started_at, v.planned_start) DESC NULLS LAST LIMIT 1) AS last_temperature,
          (SELECT string_agg(u.display_name, ', ' ORDER BY u.display_name) FROM company_assignment a JOIN app_user u ON u.id = a.user_id
             WHERE a.company_id = cs.id AND a.removed_at IS NULL AND ($1::uuid[] IS NULL OR u.id = ANY($1))) AS commerciaux
-       FROM cs`, [ids]);
+       FROM cs`, [ids, nodes, req.auth!.id]);
     const now = Date.now();
     const out = rows.map(c => {
       const sinceDays = c.last_visit_at ? Math.floor((now - new Date(c.last_visit_at).getTime()) / 86400000) : null;
@@ -95,7 +97,8 @@ export function prepRouter(pool: Pool) {
       `SELECT v.id, v.status, v.planned_start, v.started_at, v.ended_at, v.objective, v.preparation_notes, u.display_name AS author,
               ($2::boolean OR can_read_visit($3, v.id)) AS readable
        FROM visit v JOIN app_user u ON u.id = v.author_id WHERE v.company_id = $1 AND v.deleted_at IS NULL AND v.status <> 'deleted'
-       ORDER BY COALESCE(v.ended_at, v.started_at, v.planned_start) DESC NULLS LAST LIMIT 12`, [company.id, viewer.isAdmin, viewer.id])).rows;
+         AND ($4::uuid[] IS NULL OR v.org_node_id = ANY($4) OR v.author_id = $3)
+       ORDER BY COALESCE(v.ended_at, v.started_at, v.planned_start) DESC NULLS LAST LIMIT 12`, [company.id, viewer.isAdmin, viewer.id, await scopeNodes(pool, req)])).rows;
     const reports = visits.length ? (await pool.query(
       `SELECT visit_id, summary, needs, objections, competitors, decisions, next_step, opportunity_temperature, status FROM visit_report WHERE visit_id = ANY($1::uuid[]) AND status = 'validated'`,
       [visits.filter(v => v.readable).map(v => v.id)])).rows : [];
@@ -121,14 +124,16 @@ export function prepRouter(pool: Pool) {
     const from = day(req.query.from) ?? new Date().toISOString().slice(0, 10);
     const to = day(req.query.to) ?? new Date(Date.now() + 60 * 86400000).toISOString().slice(0, 10);
     const { rows } = await pool.query(
-      `SELECT v.id, v.company_id, c.name AS company, v.author_id, u.display_name AS author, cb.display_name AS created_by_name, v.status, v.planned_start, v.location_text, v.objective, v.preparation_notes, v.version
+      `SELECT v.id, v.company_id, c.name AS company, v.author_id, u.display_name AS author, v.org_node_id, org_path(v.org_node_id) AS org_path, cb.display_name AS created_by_name, v.status, v.planned_start, v.location_text, v.objective, v.preparation_notes, v.version
        FROM visit v JOIN company c ON c.id = v.company_id JOIN app_user u ON u.id = v.author_id LEFT JOIN app_user cb ON cb.id = v.created_by
        WHERE v.deleted_at IS NULL AND v.status IN ('planned','organized') AND ($1::uuid[] IS NULL OR v.author_id = ANY($1))
-         AND (v.planned_start IS NULL OR (v.planned_start >= $2::date AND v.planned_start < $3::date + 1)) ORDER BY v.planned_start NULLS FIRST LIMIT 500`, [uid ? [uid] : scope, from, to]);
+         AND ($4::uuid[] IS NULL OR v.org_node_id = ANY($4) OR v.author_id = $5::uuid)
+         AND (v.planned_start IS NULL OR (v.planned_start >= $2::date AND v.planned_start < $3::date + 1)) ORDER BY v.planned_start NULLS FIRST LIMIT 500`,
+      [uid ? [uid] : scope, from, to, await scopeNodes(pool, req), req.auth!.id]);
     res.json({ visits: rows });
   }));
 
-  const create = z.object({ company_id: uuid, user_id: uuid, planned_start: ts, location_text: text(500), objective: text(2000), preparation_notes: text(5000) }).strict();
+  const create = z.object({ company_id: uuid, user_id: uuid, node_id: uuid.optional(), planned_start: ts, location_text: text(500), objective: text(2000), preparation_notes: text(5000) }).strict();
 
   /** Planifier une visite pour un commercial : il la reçoit à sa prochaine synchronisation. */
   r.post('/prep/visits', wrap(async (req, res) => {
@@ -141,10 +146,21 @@ export function prepRouter(pool: Pool) {
     const company = await companyAccess(req, d.company_id);
     const assigned = (await pool.query(`SELECT 1 FROM company_assignment WHERE company_id = $1 AND user_id = $2 AND removed_at IS NULL`, [company.id, d.user_id])).rows[0];
     if (!assigned) throw new HttpError(409, 'not_assigned', "Ce client n'est pas affecté à ce commercial");
+    // Branche de la visite : un nœud du commercial auquel le planificateur a accès ; à choisir s'il y en a plusieurs.
+    const allowed = await scopeNodes(pool, req);
+    const authorNodes = (await pool.query(`SELECT n.id, org_path(n.id) AS path FROM user_org uo JOIN org_node n ON n.id = uo.node_id WHERE uo.user_id = $1 ORDER BY org_path(n.id)`, [d.user_id])).rows
+      .filter(n => allowed === null || allowed.includes(n.id));
+    if (authorNodes.length === 0) throw new HttpError(409, 'no_common_node', "Ce commercial n'est affecté à aucune de vos branches");
+    let node: string;
+    if (d.node_id) {
+      if (!authorNodes.some(n => n.id === d.node_id)) throw new HttpError(409, 'invalid_node', "Cette branche n'est pas l'une des branches communes à vous et au commercial");
+      node = d.node_id;
+    } else if (authorNodes.length === 1) node = authorNodes[0].id;
+    else throw new HttpError(409, 'org_node_required', 'Ce commercial est dans plusieurs branches : choisissez celle de la visite', { nodes: authorNodes });
     const id = randomUUID();
     await pool.query(
-      `INSERT INTO visit(id, company_id, author_id, created_by, status, planned_start, location_text, objective, preparation_notes) VALUES ($1,$2,$3,$4,'planned',$5,$6,$7,$8)`,
-      [id, company.id, d.user_id, req.auth!.id, d.planned_start, d.location_text ?? (address(company) || null), d.objective ?? null, d.preparation_notes ?? null]);
+      `INSERT INTO visit(id, company_id, author_id, org_node_id, created_by, status, planned_start, location_text, objective, preparation_notes) VALUES ($1,$2,$3,$4,$5,'planned',$6,$7,$8,$9)`,
+      [id, company.id, d.user_id, node, req.auth!.id, d.planned_start, d.location_text ?? (address(company) || null), d.objective ?? null, d.preparation_notes ?? null]);
     res.status(201).json({ id });
   }));
 
@@ -153,11 +169,11 @@ export function prepRouter(pool: Pool) {
   r.patch('/prep/visits/:id', wrap(async (req, res) => {
     const b = patch.safeParse(req.body);
     if (!b.success) throw new HttpError(400, 'validation_failed', b.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; '));
-    const f = b.data; const scope = await scopeUsers(pool, req);
+    const f = b.data; const scope = await scopeUsers(pool, req); const allowedNodes = await scopeNodes(pool, req);
     const me = (await pool.query(`SELECT display_name FROM app_user WHERE id = $1`, [req.auth!.id])).rows[0];
     await tx(pool, async c => {
       const v = (await c.query(`SELECT * FROM visit WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, [req.params.id])).rows[0];
-      if (!v || !inScope(scope, v.author_id)) throw new HttpError(404, 'not_found', 'Visite inconnue');
+      if (!v || !inScope(scope, v.author_id) || !(allowedNodes === null || allowedNodes.includes(v.org_node_id) || v.author_id === req.auth!.id)) throw new HttpError(404, 'not_found', 'Visite inconnue');
       if (!['planned', 'organized'].includes(v.status)) throw new HttpError(409, 'locked_status', 'Seule une visite à organiser ou organisée se modifie ici');
       const cols = Object.keys(f) as (keyof typeof f)[];
       if (!cols.length) return;

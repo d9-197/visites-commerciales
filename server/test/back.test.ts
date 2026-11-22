@@ -21,22 +21,25 @@ test('back : authentification obligatoire ; /me ; comptes et réglages réservé
 });
 
 test('back : création de compte (mot de passe temporaire), connexion, hiérarchie, désactivation qui révoque les sessions, réinitialisation', async () => {
-  const mgr = (await env.pool.query(`SELECT id FROM app_user WHERE email = 'mgr1@x.fr'`)).rows[0].id;
-  const c = await send('admin@x.fr', 'POST', '/users', { email: 'nouveau@x.fr', display_name: 'Nina Nouvelle', role: 'commercial', manager_id: mgr });
+  const team1 = (await env.pool.query(`SELECT id FROM org_node WHERE name = 'Équipe mgr1'`)).rows[0].id;
+  const c = await send('admin@x.fr', 'POST', '/users', { email: 'nouveau@x.fr', display_name: 'Nina Nouvelle', role: 'commercial', node_ids: [team1] });
   assert.equal(c.status, 201); assert.equal(typeof c.body.temporary_password, 'string'); assert.ok(c.body.temporary_password.length >= 16);
-  assert.equal(c.body.user.manager_name, 'mgr1');
+  assert.deepEqual(c.body.user.nodes.map((n: any) => n.path), ['Entreprise › Équipe dir › Équipe mgr1']);
   const nina = new Api(env.base); assert.equal((await nina.login('nouveau@x.fr', c.body.temporary_password)).status, 200);
   assert.equal((await send('admin@x.fr', 'POST', '/users', { email: 'nouveau@x.fr', display_name: 'X', role: 'commercial' })).status, 409, 'e-mail déjà utilisé');
-  const asCommercial = await send('admin@x.fr', 'POST', '/users', { email: 'z@x.fr', display_name: 'Z', role: 'commercial', manager_id: c.body.user.id });
-  assert.equal(asCommercial.status, 409, 'un commercial ne peut pas être supérieur');
-  assert.equal((await send('admin@x.fr', 'POST', '/users', { email: 'z@x.fr', display_name: 'Z', role: 'commercial', password: 'court' })).status, 400);
+  assert.equal((await send('admin@x.fr', 'POST', '/users', { email: 'z@x.fr', display_name: 'Z', role: 'commercial' })).status, 400, 'une branche au moins');
+  assert.equal((await send('admin@x.fr', 'POST', '/users', { email: 'z@x.fr', display_name: 'Z', role: 'commercial', node_ids: [uuid()] })).status, 404, 'branche inconnue');
+  assert.equal((await send('admin@x.fr', 'POST', '/users', { email: 'z@x.fr', display_name: 'Z', role: 'commercial', node_ids: [team1], password: 'court' })).status, 400);
   // le manager voit sa nouvelle recrue dans son périmètre (hiérarchie reconstruite)
   assert.ok((await get('mgr1@x.fr', '/prep/commerciaux')).body.users.some((u: any) => u.email === 'nouveau@x.fr'));
-  // cycle : le directeur ne peut pas devenir subordonné de son manager
-  const dir = (await env.pool.query(`SELECT id FROM app_user WHERE email = 'dir@x.fr'`)).rows[0].id;
-  assert.equal((await send('admin@x.fr', 'PATCH', `/users/${dir}`, { manager_id: mgr })).status, 409);
-  // un manager qui a des subordonnés ne devient pas commercial
-  assert.equal((await send('admin@x.fr', 'PATCH', `/users/${mgr}`, { role: 'commercial' })).status, 409);
+  // changer de branche : le périmètre du manager change
+  const team2 = (await env.pool.query(`SELECT id FROM org_node WHERE name = 'Équipe mgr2'`)).rows[0].id;
+  assert.equal((await send('admin@x.fr', 'PATCH', `/users/${c.body.user.id}`, { node_ids: [team2] })).status, 200);
+  assert.ok(!(await get('mgr1@x.fr', '/prep/commerciaux')).body.users.some((u: any) => u.email === 'nouveau@x.fr'), 'plus dans la branche de mgr1');
+  assert.ok((await get('mgr2@x.fr', '/prep/commerciaux')).body.users.some((u: any) => u.email === 'nouveau@x.fr'), 'dans celle de mgr2');
+  assert.equal((await send('admin@x.fr', 'PATCH', `/users/${c.body.user.id}`, { node_ids: [] })).status, 400, 'une branche au moins');
+  assert.equal((await send('admin@x.fr', 'PATCH', `/users/${c.body.user.id}`, { node_ids: [team1, team2] })).status, 200, 'plusieurs branches possibles');
+  assert.equal((await send('admin@x.fr', 'PATCH', `/users/${c.body.user.id}`, { node_ids: [team1] })).status, 200);
   // garde-fous : pas d'auto-verrouillage
   const adminId = (await env.pool.query(`SELECT id FROM app_user WHERE email = 'admin@x.fr'`)).rows[0].id;
   assert.equal((await send('admin@x.fr', 'PATCH', `/users/${adminId}`, { status: 'disabled' })).status, 409);
