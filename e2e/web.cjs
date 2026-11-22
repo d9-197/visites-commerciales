@@ -90,6 +90,12 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   assert.ok(await page.getByText('Atelier Roux').isVisible());
   assert.equal(await page.getByText('Groupe Bernard').count(), 0, 'commercial1 ne voit pas le client de commercial2');
   await shot(page, '2-clients');
+  // recherche d'un client (sans accents ni casse)
+  await page.getByLabel('Rechercher un client').fill('ATELIER');
+  await page.getByText('Atelier Roux').waitFor();
+  await page.getByText('Dupont SA').waitFor({ state: 'detached' });
+  await page.getByLabel('Rechercher un client').fill('');
+  await page.getByText('Dupont SA').waitFor();
   await page.getByText('Dupont SA').click();
   // Fiche client : informations, visites précédentes, actions ; aucune visite n'est créée au simple clic
   await page.getByRole('heading', { name: 'Dupont SA' }).waitFor();
@@ -377,8 +383,25 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await page.getByText(/^Réalisée /).waitFor();
   assert.ok(await page.getByText(/^Prévue .*déc/).first().isVisible(), 'la date prévue reste affichée sous la date réalisée');
   await shot(page, '3d-visites-par-client');
+  // zones repliables : client, mois (par date)
+  await page.getByRole('button', { name: 'Replier Dupont SA' }).click();
+  assert.equal(await page.getByText('4 actions à faire').count(), 0, 'client replié : ses visites sont masquées');
+  await page.getByRole('button', { name: 'Déplier Dupont SA' }).click();
+  await page.getByText('4 actions à faire').waitFor();
   await page.getByRole('radio', { name: 'Par date' }).click();
   await page.getByText('Dupont SA', { exact: true }).first().waitFor();
+  const monthBtn = page.getByRole('button', { name: /^Replier (janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre|novembre|décembre) \d{4}$/ }).first();
+  await monthBtn.waitFor();
+  await monthBtn.click();
+  assert.equal(await page.getByText('Dupont SA', { exact: true }).count(), 0, 'mois replié : visites masquées');
+  await page.getByRole('button', { name: 'Tout déplier' }).click();
+  await page.getByText('Dupont SA', { exact: true }).first().waitFor();
+  // recherche d'un client dans la vue visites
+  await page.getByLabel('Rechercher un client').fill('zzz');
+  await page.getByText('Aucune visite à afficher.').waitFor();
+  await page.getByLabel('Rechercher un client').fill('dupont');
+  await page.getByText('Dupont SA', { exact: true }).first().waitFor();
+  await page.getByLabel('Rechercher un client').fill('');
   await page.getByRole('radio', { name: 'Par client' }).click();
 
   // Vue Actions : échéance en clair, action en retard identifiable, lien vers la visite
@@ -506,6 +529,17 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await mp.getByRole('button', { name: '‹ Retour' }).click();
   await mp.getByRole('radio', { name: 'Par client' }).click();
   await mp.getByText(/1 en retard/).waitFor();
+  if (await mp.getByRole('radio', { name: 'Par département' }).count()) {         // vue arborescente par département (responsable : plusieurs départements)
+    await mp.getByRole('radio', { name: 'Par département' }).click();
+    await shot(mp, '3f-par-departement');
+    const fold = mp.getByRole('button', { name: /^Replier / }).first();
+    await fold.waitFor();
+    const label = (await fold.getAttribute('aria-label')).replace(/^Replier /, '');
+    await fold.click();
+    await mp.getByRole('button', { name: `Déplier ${label}` }).waitFor();
+    await mp.getByRole('button', { name: 'Tout déplier' }).click();
+    await mp.getByRole('radio', { name: 'Par client' }).click();
+  }
   await shot(mp, '3f-liste-retard');
   assert.equal(await mp.getByRole('button', { name: 'Modifier l\'adresse de la visite' }).count(), 0, 'liste des visites : pas de bouton de modification');
   // 7 ter. Suppression d'une visite : le manager ne peut pas ; le commercial confirme ; elle est masquée par défaut

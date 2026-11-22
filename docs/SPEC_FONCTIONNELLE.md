@@ -211,3 +211,9 @@ Détail dans `ARCHITECTURE.md`. Infrastructure : serveur Docker interne en UE (d
 - **Exports CSV** : par visiteur (avec objectif et atteinte si définis) et par département (consolidé avec les sous-départements).
 - **Organisation** : boutons d'action condensés en icônes (libellé au survol), membres résumés (3 premiers + « +N autres », liste complète au survol) pour que l'arbre reste lisible ; les traits de liaison restent continus quelle que soit la hauteur de la ligne.
 - **Comptes** : recherche (nom, e-mail) et filtres par rôle, statut et département.
+
+## Application mobile : zones repliables et recherche (décision du 22/11)
+
+- Vue Visites : chaque zone se replie (clients en « Par client », mois en « Par date », départements en « Par département »). « Par date » regroupe par mois (le plus récent d'abord, « Sans date » à la fin). « Par département » est un arbre : un département parent regroupe ses sous-départements et les totaux sont consolidés. Un lien « Tout déplier » apparaît quand des zones sont repliées. L'état replié n'est conservé que pendant la session.
+- Le chemin complet du département (`org_node_path`) est transmis avec chaque visite ; une visite déjà synchronisée avant cette évolution n'a pas ce champ tant qu'elle n'est pas modifiée : l'appli utilise alors le chemin de vos propres départements, à défaut le nom seul (l'arbre peut alors être aplati pour ces visites).
+- Recherche d'un client (sans accents ni casse) dans la vue Visites (sur le nom du client) et dans la vue Clients (nom, ville, secteur).

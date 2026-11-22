@@ -666,7 +666,8 @@ components:
         company_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
         author_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
         org_node_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
-        org_node_name: {type: [string, 'null'], description: "Nom de la branche de la visite."}
+        org_node_name: {type: [string, 'null'], description: "Nom du département de la visite."}
+        org_node_path: {type: [string, 'null'], description: "Chemin complet du département (« A › B › C »), pour l'affichage en arbre."}
         visit_type: {type: [string, 'null']}
         objective: {type: [string, 'null']}
         planned_start: {oneOf: [{$ref: 'common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]}

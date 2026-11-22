@@ -204,6 +204,9 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
     return () => sub.remove();
   }, [goBack]);
   const [group, setGroup] = useState<'client' | 'date' | 'branch'>('client');
+  const [folded, setFolded] = useState<Set<string>>(new Set());     // zones repliées (clients, mois, départements)
+  const toggleFold = (key: string) => setFolded(f => { const n = new Set(f); if (n.has(key)) n.delete(key); else n.add(key); return n; });
+  const [visitQ, setVisitQ] = useState(''); const [clientQ, setClientQ] = useState('');
   const [showValidated, setShowValidated] = useState(false);       // visites validées : masquées par défaut
   const [showDeleted, setShowDeleted] = useState(false);         // visites supprimées : masquées par défaut
   const [showFinished, setShowFinished] = useState(false);         // actions terminées ou annulées : masquées par défaut
@@ -242,21 +245,46 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
   // Une visite n'est « terminée » (donc masquable) que lorsque son compte rendu est validé ET que toutes ses actions sont faites.
   const lateReports = data.visits.filter(v => isReportLate(v));
   const visibleVisits = data.visits.filter(v => showDeleted || v.status !== 'deleted');
-  const shownVisits = visibleVisits.filter(v => showValidated || visitStage(v.status, openActionsOf(v.id)) !== 'closed');
-  const hiddenValidated = visibleVisits.length - shownVisits.length;
+  const afterStage = visibleVisits.filter(v => showValidated || visitStage(v.status, openActionsOf(v.id)) !== 'closed');
+  const hiddenValidated = visibleVisits.length - afterStage.length;
+  const shownVisits = visitQ.trim() ? afterStage.filter(v => normText(companyName(v.company_id)).includes(normText(visitQ))) : afterStage;     // recherche d'un client
   const groups = (() => {
     const m = new Map<string, Row[]>();
     for (const v of shownVisits) m.set(v.company_id, [...(m.get(v.company_id) ?? []), v]);
     return [...m.entries()].map(([id, vs]) => ({ id, name: companyName(id), visits: vs.sort(byDateDesc) })).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   })();
 
-  // Regroupement par département (consolidé) : proposé quand les visites visibles appartiennent à plusieurs départements (direction, responsables, visiteurs multi-départements).
-  const manyBranches = new Set(visibleVisits.map(v => v.org_node_id)).size > 1;
-  const branchGroups = (() => {
-    const m = new Map<string, { id: string; name: string; visits: Row[] }>();
-    for (const v of shownVisits) { const g = m.get(v.org_node_id) ?? { id: v.org_node_id, name: v.org_node_name ?? 'Sans département', visits: [] as Row[] }; g.visits.push(v); m.set(v.org_node_id, g); }
-    return [...m.values()].map(g => ({ ...g, visits: g.visits.sort(byDateDesc) })).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+  // Par date : un regroupement par mois (le plus récent d'abord ; sans date à la fin).
+  const MONTHS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+  const monthGroups = (() => {
+    const m = new Map<string, Row[]>();
+    for (const v of shownVisits) { const d = String(v.planned_start ?? v.started_at ?? v.ended_at ?? '').slice(0, 7); m.set(d, [...(m.get(d) ?? []), v]); }
+    return [...m.entries()].sort(([x], [y]) => (x === '' ? 1 : y === '' ? -1 : y.localeCompare(x)))
+      .map(([key, vs]) => ({ key, name: key ? `${MONTHS[Number(key.slice(5, 7)) - 1]} ${key.slice(0, 4)}` : 'Sans date', visits: vs.sort(byDateDesc) }));
   })();
+
+  // Par département : arbre (départements parents repliables, totaux consolidés). Le chemin vient du serveur ; à défaut, de mes départements, sinon le nom seul.
+  const manyBranches = new Set(visibleVisits.map(v => v.org_node_id)).size > 1;
+  interface BNode { key: string; name: string; children: Map<string, BNode>; visits: Row[]; total: number }
+  const branchTree = (() => {
+    const root: BNode = { key: '', name: '', children: new Map(), visits: [], total: 0 };
+    for (const v of shownVisits) {
+      const path = String(v.org_node_path ?? ctx.nodes.find(n => n.id === v.org_node_id)?.path ?? v.org_node_name ?? 'Sans département');
+      let cur = root; let key = ''; cur.total++;
+      for (const part of path.split(' › ')) { key = key ? `${key} › ${part}` : part; if (!cur.children.has(part)) cur.children.set(part, { key, name: part, children: new Map(), visits: [], total: 0 }); cur = cur.children.get(part)!; cur.total++; }
+      cur.visits.push(v);
+    }
+    return root;
+  })();
+  const renderBranch = (n: BNode, depth: number): React.ReactNode => (
+    <View key={n.key} style={{ gap: 8, marginLeft: depth > 0 ? 12 : 0 }}>
+      <FoldHeader title={n.name} count={`${n.total} visite${n.total > 1 ? 's' : ''}`} folded={folded.has(`n:${n.key}`)} onToggle={() => toggleFold(`n:${n.key}`)} />
+      {!folded.has(`n:${n.key}`) && <>
+        {[...n.children.values()].sort((a, b) => a.name.localeCompare(b.name, 'fr')).map(ch => renderBranch(ch, depth + 1))}
+        {n.visits.sort(byDateDesc).map(v => <VisitRow key={v.id} v={v} client={companyName(v.company_id)} onPress={() => navigate({ name: 'visit', id: v.id })} openActions={openActionsOf(v.id)} />)}
+      </>}
+    </View>
+  );
 
   const themeLabels: [ThemePref, string][] = [['system', 'Système'], ['light', 'Clair'], ['dark', 'Sombre']];
 
@@ -287,24 +315,27 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
           </View>
           {hiddenValidated > 0 && <Text style={s.muted}>{hiddenValidated} visite{hiddenValidated > 1 ? 's' : ''} terminée{hiddenValidated > 1 ? 's' : ''} masquée{hiddenValidated > 1 ? 's' : ''}.</Text>}
           {shownVisits.length === 0 && <Text style={s.muted}>{data.visits.length === 0 ? 'Aucune visite. Ouvrez un client (onglet Clients) pour en planifier une.' : 'Aucune visite à afficher.'}</Text>}
+          <TextInput accessibilityLabel="Rechercher un client" placeholder="Rechercher un client…" placeholderTextColor={c.muted} style={s.input} value={visitQ} onChangeText={setVisitQ} autoCapitalize="none" autoCorrect={false} />
           {group === 'branch'
-            ? branchGroups.map(g => (
-              <View key={g.id} style={{ gap: 8 }}>
-                <View style={s.group}><Text accessibilityRole="header" style={s.h2}>{g.name}</Text><Text style={s.muted}>{g.visits.length} visite{g.visits.length > 1 ? 's' : ''}</Text></View>
-                {g.visits.map(v => <VisitRow key={v.id} v={v} client={companyName(v.company_id)} onPress={() => navigate({ name: 'visit', id: v.id })} openActions={openActionsOf(v.id)} />)}
-              </View>))
+            ? [...branchTree.children.values()].sort((a, b) => a.name.localeCompare(b.name, 'fr')).map(n => renderBranch(n, 0))
             : group === 'client'
             ? groups.map(g => (
               <View key={g.id} style={{ gap: 8 }}>
-                <View style={s.group}><Text accessibilityRole="header" style={s.h2}>{g.name}</Text><Text style={s.muted}>{g.visits.length} visite{g.visits.length > 1 ? 's' : ''}{g.visits.some(v => isVisitLate(v)) ? <Text style={{ color: c.late, fontWeight: '700' }}> · {g.visits.filter(v => isVisitLate(v)).length} en retard</Text> : null}</Text></View>
-                {g.visits.map(v => <VisitRow key={v.id} v={v} onPress={() => navigate({ name: 'visit', id: v.id })} openActions={openActionsOf(v.id)} />)}
+                <FoldHeader title={g.name} count={`${g.visits.length} visite${g.visits.length > 1 ? 's' : ''}`} late={g.visits.filter(v => isVisitLate(v)).length} folded={folded.has(`c:${g.id}`)} onToggle={() => toggleFold(`c:${g.id}`)} />
+                {!folded.has(`c:${g.id}`) && g.visits.map(v => <VisitRow key={v.id} v={v} onPress={() => navigate({ name: 'visit', id: v.id })} openActions={openActionsOf(v.id)} />)}
               </View>))
-            : [...shownVisits].sort(byDateDesc).map(v => <VisitRow key={v.id} v={v} client={companyName(v.company_id)} onPress={() => navigate({ name: 'visit', id: v.id })} openActions={openActionsOf(v.id)} />)}
+            : monthGroups.map(g => (
+              <View key={g.key || 'none'} style={{ gap: 8 }}>
+                <FoldHeader title={g.name} count={`${g.visits.length} visite${g.visits.length > 1 ? 's' : ''}`} late={g.visits.filter(v => isVisitLate(v)).length} folded={folded.has(`m:${g.key}`)} onToggle={() => toggleFold(`m:${g.key}`)} />
+                {!folded.has(`m:${g.key}`) && g.visits.map(v => <VisitRow key={v.id} v={v} client={companyName(v.company_id)} onPress={() => navigate({ name: 'visit', id: v.id })} openActions={openActionsOf(v.id)} />)}
+              </View>))}
+          {folded.size > 0 && <Pressable onPress={() => setFolded(new Set())} accessibilityRole="button"><Text style={s.link}>Tout déplier</Text></Pressable>}
         </>}
         {screen.name === 'clients' && <>
           <Text style={s.h1}>Clients</Text>
           <Text style={s.muted}>Source : CRM, lecture seule. Touchez un client pour voir sa fiche, ses visites et ses actions.</Text>
-          {data.companies.filter(c => c.status === 'active').map(c => (
+          <TextInput accessibilityLabel="Rechercher un client" placeholder="Rechercher un client…" placeholderTextColor={c.muted} style={s.input} value={clientQ} onChangeText={setClientQ} autoCapitalize="none" autoCorrect={false} />
+          {data.companies.filter(c => c.status === 'active' && (!clientQ.trim() || normText([c.name, c.city, c.sector].filter(Boolean).join(' ')).includes(normText(clientQ)))).map(c => (
             <Row key={c.id} title={c.name} sub={[c.city, c.sector].filter(Boolean).join(' · ')}
               onPress={() => navigate({ name: 'client', id: c.id })} />
           ))}
@@ -391,6 +422,20 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
         ))}
       </View>
     </SafeAreaView>
+  );
+}
+
+/** Texte sans accents ni majuscules : recherche tolérante. */
+const normText = (t: string) => t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+
+/** En-tête de zone repliable (client, mois, département). */
+function FoldHeader({ title, count, late, folded, onToggle }: { title: string; count: string; late?: number; folded: boolean; onToggle: () => void }) {
+  const { s, c } = useTheme();
+  return (
+    <Pressable onPress={onToggle} accessibilityRole="button" accessibilityState={{ expanded: !folded }} accessibilityLabel={`${folded ? 'Déplier' : 'Replier'} ${title}`} style={s.group}>
+      <Text accessibilityRole="header" style={s.h2}>{folded ? '▸' : '▾'} {title}</Text>
+      <Text style={s.muted}>{count}{late ? <Text style={{ color: c.late, fontWeight: '700' }}> · {late} en retard</Text> : null}</Text>
+    </Pressable>
   );
 }
 
