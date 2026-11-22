@@ -183,14 +183,14 @@ async function handle(ctx: Ctx): Promise<Applied> {
         const p = parse(S.visitCreate, op.payload);
         if (p.status === 'validated') throw new Reject('validation_failed', 'Le statut « validée » est attribué automatiquement');
         await companyReadable(c, userId, p.company_id);
-        // Branche de la visite : un nœud de l'auteur ; choisi par lui quand il est affecté à plusieurs nœuds.
+        // Département de la visite : un nœud de l'auteur ; choisi par lui quand il est affecté à plusieurs nœuds.
         const nodes = (await c.query(`SELECT node_id FROM user_org WHERE user_id = $1`, [userId])).rows.map(r => r.node_id as string);
         const { org_node_id: wanted, ...rest } = p;
         let node = wanted;
-        if (node) { if (!nodes.includes(node)) throw new Reject('validation_failed', "Cette branche n'est pas l'une des vôtres"); }
+        if (node) { if (!nodes.includes(node)) throw new Reject('validation_failed', "Ce département n'est pas l'un des vôtres"); }
         else if (nodes.length === 1) node = nodes[0];
-        else if (nodes.length === 0) throw new Reject('no_org_node', "Vous n'êtes affecté à aucune branche : contactez l'administrateur");
-        else throw new Reject('org_node_required', 'Choisissez la branche de la visite');
+        else if (nodes.length === 0) throw new Reject('no_org_node', "Vous n'êtes affecté à aucun département : contactez l'administrateur");
+        else throw new Reject('org_node_required', 'Choisissez le département de la visite');
         await insert(c, 'visit', { id, author_id: userId, org_node_id: node, ...rest });
         return { version: 1, fields: Object.keys(p) };
       }
@@ -209,12 +209,12 @@ async function handle(ctx: Ctx): Promise<Applied> {
           if (open > 0) throw new Reject('locked_status', 'Des actions restent à faire : terminez-les ou annulez-les avant d\'annuler la visite');
         }
         if (fields.status === 'deleted' && row.status !== 'deleted') {
-          if (!canDeleteVisit(me.role as UserRole, isAuthor)) throw new Reject('forbidden', 'Seul le commercial auteur de la visite ou un directeur peut la supprimer');
+          if (!canDeleteVisit(me.role as UserRole, isAuthor)) throw new Reject('forbidden', 'Seul le visiteur auteur de la visite ou un directeur peut la supprimer');
           const open = (await c.query(`SELECT count(*)::int AS n FROM action_item WHERE visit_id = $1 AND status = 'todo'`, [id])).rows[0].n;
           if (open > 0) throw new Reject('locked_status', 'Des actions restent à faire : terminez-les ou annulez-les avant de supprimer la visite');
         }
         if ('location_text' in fields && !canEditVisitAddress(row.status as VisitStatus, me.role as UserRole)) {
-          throw new Reject('locked_status', row.status === 'organized' ? "Une fois la visite organisée, l'adresse n'est modifiable que par un commercial" : "L'adresse n'est plus modifiable une fois la visite commencée");
+          throw new Reject('locked_status', row.status === 'organized' ? "Une fois la visite organisée, l'adresse n'est modifiable que par un visiteur" : "L'adresse n'est plus modifiable une fois la visite commencée");
         }
         if (('planned_start' in fields || 'planned_end' in fields) && !canEditVisitDate(row.status as VisitStatus, isAuthor)) {
           throw new Reject('locked_status', 'La date prévue n\'est plus modifiable une fois la visite commencée');
@@ -324,13 +324,13 @@ async function handle(ctx: Ctx): Promise<Applied> {
       return { fields: ['deleted_at'] };
     }
     case 'internal_note': {
-      // Écriture : les commerciaux qui voient la visite. Lecture : l'auteur et sa hiérarchie (lecture seule pour elle).
+      // Écriture : les visiteurs qui voient la visite. Lecture : l'auteur et sa hiérarchie (lecture seule pour elle).
       if (op.op === 'create') {
         const p = parse(S.internalCreate, op.payload);
         const me = (await c.query(`SELECT role, display_name FROM app_user WHERE id = $1`, [userId])).rows[0];
         const vi = await visitRow(c, userId, p.visit_id, false);
         if (vi.status === 'deleted') throw new Reject('locked_status', 'Visite supprimée');
-        if (me.role !== 'commercial') throw new Reject('forbidden', 'Les notes internes sont écrites par les commerciaux');
+        if (me.role !== 'commercial') throw new Reject('forbidden', 'Les notes internes sont écrites par les visiteurs');
         await insert(c, 'internal_note', { id, author_id: userId, author_name: me.display_name, ...p });
         return { fields: Object.keys(p) };
       }

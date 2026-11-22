@@ -31,10 +31,10 @@ export function Modal({ title, onClose, children, wide, footer }: { title: strin
 export const Field = ({ label, hint, children, full }: { label: string; hint?: string; children: ReactNode; full?: boolean }) => (
   <label className={`field${full ? ' full' : ''}`}><span>{label}</span>{children}{hint && <small>{hint}</small>}</label>
 );
-/** Rappelle qu'un auteur n'est plus actif ou n'est plus commercial (ses visites restent affichées). */
+/** Rappelle qu'un auteur n'est plus actif ou n'est plus visiteur (ses visites restent affichées). */
 export const AuthorState = ({ status, role }: { status?: string; role?: string }) => (<>
   {status === 'disabled' && <> <span className="badge grey" title="Compte désactivé : ses visites restent affichées">Désactivé</span></>}
-  {role && role !== 'commercial' && <> <span className="badge blue" title="N'est plus commercial : ses visites restent affichées">{role === 'manager' ? 'Manager' : 'Directeur'}</span></>}
+  {role && role !== 'commercial' && <> <span className="badge blue" title="N'est plus visiteur : ses visites restent affichées">{role === 'manager' ? 'Responsable' : 'Directeur'}</span></>}
 </>);
 export const Badge = ({ tone = 'grey', children }: { tone?: string; children: ReactNode }) => <span className={`badge ${tone}`}>{children}</span>;
 export const Alert = ({ kind = 'error', children }: { kind?: 'error' | 'ok' | 'warn'; children: ReactNode }) => <div className={`alert ${kind}`} role={kind === 'error' ? 'alert' : 'status'}>{children}</div>;
@@ -47,11 +47,11 @@ export function Card({ title, actions, children }: { title?: string; actions?: R
   return <section className="card">{(title || actions) && <div className="card-head">{title && <h3>{title}</h3>}<div className="spacer" />{actions}</div>}{children}</section>;
 }
 
-/** Branche de l'organisation : option indentée selon la profondeur (relative à la première branche de la liste). */
+/** Département de l'organisation : option indentée selon la profondeur (relative au premier département de la liste). */
 export function BranchSelect({ nodes, value, onChange, all, label }: { nodes: { id: string; name: string; depth: number }[]; value: string; onChange: (v: string) => void; all?: string; label?: string }) {
   const base = nodes.length ? Math.min(...nodes.map(n => n.depth)) : 0;
   return (
-    <select aria-label={label ?? 'Branche'} value={value} onChange={e => onChange(e.target.value)}>
+    <select aria-label={label ?? 'Département'} value={value} onChange={e => onChange(e.target.value)}>
       {all !== undefined && <option value="">{all}</option>}
       {nodes.map(n => <option key={n.id} value={n.id}>{'  '.repeat(Math.max(0, n.depth - base))}{n.name}</option>)}
     </select>

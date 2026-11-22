@@ -513,7 +513,7 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await mp.getByText('Statut', { exact: true }).waitFor();
   assert.equal(await mp.getByRole('button', { name: 'Supprimer la visite' }).getAttribute('data-testid'), 'disabled-hint', 'le manager ne supprime pas une visite');
   await mp.getByRole('button', { name: 'Supprimer la visite' }).hover();
-  await mp.getByText(/réservée au commercial auteur de la visite et au directeur/).waitFor();
+  await mp.getByText(/réservée au visiteur auteur de la visite et au directeur/).waitFor();
   await mp.getByRole('button', { name: '‹ Retour' }).click();
   await p1.getByRole('button', { name: 'Supprimer la visite' }).click();
   await p1.getByText('Supprimer cette visite ?').waitFor();                 // confirmation demandée

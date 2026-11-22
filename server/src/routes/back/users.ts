@@ -41,10 +41,10 @@ export function usersRouter(pool: Pool) {
   /** Affectation aux nœuds de l'organisation : au moins un nœud, sauf pour un compte administrateur (qui voit tout par ce droit). */
   async function setNodes(c: { query: Pool['query'] }, userId: string, nodeIds: string[], isAdmin: boolean) {
     const ids = [...new Set(nodeIds)];
-    if (ids.length === 0 && !isAdmin) throw new HttpError(400, 'validation_failed', "Affectez le compte à au moins une branche de l'organisation");
+    if (ids.length === 0 && !isAdmin) throw new HttpError(400, 'validation_failed', "Affectez le compte à au moins un département de l'organisation");
     if (ids.length) {
       const ok = (await c.query(`SELECT count(*)::int AS n FROM org_node WHERE id = ANY($1::uuid[])`, [ids])).rows[0].n;
-      if (ok !== ids.length) throw new HttpError(404, 'not_found', 'Branche inconnue');
+      if (ok !== ids.length) throw new HttpError(404, 'not_found', 'Département inconnu');
     }
     await c.query(`DELETE FROM user_org WHERE user_id = $1`, [userId]);
     for (const n of ids) await c.query(`INSERT INTO user_org(user_id, node_id) VALUES ($1,$2)`, [userId, n]);

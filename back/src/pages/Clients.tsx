@@ -18,7 +18,7 @@ export function Clients() {
         </div>
         {error && <Alert>{error}</Alert>}{loading && !data && <Loading />}
         {data && (data.companies.length === 0 ? <Empty>Aucun client. Créez-en un ou importez un fichier CSV.</Empty> : <>
-          <div className="scroll"><table className="clickable"><thead><tr><th>Client</th><th>Identifiant CRM</th><th>Ville</th><th>Commerciaux</th><th>Contacts</th><th>Visites</th><th>Statut</th></tr></thead><tbody>
+          <div className="scroll"><table className="clickable"><thead><tr><th>Client</th><th>Identifiant CRM</th><th>Ville</th><th>Visiteurs</th><th>Contacts</th><th>Visites</th><th>Statut</th></tr></thead><tbody>
             {data.companies.map((c: R) => <tr key={c.id} tabIndex={0} onClick={() => setEdit(c.id)} onKeyDown={e => { if (e.key === 'Enter') setEdit(c.id); }}>
               <td><strong>{c.name}</strong></td><td><code>{c.crm_id}</code></td><td>{c.city ?? '—'}</td><td>{c.assigned.map((a: R) => a.name).join(', ') || <span className="muted">Aucun</span>}</td><td>{c.contacts_count}</td><td>{c.visits_count}</td>
               <td><Badge tone={c.status === 'active' ? 'green' : 'grey'}>{c.status === 'active' ? 'Actif' : 'Inactif'}</Badge></td></tr>)}
@@ -48,7 +48,7 @@ function CompanyModal({ id, onClose, onChanged }: { id: string | null; onClose: 
     else { const r = await api<R>('companies', { method: 'POST', body: fields(form) }); setCid(r.id); setF(null); }
     detail.reload();
   }, 'Enregistré.');
-  const commerciaux = (users.data?.users ?? []).filter((u: R) => u.role === 'commercial' && u.status === 'active');
+  const visiteurs = (users.data?.users ?? []).filter((u: R) => u.role === 'commercial' && u.status === 'active');
   const assigned = new Set<string>((d?.company.assigned ?? []).map((a: R) => a.id));
   const toggle = (uid: string) => guard(async () => { const s = new Set(assigned); if (s.has(uid)) s.delete(uid); else s.add(uid); await api(`companies/${cid}/assignments`, { method: 'PUT', body: { user_ids: [...s] } }); detail.reload(); });
   return (
@@ -64,11 +64,11 @@ function CompanyModal({ id, onClose, onChanged }: { id: string | null; onClose: 
           {err && <Alert>{err}</Alert>}{ok && <Alert kind="ok">{ok}</Alert>}
         </section>
         {cid && d ? <>
-          <section><h3>Commerciaux affectés</h3><p className="muted">Un commercial voit le client (et ses managers avec lui) dès qu'il lui est affecté.</p>
-            <ul className="checks">{commerciaux.map((u: R) => <li key={u.id}><label><input type="checkbox" checked={assigned.has(u.id)} disabled={busy} onChange={() => void toggle(u.id)} /> {u.display_name}</label></li>)}</ul>
-            {commerciaux.length === 0 && <p className="muted">Aucun commercial actif.</p>}</section>
+          <section><h3>Visiteurs affectés</h3><p className="muted">Un visiteur voit le client (et ses responsables avec lui) dès qu'il lui est affecté.</p>
+            <ul className="checks">{visiteurs.map((u: R) => <li key={u.id}><label><input type="checkbox" checked={assigned.has(u.id)} disabled={busy} onChange={() => void toggle(u.id)} /> {u.display_name}</label></li>)}</ul>
+            {visiteurs.length === 0 && <p className="muted">Aucun visiteur actif.</p>}</section>
           <Contacts companyId={cid} contacts={d.contacts} onChange={() => { detail.reload(); onChanged(); }} />
-        </> : <section><p className="muted">Enregistrez le client pour affecter des commerciaux et ajouter des contacts.</p></section>}
+        </> : <section><p className="muted">Enregistrez le client pour affecter des visiteurs et ajouter des contacts.</p></section>}
       </div>
     </Modal>
   );
@@ -114,7 +114,7 @@ function ImportModal({ onClose, onDone }: { onClose: () => void; onDone: () => v
   const ready = !!(companies || contacts);
   return (
     <Modal wide title="Importer des clients et contacts (CSV)" onClose={onClose} footer={<><button onClick={onClose}>Fermer</button><Tip why={!ready ? 'Choisissez au moins un fichier CSV.' : undefined}><button disabled={!ready || busy} onClick={() => void run(true)}>Vérifier</button></Tip><Tip why={!ready ? 'Choisissez au moins un fichier CSV.' : !res || res.dry_run === false ? (err ? 'Corrigez le fichier puis vérifiez à nouveau : l\'import est bloqué tant que la vérification échoue.' : 'Cliquez d\'abord sur « Vérifier » : l\'import n\'est possible qu\'après une vérification réussie.') : undefined}><button className="primary" disabled={!ready || busy || !res || res.dry_run === false} onClick={() => void run(false)}>Importer</button></Tip></>}>
-      <p className="muted">Séparateur « ; » ou « , », encodage UTF-8. Un client déjà connu (même identifiant CRM) est mis à jour ; ses commerciaux (colonne <code>sales_emails</code>) remplacent les affectations issues du CRM. Les erreurs de format bloquent tout l'import. Modèles : <a download="clients.csv" href={dataUrl(TEMPLATE_COMPANIES)}>clients.csv</a> · <a download="contacts.csv" href={dataUrl(TEMPLATE_CONTACTS)}>contacts.csv</a></p>
+      <p className="muted">Séparateur « ; » ou « , », encodage UTF-8. Un client déjà connu (même identifiant CRM) est mis à jour ; ses visiteurs (colonne <code>sales_emails</code>) remplacent les affectations issues du CRM. Les erreurs de format bloquent tout l'import. Modèles : <a download="clients.csv" href={dataUrl(TEMPLATE_COMPANIES)}>clients.csv</a> · <a download="contacts.csv" href={dataUrl(TEMPLATE_CONTACTS)}>contacts.csv</a></p>
       <div className="form">
         <Field label="Fichier des clients"><input type="file" accept=".csv,text/csv" onChange={e => void read(e, setCompanies)} /></Field>
         <Field label="Fichier des contacts (facultatif)"><input type="file" accept=".csv,text/csv" onChange={e => void read(e, setContacts)} /></Field>

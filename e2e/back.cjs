@@ -16,6 +16,8 @@ async function login(page, email, pwd = PWD) {
   await page.getByRole('navigation').waitFor();
 }
 const nav = (page, name) => page.getByRole('navigation').getByRole('link', { name }).click();
+/** Administration : rubrique du menu horizontal puis onglet. */
+const admin = async (page, tab) => { await nav(page, 'Administration'); await page.getByRole('tab', { name: tab }).click(); };
 const dialog = page => page.getByRole('dialog');
 
 (async () => {
@@ -38,11 +40,11 @@ const dialog = page => page.getByRole('dialog');
 
   // 1. Administrateur : toutes les rubriques
   await login(page, 'admin@exemple.invalid');
-  for (const n of ['Reporting', 'Préparation', 'Visites', 'Comptes', /Clients/]) await page.getByRole('navigation').getByRole('link', { name: n }).waitFor();
+  for (const n of ['Reporting', 'Visites', 'Administration']) await page.getByRole('navigation').getByRole('link', { name: n }).waitFor();
   assert.equal(await page.title(), 'ACME Industrie – Back office');
 
   // 2. Maquette du CRM : créer un client, l'affecter, ajouter un contact
-  await nav(page, /Clients/);
+  await admin(page, /Clients/);
   await page.getByRole('heading', { name: /Clients \(maquette/ }).waitFor();
   await page.getByText('Dupont SA').waitFor();
   await page.getByRole('button', { name: '+ Nouveau client' }).click();
@@ -75,7 +77,7 @@ const dialog = page => page.getByRole('dialog');
   await files.nth(1).setInputFiles({ name: 'contacts.csv', mimeType: 'text/csv', buffer: Buffer.from('company_crm_id;full_name;email\nIMP-1;Jean Import;jean@import.example\n') });
   await dialog(page).getByRole('button', { name: 'Vérifier' }).click();
   await dialog(page).getByText(/Vérification réussie : 2 client\(s\), 1 contact\(s\)/).waitFor();
-  await dialog(page).getByText(/commercial inconnu « inconnu@exemple.invalid »/).waitFor();
+  await dialog(page).getByText(/visiteur inconnu « inconnu@exemple.invalid »/).waitFor();
   await dialog(page).getByRole('button', { name: 'Importer', exact: true }).click();
   await dialog(page).getByText(/Import terminé/).waitFor();
   await dialog(page).getByRole('button', { name: 'Fermer', exact: true }).last().click();
@@ -83,7 +85,7 @@ const dialog = page => page.getByRole('dialog');
   await page.getByRole('cell', { name: 'Import "Deux", SA' }).waitFor();
 
   // 4. Comptes : création (mot de passe temporaire affiché une fois), connexion du nouveau compte, désactivation
-  await nav(page, 'Comptes');
+  await admin(page, 'Comptes');
   await page.getByRole('button', { name: '+ Nouveau compte' }).click();
   await dialog(page).getByLabel('Nom affiché').fill('Nina Nouvelle');
   await dialog(page).getByLabel('E-mail', { exact: true }).fill('nina@exemple.invalid');
@@ -96,11 +98,22 @@ const dialog = page => page.getByRole('dialog');
   await page.getByRole('button', { name: /J'ai noté/ }).click();
   await page.getByRole('cell', { name: 'nina@exemple.invalid' }).waitFor();
   await page.getByText('Visibilité des comptes rendus').waitFor();
+  await page.getByLabel('Rechercher un compte').fill('nina');             // recherche et filtres des comptes
+  await page.getByRole('row', { name: /Nina Nouvelle/ }).waitFor();
+  await page.getByRole('row', { name: /Commercial Un/ }).waitFor({ state: 'detached' });
+  await page.getByLabel('Rechercher un compte').fill('');
+  await page.getByLabel('Rôle', { exact: true }).selectOption('directeur');
+  await page.getByRole('row', { name: /Directeur Démo/ }).waitFor();
+  assert.equal(await page.getByRole('row', { name: /Nina Nouvelle/ }).count(), 0, 'filtre par rôle');
+  await page.getByLabel('Rôle', { exact: true }).selectOption('');
+  await page.getByLabel('Statut', { exact: true }).selectOption('disabled');
+  await page.getByText('Aucun compte ne correspond.').waitFor();
+  await page.getByLabel('Statut', { exact: true }).selectOption('');
   await shot(page, 'b3-comptes');
   const c2 = await browser.newContext({ viewport: { width: 1360, height: 900 } });
   const p2 = await c2.newPage();
   await login(p2, 'nina@exemple.invalid', temp);                  // le nouveau compte se connecte avec le mot de passe temporaire
-  assert.equal(await p2.getByRole('navigation').getByRole('link', { name: 'Comptes' }).count(), 0, 'un commercial ne voit pas la rubrique Comptes');
+  assert.equal(await p2.getByRole('navigation').getByRole('link', { name: 'Administration' }).count(), 0, 'un visiteur ne voit pas l\'administration');
   await p2.getByRole('heading', { name: "Reporting d'activité" }).waitFor();
   await page.getByRole('row', { name: /Nina Nouvelle/ }).getByRole('button', { name: 'Désactiver' }).click();
   await page.getByRole('row', { name: /Nina Nouvelle/ }).getByText('Désactivé').waitFor();
@@ -109,40 +122,40 @@ const dialog = page => page.getByRole('dialog');
   await c2.close();
 
   // 4 bis. Organisation arborescente : sous-branche, règles de suppression (au survol), commercial dans plusieurs branches
-  await nav(page, 'Organisation');
+  await admin(page, 'Organisation');
   await page.getByRole('heading', { name: 'Organisation' }).waitFor();
   const rowOf = n => page.getByRole('row').filter({ hasText: n }).first();
   await rowOf('Agence Lyon').waitFor();
   assert.match(await rowOf('Agence Lyon').locator('.tip').getAttribute('title'), /utilisateurs sont affectés/, 'suppression impossible : raison au survol');
   for (const name of ['Agence Grenoble', 'Temporaire']) {
-    await rowOf('Entreprise').getByRole('button', { name: '+ Sous-branche' }).click();
-    await dialog(page).getByLabel('Nom de la branche').fill(name);
+    await rowOf('Entreprise').getByRole('button', { name: /^Ajouter un sous-département/ }).click();
+    await dialog(page).getByLabel('Nom du département').fill(name);
     await dialog(page).getByRole('button', { name: 'Enregistrer', exact: true }).click();
     await rowOf(name).waitFor();
   }
-  await rowOf('Temporaire').getByRole('button', { name: 'Supprimer' }).click();               // branche vide : supprimée
+  await rowOf('Temporaire').getByRole('button', { name: /^Supprimer / }).click();               // branche vide : supprimée
   await page.getByRole('row').filter({ hasText: 'Temporaire' }).waitFor({ state: 'detached' });
   // arbre à plusieurs niveaux : niveaux distincts, branches repliables
-  await rowOf('Agence Lyon').getByRole('button', { name: '+ Sous-branche' }).click();
-  await dialog(page).getByLabel('Nom de la branche').fill('Équipe Nord');
+  await rowOf('Agence Lyon').getByRole('button', { name: /^Ajouter un sous-département/ }).click();
+  await dialog(page).getByLabel('Nom du département').fill('Équipe Nord');
   await dialog(page).getByRole('button', { name: 'Enregistrer', exact: true }).click();
   await rowOf('Équipe Nord').waitFor();
   assert.equal(await rowOf('Équipe Nord').getByText('Niveau 3', { exact: true }).count(), 1, 'niveau affiché');
   assert.equal(await rowOf('Entreprise').getByText('Niveau 1', { exact: true }).count(), 1);
   // plusieurs branches de premier niveau : création et suppression d'une branche vide de premier niveau
-  await page.getByRole('button', { name: '+ Branche de premier niveau' }).click();
-  await dialog(page).getByLabel('Nom de la branche').fill('Premier niveau test');
+  await page.getByRole('button', { name: '+ Département de premier niveau' }).click();
+  await dialog(page).getByLabel('Nom du département').fill('Premier niveau test');
   await dialog(page).getByRole('button', { name: 'Enregistrer', exact: true }).click();
   await rowOf('Premier niveau test').waitFor();
   assert.equal(await rowOf('Premier niveau test').getByText('Niveau 1', { exact: true }).count(), 1, 'deuxième branche de premier niveau');
-  await rowOf('Premier niveau test').getByRole('button', { name: 'Supprimer' }).click();
+  await rowOf('Premier niveau test').getByRole('button', { name: /^Supprimer / }).click();
   await page.getByRole('row').filter({ hasText: 'Premier niveau test' }).waitFor({ state: 'detached' });
   await shot(page, 'b2b-organisation');
-  await page.getByRole('button', { name: 'Replier la branche Agence Lyon' }).click();
+  await page.getByRole('button', { name: 'Replier le département Agence Lyon' }).click();
   await page.getByRole('row').filter({ hasText: 'Équipe Nord' }).waitFor({ state: 'detached' });
   await rowOf('Agence Lyon').getByText('+1', { exact: true }).waitFor();
   await shot(page, 'b2b-organisation-repliee');
-  await page.getByRole('button', { name: 'Déplier la branche Agence Lyon' }).click();
+  await page.getByRole('button', { name: 'Déplier le département Agence Lyon' }).click();
   await rowOf('Équipe Nord').waitFor();
   await page.getByRole('button', { name: 'Tout replier' }).click();
   await page.getByRole('row').filter({ hasText: 'Équipe Nord' }).waitFor({ state: 'detached' });
@@ -150,18 +163,18 @@ const dialog = page => page.getByRole('dialog');
   await rowOf('Entreprise').getByText('+', { exact: false }).first().waitFor();
   await page.getByRole('button', { name: 'Tout déplier' }).click();
   await rowOf('Équipe Nord').waitFor();
-  await nav(page, 'Comptes');
+  await admin(page, 'Comptes');
   await page.getByRole('row', { name: /Commercial Deux/ }).getByRole('button', { name: 'Modifier' }).click();
   // sélecteur de branches : arbre avec niveaux, repli, récapitulatif des choix
   await dialog(page).getByRole('checkbox', { name: 'Équipe Nord' }).waitFor();
   assert.equal(await dialog(page).getByRole('checkbox', { name: 'Agence Lyon' }).isChecked(), true, 'branche actuelle cochée');
-  await dialog(page).getByLabel('Branches choisies').getByText('Agence Lyon').waitFor();
+  await dialog(page).getByLabel('Départements choisis').getByText('Agence Lyon').waitFor();
   await shot(page, 'b2d-compte-branches');
   await dialog(page).getByRole('checkbox', { name: 'Équipe Nord' }).check();
-  await dialog(page).getByRole('button', { name: 'Replier la branche Agence Lyon' }).click();
+  await dialog(page).getByRole('button', { name: 'Replier le département Agence Lyon' }).click();
   await dialog(page).getByRole('checkbox', { name: 'Équipe Nord' }).waitFor({ state: 'detached' });
-  await dialog(page).getByText(/^\+1 · 1 cochée$/).waitFor();                 // le repli signale les choix qu'il masque
-  await dialog(page).getByRole('button', { name: 'Déplier la branche Agence Lyon' }).click();
+  await dialog(page).getByText(/^\+1 · 1 coché$/).waitFor();                 // le repli signale les choix qu'il masque
+  await dialog(page).getByRole('button', { name: 'Déplier le département Agence Lyon' }).click();
   await dialog(page).getByRole('checkbox', { name: 'Équipe Nord' }).uncheck();
   await dialog(page).getByRole('checkbox', { name: 'Agence Grenoble' }).check();
   await dialog(page).getByRole('button', { name: 'Enregistrer', exact: true }).click();
@@ -176,20 +189,21 @@ const dialog = page => page.getByRole('dialog');
   await op2.getByRole('button', { name: 'Clients', exact: true }).click();
   await op2.getByText('Atelier Roux').click();
   await op2.getByRole('button', { name: '+ Planifier une visite' }).click();
-  await op2.getByText('Pour quelle branche ?').waitFor();
+  await op2.getByText('Pour quel département ?').waitFor();
   await shot(op2, 'b2c-choix-branche');
   await op2.getByRole('button', { name: 'Entreprise › Agence Grenoble' }).click();
   await op2.getByText('Statut', { exact: true }).waitFor();
-  await op2.getByText('Branche', { exact: true }).waitFor();
+  await op2.getByText('Département', { exact: true }).waitFor();
   await op2.getByText('Agence Grenoble', { exact: true }).waitFor();
   await octx.close();
 
   // 5. Préparation : le client sans visite est suggéré ; fiche ; planification pour Commercial Un
-  await nav(page, 'Préparation');
+  await nav(page, 'Reporting');
+  await page.getByRole('tab', { name: 'Clients à visiter' }).click();     // les clients à visiter sont dans le reporting
   await page.getByRole('row', { name: /Quincaillerie Test/ }).getByText('Jamais visité').waitFor();
   await shot(page, 'b4-suggestions');
   await page.getByRole('row', { name: /Quincaillerie Test/ }).getByRole('button', { name: 'Fiche' }).click();
-  await dialog(page).getByRole('heading', { name: 'Préparer : Quincaillerie Test' }).waitFor();
+  await dialog(page).getByRole('heading', { name: 'Préparer : Quincaillerie Test' }).waitFor({ timeout: 6000 }).catch(async e => { throw e; });
   await dialog(page).getByText('Mme Test').waitFor();
   await shot(page, 'b5-fiche');
   await dialog(page).getByRole('button', { name: 'Préparer une visite' }).click();
@@ -200,7 +214,8 @@ const dialog = page => page.getByRole('dialog');
   await dialog(page).getByLabel('Objectif', { exact: true }).fill('Présenter la gamme 2027');
   await dialog(page).getByLabel('Points à aborder').fill('Apporter le catalogue ; parler du contrat cadre');
   await dialog(page).getByRole('button', { name: 'Enregistrer', exact: true }).click();
-  await page.getByRole('heading', { name: /Commercial Commercial Un|Commercial Un/ }).waitFor();   // zone du commercial (onglet Visites en préparation)
+  await nav(page, 'Visites');                                   // vue « À organiser avec le client » par défaut : une zone par personne
+  await page.getByRole('heading', { name: /Visites de Commercial Un/ }).waitFor();
   await page.getByRole('row', { name: /Quincaillerie Test/ }).getByText('À organiser avec le client').waitFor();
   await page.getByRole('row', { name: /Quincaillerie Test/ }).getByText('Apporter le catalogue').waitFor();      // les points à aborder saisis sont visibles
   await shot(page, 'b6-planning');
@@ -211,12 +226,12 @@ const dialog = page => page.getByRole('dialog');
   assert.ok(v, 'la visite planifiée arrive chez le commercial');
   assert.equal(v.preparation_notes, 'Apporter le catalogue ; parler du contrat cadre'); assert.ok(v.created_by);
   // le client prévu n'est plus suggéré (visite déjà planifiée)
-  await page.getByRole('tab', { name: 'Clients à visiter' }).click();
+  await nav(page, 'Reporting'); await page.getByRole('tab', { name: 'Clients à visiter' }).click();
   await page.getByText(/Aucun client à signaler|Dupont SA|Atelier Roux|Import/).first().waitFor();
   assert.equal(await page.getByRole('row', { name: /Quincaillerie Test/ }).count(), 0, 'client déjà planifié : plus suggéré');
   // modification du rendez-vous
-  await page.getByRole('tab', { name: 'Visites en préparation' }).click();
-  await page.getByRole('row', { name: /Quincaillerie Test/ }).getByRole('button', { name: 'Préparer' }).click();
+  await nav(page, 'Visites');
+  await page.getByRole('row', { name: /Quincaillerie Test/ }).getByRole('button', { name: 'Préparer', exact: true }).click();
   await dialog(page).getByLabel('Statut').selectOption('organized');
   await dialog(page).getByRole('button', { name: 'Enregistrer', exact: true }).click();
   await page.getByRole('row', { name: /Quincaillerie Test/ }).getByText('Organisée avec le client').waitFor();
@@ -227,8 +242,8 @@ const dialog = page => page.getByRole('dialog');
   await dialog(page).getByLabel('Attribuée à').selectOption('');
   await dialog(page).getByLabel('Objectif', { exact: true }).fill('À répartir');
   await dialog(page).getByRole('button', { name: 'Enregistrer', exact: true }).click();
-  if (await dialog(page).getByLabel('Branche de la visite').waitFor({ timeout: 3000 }).then(() => true, () => false)) {   // plusieurs branches possibles : on choisit
-    await dialog(page).getByLabel('Branche de la visite').selectOption({ index: 1 });
+  if (await dialog(page).getByLabel('Département de la visite').waitFor({ timeout: 3000 }).then(() => true, () => false)) {   // plusieurs branches possibles : on choisit
+    await dialog(page).getByLabel('Département de la visite').selectOption({ index: 1 });
     await dialog(page).getByRole('button', { name: 'Enregistrer', exact: true }).click();
   }
   await page.getByRole('heading', { name: /Visites non attribuées/ }).waitFor({ timeout: 8000 }).catch(async e => { await page.screenshot({ path: '/tmp/dbg.png' }); console.log('DBGTEXT', (await page.locator('body').innerText()).slice(0, 1500)); throw e; });
@@ -270,28 +285,40 @@ const dialog = page => page.getByRole('dialog');
   // 7. Reporting : indicateurs et export
   await nav(page, 'Reporting');
   await page.getByText('Visites effectuées', { exact: true }).waitFor();
-  await page.getByRole('heading', { name: 'Par commercial' }).waitFor();
-  await page.getByRole('heading', { name: /Par branche/ }).waitFor();                 // consolidation par branche
+  await page.getByRole('heading', { name: 'Par visiteur' }).waitFor();
+  await page.getByRole('heading', { name: /Par département/ }).waitFor();                 // consolidation par branche
   await page.getByRole('button', { name: 'Agence Grenoble' }).first().waitFor();
-  await page.getByRole('button', { name: 'Replier la branche Agence Lyon' }).click();            // repli aussi dans le reporting par branche
+  await page.getByRole('button', { name: 'Replier le département Agence Lyon' }).click();            // repli aussi dans le reporting par branche
   await page.getByRole('row').filter({ hasText: 'Équipe Nord' }).waitFor({ state: 'detached' });
-  await page.getByRole('button', { name: 'Déplier la branche Agence Lyon' }).click();
+  await page.getByRole('button', { name: 'Déplier le département Agence Lyon' }).click();
   await page.getByRole('row').filter({ hasText: 'Équipe Nord' }).waitFor();
   const dl = page.waitForEvent('download');
-  await page.getByRole('button', { name: 'Exporter en CSV' }).click();
+  await page.getByRole('button', { name: 'Exporter par visiteur (CSV)' }).click();
   const file = await dl; assert.match(file.suggestedFilename(), /^activite-\d{4}-\d{2}-\d{2}-\d{4}-\d{2}-\d{2}\.csv$/);
+  const dl2 = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Exporter par département (CSV)' }).click();
+  assert.match((await dl2).suggestedFilename(), /^activite-departements-/);
   await shot(page, 'b7-reporting');
+  // objectifs mensuels : définis par visiteur, repris par le reporting d'activité
+  await page.getByRole('tab', { name: 'Objectifs mensuels' }).click();
+  await page.getByLabel('Objectif de Commercial Un').fill('4');
+  await page.getByRole('button', { name: /^Enregistrer/ }).click();
+  await page.getByText('Objectifs enregistrés.').waitFor();
+  await page.getByRole('tab', { name: 'Activité' }).click();
+  await page.getByText('Objectif de visites', { exact: true }).waitFor();
+  await page.getByRole('columnheader', { name: 'Objectif', exact: true }).waitFor();
+  await shot(page, 'b7b-objectifs');
 
   // 7 bis. Réaffecter les visites d'une branche à une autre (pour la vider avant de la supprimer)
-  await nav(page, 'Organisation');
-  await rowOf('Agence Grenoble').getByRole('button', { name: 'Réaffecter les visites' }).click();         // la visite de Commercial Deux y a été créée sur mobile
+  await admin(page, 'Organisation');
+  await rowOf('Agence Grenoble').getByRole('button', { name: /^Réaffecter les visites/ }).click();         // la visite de Commercial Deux y a été créée sur mobile
   await dialog(page).getByText(/Commercial Deux \(1\)/).waitFor();
   const lyon = await dialog(page).locator('option', { hasText: 'Agence Lyon' }).first().getAttribute('value');
   await dialog(page).locator('select').selectOption(lyon);
   await shot(page, 'b7b-reaffecter');
   await dialog(page).getByRole('button', { name: /^Réaffecter 1 visite/ }).click();
   await page.getByText(/1 visite réaffectée à « Agence Lyon »/).waitFor();
-  assert.equal(await rowOf('Agence Grenoble').getByRole('button', { name: 'Réaffecter les visites' }).count(), 0, 'plus de visite dans la branche vidée');
+  assert.equal(await rowOf('Agence Grenoble').getByRole('button', { name: /^Réaffecter les visites/ }).count(), 0, 'plus de visite dans la branche vidée');
 
   // 8. Manager : périmètre limité (pas de comptes), planification pour son équipe seulement
   const c3 = await browser.newContext({ viewport: { width: 1360, height: 900 } });

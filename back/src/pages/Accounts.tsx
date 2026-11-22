@@ -1,27 +1,41 @@
 import { useState } from 'react';
 import { api, type R } from '../api';
 import type { Me } from '../App';
-import { Alert, Badge, Card, Empty, Field, Loading, Modal, Tip, useLoad, errMsg } from '../ui';
+import { Alert, Badge, BranchSelect, Card, Empty, Field, Loading, Modal, Tip, useLoad, errMsg } from '../ui';
 import { ROLE, fmtDateTime } from '../format';
 import { CollapseAll, TreeCell, levelName, useCollapsed, useTree, visibleIndexes } from '../tree';
 
 export function Accounts({ me }: { me: Me }) {
-  const [q, setQ] = useState('');
+  const [q, setQ] = useState(''); const [role, setRole] = useState(''); const [status, setStatus] = useState(''); const [dept, setDept] = useState('');
   const { data, error, loading, reload } = useLoad(() => api<R>(`users?q=${encodeURIComponent(q)}`), [q]);
+  const org = useLoad(() => api<R>('org/mine'), []);
+  const deptNodes: R[] = org.data?.access ?? [];
   const [edit, setEdit] = useState<R | 'new' | null>(null);
   const [secret, setSecret] = useState<{ who: string; password: string } | null>(null);
   const [msg, setMsg] = useState<string>();
-  const users: R[] = data?.users ?? [];
+  // Filtres : rôle, statut, département (le département et ses sous-départements) ; la recherche texte (nom, e-mail) est faite par le serveur.
+  const sub = (id: string) => { const i = deptNodes.findIndex(n => n.id === id); if (i < 0) return new Set<string>(); const out = new Set([id]); for (let k = i + 1; k < deptNodes.length && deptNodes[k].depth > deptNodes[i].depth; k++) out.add(deptNodes[k].id); return out; };
+  const inDept = dept ? sub(dept) : null;
+  const all: R[] = data?.users ?? [];
+  const users = all.filter(u => (!role || (role === 'admin' ? u.is_admin : u.role === role)) && (!status || u.status === status) && (!inDept || u.nodes.some((n: R) => inDept.has(n.id))));
   const act = async (fn: () => Promise<unknown>) => { setMsg(undefined); try { await fn(); reload(); } catch (e) { setMsg(errMsg(e)); } };
   return (
     <>
       <header className="page-head"><div><h1>Comptes</h1><p className="muted">Utilisateurs, rôles et hiérarchie. Le périmètre de chacun (reporting, visites) découle de la hiérarchie.</p></div>
-        <div className="toolbar"><input type="search" placeholder="Rechercher…" aria-label="Rechercher un compte" value={q} onChange={e => setQ(e.target.value)} /><button className="primary" onClick={() => setEdit('new')}>+ Nouveau compte</button></div></header>
+        <div className="toolbar"><button className="primary" onClick={() => setEdit('new')}>+ Nouveau compte</button></div></header>
       {(error || msg) && <Alert>{error ?? msg}</Alert>}
       <Card>
+        <div className="toolbar filters">
+          <input type="search" placeholder="Rechercher (nom, e-mail)…" aria-label="Rechercher un compte" value={q} onChange={e => setQ(e.target.value)} />
+          <select aria-label="Rôle" value={role} onChange={e => setRole(e.target.value)}><option value="">Tous les rôles</option><option value="commercial">Visiteurs</option><option value="manager">Responsables</option><option value="directeur">Directeurs</option><option value="admin">Administrateurs</option></select>
+          <select aria-label="Statut" value={status} onChange={e => setStatus(e.target.value)}><option value="">Tous les statuts</option><option value="active">Actifs</option><option value="disabled">Désactivés</option></select>
+          {deptNodes.length > 0 && <BranchSelect nodes={deptNodes as any} value={dept} onChange={setDept} all="Tous les départements" label="Département" />}
+          <span className="muted">{users.length} compte{users.length > 1 ? 's' : ''}{users.length !== all.length ? ` sur ${all.length}` : ''}</span>
+          {(q || role || status || dept) && <button className="link" onClick={() => { setQ(''); setRole(''); setStatus(''); setDept(''); }}>Réinitialiser</button>}
+        </div>
         {loading && !data && <Loading />}
-        {data && (users.length === 0 ? <Empty>Aucun compte.</Empty> : (
-          <div className="scroll"><table><thead><tr><th>Nom</th><th>E-mail</th><th>Rôle</th><th>Branches</th><th>Statut</th><th>Dernière connexion</th><th /></tr></thead><tbody>
+        {data && (users.length === 0 ? <Empty>Aucun compte ne correspond.</Empty> : (
+          <div className="scroll"><table><thead><tr><th>Nom</th><th>E-mail</th><th>Rôle</th><th>Départements</th><th>Statut</th><th>Dernière connexion</th><th /></tr></thead><tbody>
             {users.map(u => (
               <tr key={u.id} className={u.status === 'disabled' ? 'dim' : ''}>
                 <td><strong>{u.display_name}</strong>{u.is_admin && <> <Badge tone="violet">Admin</Badge></>}</td><td>{u.email}</td><td>{ROLE[u.role]}</td><td>{u.nodes.length ? u.nodes.map((n: R) => <div key={n.id} title={n.path}>{n.name}</div>) : <span className="muted">{u.is_admin ? 'Toutes (admin)' : 'Aucune'}</span>}</td>
@@ -35,7 +49,7 @@ export function Accounts({ me }: { me: Me }) {
           </tbody></table></div>))}
       </Card>
       <Settings />
-      {edit && <UserModal user={edit === 'new' ? null : edit} users={users} onClose={() => setEdit(null)} onDone={pw => { setEdit(null); reload(); if (pw) setSecret(pw); }} />}
+      {edit && <UserModal user={edit === 'new' ? null : edit} users={all} onClose={() => setEdit(null)} onDone={pw => { setEdit(null); reload(); if (pw) setSecret(pw); }} />}
       {secret && <Modal title="Mot de passe temporaire" onClose={() => setSecret(null)} footer={<button className="primary" onClick={() => setSecret(null)}>J'ai noté le mot de passe</button>}>
         <p>Mot de passe de <strong>{secret.who}</strong> :</p><p><code className="secret">{secret.password}</code></p>
         <Alert kind="warn">Il n'est affiché qu'une seule fois et n'est pas conservé. Transmettez-le par un canal sûr ; ses sessions en cours ont été fermées.</Alert></Modal>}
@@ -44,8 +58,8 @@ export function Accounts({ me }: { me: Me }) {
 }
 
 /**
- * Sélecteur de branches d'un compte : arbre (niveaux colorés, traits, branches repliables), cases à cocher, récapitulatif des choix.
- * Cocher une branche donne accès à ses données et à celles de ses sous-branches (managers et directeurs : consolidées).
+ * Sélecteur de départements d'un compte : arbre (niveaux colorés, traits, départements repliables), cases à cocher, récapitulatif des choix.
+ * Cocher un département donne accès à ses données et à celles de ses sous-départements (responsables et directeurs : consolidées).
  */
 function BranchPicker({ nodes, value, onChange }: { nodes: R[]; value: string[]; onChange: (v: string[]) => void }) {
   const infos = useTree(nodes as any);
@@ -54,23 +68,23 @@ function BranchPicker({ nodes, value, onChange }: { nodes: R[]; value: string[];
   const sel = new Set(value);
   const toggleNode = (id: string) => onChange(sel.has(id) ? value.filter(x => x !== id) : [...value, id]);
   const toggleFold = (id: string) => { const c = new Set(collapsed); if (c.has(id)) c.delete(id); else c.add(id); setCollapsed(c); };
-  // Nombre de branches cochées dans le sous-arbre de chaque nœud (affiché quand il est replié).
+  // Nombre de départements cochés dans le sous-arbre de chaque nœud (affiché quand il est replié).
   const picked = nodes.map((n, i) => { let c = 0; for (let k = i + 1; k < nodes.length && nodes[k].depth > n.depth; k++) if (sel.has(nodes[k].id)) c++; return c; });
   const chosen = nodes.filter(n => sel.has(n.id));
   return (
     <div className="picker">
-      <div className="picked-chips" aria-label="Branches choisies">
-        {chosen.length === 0 ? <span className="muted">Aucune branche choisie</span> : chosen.map(n => (
-          <span key={n.id} className="chip" title={n.path}>{n.path.split(' › ').slice(-2).join(' › ')}<button type="button" aria-label={`Retirer la branche ${n.name}`} onClick={() => toggleNode(n.id)}>×</button></span>))}
+      <div className="picked-chips" aria-label="Départements choisis">
+        {chosen.length === 0 ? <span className="muted">Aucun département choisi</span> : chosen.map(n => (
+          <span key={n.id} className="chip" title={n.path}>{n.path.split(' › ').slice(-2).join(' › ')}<button type="button" aria-label={`Retirer le département ${n.name}`} onClick={() => toggleNode(n.id)}>×</button></span>))}
       </div>
-      <div className="toolbar" style={{ margin: '6px 0' }}><CollapseAll nodes={nodes as any} infos={infos} collapsed={collapsed} set={setCollapsed} /><small className="muted">Cocher une branche donne accès à ses sous-branches.</small></div>
-      <div className="treelist" role="group" aria-label="Branches">
+      <div className="toolbar" style={{ margin: '6px 0' }}><CollapseAll nodes={nodes as any} infos={infos} collapsed={collapsed} set={setCollapsed} /><small className="muted">Cocher un département donne accès à ses sous-départements.</small></div>
+      <div className="treelist" role="group" aria-label="Départements">
         {shown.map(i => { const n = nodes[i]!; const f = infos[i]!; const closed = f.subs > 0 && collapsed.has(n.id); const on = sel.has(n.id); return (
           <div key={n.id} className={`trow lv lv${Math.min(f.rel, 5)}${on ? ' on' : ''}`}>
             <TreeCell rel={f.rel} info={f} name={n.name} open={f.subs > 0 && !closed} closed={closed} onToggle={() => toggleFold(n.id)}>
               <label className="pick"><input type="checkbox" checked={on} onChange={() => toggleNode(n.id)} /> <span className="nodename">{n.name}</span></label>
               <span className={`lvtag lv${Math.min(f.rel, 5)}`}>{levelName(f.rel)}</span>
-              {closed && <span className="badge grey" title="Sous-branches repliées">+{f.subs}{picked[i]! > 0 ? ` · ${picked[i]} cochée${picked[i]! > 1 ? 's' : ''}` : ''}</span>}
+              {closed && <span className="badge grey" title="Sous-départements repliés">+{f.subs}{picked[i]! > 0 ? ` · ${picked[i]} coché${picked[i]! > 1 ? 's' : ''}` : ''}</span>}
             </TreeCell>
           </div>); })}
       </div>
@@ -92,18 +106,18 @@ function UserModal({ user, users, onClose, onDone }: { user: R | null; users: R[
       else { const r = await api<R>('users', { method: 'POST', body: { ...body, ...(f.password ? { password: f.password } : {}) } }); onDone(r.temporary_password ? { who: f.display_name, password: r.temporary_password } : undefined); }
     } catch (e) { setErr(errMsg(e)); } finally { setBusy(false); }
   };
-  const why = !f.display_name.trim() ? 'Renseignez le nom affiché.' : f.node_ids.length === 0 && !f.is_admin ? 'Affectez le compte à au moins une branche (ou cochez Administrateur).' : !f.email.includes('@') ? 'Renseignez une adresse e-mail valide.' : f.password && f.password.length < 12 ? 'Le mot de passe doit faire 12 caractères au moins (ou laissez vide pour en générer un).' : f.budget !== '' && !(Number(f.budget.replace(',', '.')) >= 0) ? 'Le plafond IA doit être un nombre positif (ou vide).' : '';
+  const why = !f.display_name.trim() ? 'Renseignez le nom affiché.' : f.node_ids.length === 0 && !f.is_admin ? 'Affectez le compte à au moins un département (ou cochez Administrateur).' : !f.email.includes('@') ? 'Renseignez une adresse e-mail valide.' : f.password && f.password.length < 12 ? 'Le mot de passe doit faire 12 caractères au moins (ou laissez vide pour en générer un).' : f.budget !== '' && !(Number(f.budget.replace(',', '.')) >= 0) ? 'Le plafond IA doit être un nombre positif (ou vide).' : '';
   const valid = !why;
   return (
     <Modal title={user ? 'Modifier le compte' : 'Nouveau compte'} onClose={onClose} footer={<><button onClick={onClose}>Annuler</button><Tip why={why}><button className="primary" disabled={!valid || busy} onClick={() => void save()}>{busy ? 'Enregistrement…' : 'Enregistrer'}</button></Tip></>}>
       <div className="form">
         <Field label="Nom affiché"><input value={f.display_name} onChange={e => set('display_name', e.target.value)} autoFocus /></Field>
         <Field label="E-mail"><input type="email" value={f.email} onChange={e => set('email', e.target.value)} /></Field>
-        <Field label="Rôle"><select value={f.role} onChange={e => set('role', e.target.value)}><option value="commercial">Commercial</option><option value="manager">Manager</option><option value="directeur">Directeur</option></select></Field>
-        <div className="field full" role="group" aria-label="Branches de l'organisation">
-          <span>Branches de l'organisation</span>
+        <Field label="Rôle"><select value={f.role} onChange={e => set('role', e.target.value)}><option value="commercial">Visiteur</option><option value="manager">Responsable</option><option value="directeur">Directeur</option></select></Field>
+        <div className="field full" role="group" aria-label="Départements de l'organisation">
+          <span>Départements de l'organisation</span>
           <BranchPicker nodes={nodeList} value={f.node_ids} onChange={v => set('node_ids', v)} />
-          <small>Le rôle est le même dans toutes les branches. Un manager ou directeur voit les données de ses branches et de leurs sous-branches ; un commercial, les siennes.</small>
+          <small>Le rôle est le même dans tous les départements. Un responsable ou directeur voit les données de ses départements et de leurs sous-départements ; un visiteur, les siennes.</small>
         </div>
         <Field label="Langue des comptes rendus" hint="Langue dans laquelle l'IA rédige. La dictée détecte seule la langue parlée."><select value={f.dictation_language} onChange={e => set('dictation_language', e.target.value)}>{[['fr', 'Français'], ['en', 'Anglais'], ['es', 'Espagnol'], ['it', 'Italien'], ['de', 'Allemand'], ['nl', 'Néerlandais']].map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></Field>
         <Field label="Plafond IA mensuel (€)" hint="Vide : plafond global."><input inputMode="decimal" value={f.budget} onChange={e => set('budget', e.target.value)} /></Field>
@@ -127,7 +141,7 @@ function Settings() {
     <Card title="Visibilité des comptes rendus">
       <div className="radios">
         <label><input type="radio" name="mode" checked={data.report_visibility_mode === 2} onChange={() => void change(2)} /> <strong>Auteur et hiérarchie</strong><small>Seul l'auteur de la visite et ses supérieurs voient la visite et son compte rendu.</small></label>
-        <label><input type="radio" name="mode" checked={data.report_visibility_mode === 1} onChange={() => void change(1)} /> <strong>Commerciaux du client et hiérarchie</strong><small>Tous les commerciaux affectés au client voient les visites de leurs collègues sur ce client.</small></label>
+        <label><input type="radio" name="mode" checked={data.report_visibility_mode === 1} onChange={() => void change(1)} /> <strong>Visiteurs du client et hiérarchie</strong><small>Tous les visiteurs affectés au client voient les visites de leurs collègues sur ce client.</small></label>
       </div>
       {msg && <Alert kind={msg.kind}>{msg.text}</Alert>}
       {pending && <Modal title="Confirmer le changement" onClose={() => setPending(null)} footer={<><button onClick={() => setPending(null)}>Annuler</button><button className="primary" onClick={() => void change(pending.mode, true)}>Confirmer</button></>}>

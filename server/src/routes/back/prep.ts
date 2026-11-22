@@ -18,7 +18,7 @@ export const csvIds = (v: unknown): string[] | null => {
 };
 const address = (c: Record<string, any>) => [c.address_line, [c.postal_code, c.city].filter(Boolean).join(' '), c.country].filter(Boolean).join(', ');
 
-/** Préparation des visites : suggestions de clients, fiche de préparation, planification pour les commerciaux. */
+/** Préparation des visites : suggestions de clients, fiche de préparation, planification pour les visiteurs. */
 export function prepRouter(pool: Pool) {
   const r = express.Router();
 
@@ -53,7 +53,7 @@ export function prepRouter(pool: Pool) {
   }));
 
   /**
-   * Personnes à qui une visite peut être attribuée : commerciaux, managers et directeurs actifs qui ont accès à la branche de la visite et peuvent lire le client.
+   * Personnes à qui une visite peut être attribuée : visiteurs, responsables et directeurs actifs qui ont accès au département de la visite et peuvent lire le client.
    * Pour un planificateur non administrateur : seulement lui-même et les personnes de son périmètre. `assigned` : le client est affecté à la personne.
    */
   async function assignees(req: express.Request, companyId: string, nodeIds: string[] | null) {
@@ -94,7 +94,7 @@ export function prepRouter(pool: Pool) {
     const ids = uid ? [uid] : scope;
     const nodes = await scopeNodes(pool, req);
     const companyIds = csvIds(req.query.company_ids);
-    const NV = `($2::uuid[] IS NULL OR v.org_node_id = ANY($2) OR v.author_id = $3::uuid)`;   // visites de mes branches (ou les miennes)
+    const NV = `($2::uuid[] IS NULL OR v.org_node_id = ANY($2) OR v.author_id = $3::uuid)`;   // visites de mes départements (ou les miennes)
     const { rows } = await pool.query(
       `WITH cs AS (
          SELECT c.id, c.name, c.city, c.sector FROM company c
@@ -156,7 +156,7 @@ export function prepRouter(pool: Pool) {
   const isLate = (v: Record<string, any>) => ['planned', 'organized'].includes(v.status) && !!v.planned_start && new Date(v.planned_start).getTime() + VISIT_LATE_GRACE_MINUTES * 60_000 < Date.now();
 
   /**
-   * Visites en préparation : « à organiser avec le client » et « organisées », de vos branches, qu'elles soient attribuées ou non, **en retard comprises**.
+   * Visites en préparation : « à organiser avec le client » et « organisées », de vos départements, qu'elles soient attribuées ou non, **en retard comprises**.
    * Filtres : `status`, `user_id` (une personne, ou `none` = non attribuées), `company_ids` (plusieurs clients), `late=true`, `from`/`to` (sur la date prévue ; les visites sans date restent listées).
    */
   r.get('/prep/visits', wrap(async (req, res) => {
@@ -184,16 +184,16 @@ export function prepRouter(pool: Pool) {
   const create = z.object({ company_id: uuid, user_id: uuid.nullable().optional(), node_id: uuid.optional(), planned_start: ts.nullable().optional(), location_text: text(500), objective: text(2000), preparation_notes: text(5000) }).strict();
 
   /**
-   * Préparer une visite : avec ou sans commercial (attribuée ou non), avec ou sans date. Attribuée à un commercial (ou à un directeur, ou à un manager),
-   * elle arrive dans son application à la prochaine synchronisation ; non attribuée, elle reste visible des managers et directeurs de sa branche, qui l'attribuent ensuite.
+   * Préparer une visite : avec ou sans visiteur (attribuée ou non), avec ou sans date. Attribuée à un visiteur (ou à un directeur, ou à un responsable),
+   * elle arrive dans son application à la prochaine synchronisation ; non attribuée, elle reste visible des responsables et directeurs de son département, qui l'attribuent ensuite.
    */
   r.post('/prep/visits', wrap(async (req, res) => {
     const b = create.safeParse(req.body);
     if (!b.success) throw new HttpError(400, 'validation_failed', b.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; '));
     const d = b.data; const A = req.auth!; const scope = await scopeUsers(pool, req);
     const supervisor = A.isAdmin || A.role === 'manager' || A.role === 'directeur';
-    const userId = d.user_id === undefined && !supervisor ? A.id : d.user_id ?? null;      // un commercial prépare pour lui-même
-    if (userId === null && !supervisor) throw new HttpError(403, 'forbidden', 'Seuls les managers, directeurs et administrateurs préparent une visite non attribuée');
+    const userId = d.user_id === undefined && !supervisor ? A.id : d.user_id ?? null;      // un visiteur prépare pour lui-même
+    if (userId === null && !supervisor) throw new HttpError(403, 'forbidden', 'Seuls les responsables, directeurs et administrateurs préparent une visite non attribuée');
     if (userId && !inScope(scope, userId)) throw new HttpError(403, 'forbidden', 'Vous ne pouvez préparer que pour vous-même ou votre équipe');
     const company = await companyAccess(req, d.company_id);
     const allowed = await scopeNodes(pool, req);
@@ -201,19 +201,19 @@ export function prepRouter(pool: Pool) {
     if (userId) {
       const who = (await assignees(req, company.id, null)).find(u => u.id === userId);
       if (!who) throw new HttpError(409, 'invalid_author', "Cette personne ne peut pas se voir attribuer la visite (compte inactif, ou client hors de son périmètre)");
-      // ses propres branches communes avec vous ; à défaut, les branches de sa juridiction (directeur au-dessus de l'agence)
+      // ses propres départements communes avec vous ; à défaut, les départements de sa juridiction (directeur au-dessus de l'agence)
       const own = (await pool.query(`SELECT n.id, org_path(n.id) AS path FROM user_org uo JOIN org_node n ON n.id = uo.node_id WHERE uo.user_id = $1 ORDER BY org_path(n.id)`, [userId])).rows.filter(n => allowed === null || allowed.includes(n.id));
       candidates = own.length ? own : (await pool.query(`SELECT n.id, org_path(n.id) AS path FROM org_node n WHERE org_access($1, n.id) AND ($2::uuid[] IS NULL OR n.id = ANY($2)) ORDER BY org_path(n.id)`, [userId, allowed])).rows;
     } else {
       candidates = (await pool.query(`SELECT n.id, org_path(n.id) AS path FROM org_node n WHERE ($1::uuid[] IS NULL OR n.id = ANY($1)) ORDER BY org_path(n.id)`, [allowed])).rows;
     }
-    if (candidates.length === 0) throw new HttpError(409, 'no_common_node', "Aucune branche commune entre vous et cette personne");
+    if (candidates.length === 0) throw new HttpError(409, 'no_common_node', "Aucun département commun entre vous et cette personne");
     let node: string;
     if (d.node_id) {
-      if (!candidates.some(n => n.id === d.node_id)) throw new HttpError(409, 'invalid_node', "Cette branche n'est pas l'une des branches possibles pour cette visite");
+      if (!candidates.some(n => n.id === d.node_id)) throw new HttpError(409, 'invalid_node', "Ce département n'est pas l'un des départements possibles pour cette visite");
       node = d.node_id;
     } else if (candidates.length === 1) node = candidates[0]!.id;
-    else throw new HttpError(409, 'org_node_required', 'Plusieurs branches sont possibles : choisissez celle de la visite', { nodes: candidates });
+    else throw new HttpError(409, 'org_node_required', 'Plusieurs départements sont possibles : choisissez celui de la visite', { nodes: candidates });
     const id = randomUUID();
     await pool.query(
       `INSERT INTO visit(id, company_id, author_id, org_node_id, created_by, status, planned_start, location_text, objective, preparation_notes) VALUES ($1,$2,$3,$4,$5,'planned',$6,$7,$8,$9)`,
@@ -233,7 +233,7 @@ export function prepRouter(pool: Pool) {
     const me = (await pool.query(`SELECT display_name FROM app_user WHERE id = $1`, [A.id])).rows[0];
     const out = await tx(pool, c => withRevocations(c, async () => {
       const v = (await c.query(`SELECT * FROM visit WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, [req.params.id])).rows[0];
-      // Modifiable par son auteur, par un manager/directeur ayant accès à sa branche, par un administrateur (le statut ou le rôle actuel de l'auteur n'y change rien).
+      // Modifiable par son auteur, par un responsable/directeur ayant accès à son département, par un administrateur (le statut ou le rôle actuel de l'auteur n'y change rien).
       // Une visite non attribuée peut en outre être prise par une personne qui la voit (elle se l'attribue).
       const supervisor = A.role === 'manager' || A.role === 'directeur';
       const manages = !!v && (A.isAdmin || v.author_id === A.id || (supervisor && allowedNodes !== null && allowedNodes.includes(v.org_node_id)));
@@ -248,9 +248,9 @@ export function prepRouter(pool: Pool) {
           if (!A.isAdmin && !inScope(scope, newUser)) throw new HttpError(403, 'forbidden', "Vous ne pouvez attribuer qu'à vous-même ou à votre équipe");
           const ok = (await c.query(
             `SELECT u.display_name FROM app_user u WHERE u.id = $1 AND u.status = 'active' AND u.role IN ('commercial', 'manager', 'directeur') AND can_read_company(u.id, $2) AND org_access(u.id, $3)`, [newUser, v.company_id, v.org_node_id])).rows[0];
-          if (!ok) throw new HttpError(409, 'invalid_author', "Cette personne ne peut pas se voir attribuer la visite : compte inactif, client hors de son périmètre ou personne étrangère à la branche de la visite");
+          if (!ok) throw new HttpError(409, 'invalid_author', "Cette personne ne peut pas se voir attribuer la visite : compte inactif, client hors de son périmètre ou personne étrangère au département de la visite");
           newAuthorName = ok.display_name;
-        } else if (!manages) throw new HttpError(403, 'forbidden', "Seuls les managers, directeurs et administrateurs retirent une attribution");
+        } else if (!manages) throw new HttpError(403, 'forbidden', "Seuls les responsables, directeurs et administrateurs retirent une attribution");
         oldAuthor = v.author_id ? (await c.query(`SELECT display_name FROM app_user WHERE id = $1`, [v.author_id])).rows[0]?.display_name ?? null : null;
         sets.push(`author_id = $${vals.length + 2}`); vals.push(newUser);
       }

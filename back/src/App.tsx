@@ -2,29 +2,28 @@ import { useEffect, useState } from 'react';
 import { api, brand, hasSession, login, logout, onLogout, type R } from './api';
 import { Alert, errMsg } from './ui';
 import { Reporting } from './pages/Reporting';
-import { Preparation } from './pages/Preparation';
 import { Visits } from './pages/Visits';
-import { Accounts } from './pages/Accounts';
-import { Clients } from './pages/Clients';
-import { Organisation } from './pages/Organisation';
+import { Administration } from './pages/Administration';
 
 export interface Me { id: string; email: string; display_name: string; role: string; is_admin: boolean; nodes: { id: string; name: string; path: string }[] }
 type Brand = { name: string; logo: string | null };
 
 const PAGES = [
   { id: 'reporting', label: 'Reporting', icon: '📊' },
-  { id: 'preparation', label: 'Préparation', icon: '🗓️' },
   { id: 'visites', label: 'Visites', icon: '📋' },
-  { id: 'organisation', label: 'Organisation', icon: '🌳', admin: true },
-  { id: 'comptes', label: 'Comptes', icon: '👥', admin: true },
-  { id: 'clients', label: 'Clients (maquette CRM)', icon: '🏢', admin: true },
+  { id: 'administration', label: 'Administration', icon: '⚙️', admin: true },
 ] as const;
+/** Anciennes adresses (signets) : renvoient vers la nouvelle rubrique. */
+const ALIAS: Record<string, string> = { preparation: 'visites', organisation: 'administration', comptes: 'administration', clients: 'administration' };
 
 const useRoute = () => {
   const [h, setH] = useState(location.hash);
   useEffect(() => { const f = () => setH(location.hash); window.addEventListener('hashchange', f); return () => window.removeEventListener('hashchange', f); }, []);
   const [path, query = ''] = h.replace(/^#\/?/, '').split('?');
-  return { page: path || 'reporting', params: new URLSearchParams(query) };
+  const p = new URLSearchParams(query);
+  const raw = path || 'reporting';
+  if (ALIAS[raw] && raw !== 'preparation' && !p.get('tab')) p.set('tab', raw);
+  return { page: ALIAS[raw] ?? raw, params: p };
 };
 
 export function App() {
@@ -71,24 +70,21 @@ function Shell({ me, brand: b }: { me: Me; brand: Brand }) {
   const { page, params } = useRoute();
   const pages = PAGES.filter(p => !('admin' in p && p.admin) || me.is_admin);
   const current = pages.find(p => p.id === page) ?? pages[0]!;
-  const role = me.is_admin ? 'Administrateur' : me.role === 'commercial' ? 'Commercial' : me.role === 'manager' ? 'Manager' : 'Directeur';
+  const role = me.is_admin ? 'Administrateur' : me.role === 'commercial' ? 'Visiteur' : me.role === 'manager' ? 'Responsable' : 'Directeur';
   return (
     <div className="shell">
-      <aside>
+      <header className="topbar">
         <div className="brand">{b.logo && <img src={b.logo} alt={`Logo ${b.name}`} />}<strong>{b.name}</strong></div>
         <nav aria-label="Navigation">
           {pages.map(p => <a key={p.id} href={`#/${p.id}`} className={p.id === current.id ? 'on' : ''} aria-current={p.id === current.id ? 'page' : undefined}><span aria-hidden>{p.icon}</span>{p.label}</a>)}
         </nav>
         <div className="spacer" />
-        <div className="who"><strong>{me.display_name}</strong><small>{role}{me.nodes.length ? ` · ${me.nodes.map(n => n.name).join(', ')}` : ''}</small><button className="link" onClick={() => void logout().then(() => location.reload())}>Se déconnecter</button></div>
-      </aside>
+        <div className="who"><span><strong>{me.display_name}</strong><small>{role}{me.nodes.length ? ` · ${me.nodes.map(n => n.name).join(', ')}` : ''}</small></span><button className="link" onClick={() => void logout().then(() => location.reload())}>Se déconnecter</button></div>
+      </header>
       <main>
-        {current.id === 'reporting' && <Reporting me={me} />}
-        {current.id === 'preparation' && <Preparation me={me} params={params} />}
+        {current.id === 'reporting' && <Reporting me={me} params={params} />}
         {current.id === 'visites' && <Visits me={me} params={params} />}
-        {current.id === 'organisation' && <Organisation />}
-        {current.id === 'comptes' && <Accounts me={me} />}
-        {current.id === 'clients' && <Clients />}
+        {current.id === 'administration' && <Administration me={me} params={params} />}
       </main>
     </div>
   );

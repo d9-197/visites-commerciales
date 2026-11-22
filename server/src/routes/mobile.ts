@@ -104,7 +104,7 @@ export function mobileRouter(pool: Pool, cfg: Config, ai?: AiServices, mail?: Ma
 
   r.get('/me', auth, wrap(async (req, res) => {
     const u = (await pool.query(`SELECT id, display_name, email, role, ui_language, dictation_language FROM app_user WHERE id = $1`, [req.auth!.id])).rows[0];
-    // Branches de l'utilisateur (une visite se crée dans l'une d'elles).
+    // Départements de l'utilisateur (une visite se crée dans l'un d'eux).
     const nodes = (await pool.query(`SELECT n.id, n.name, org_path(n.id) AS path FROM user_org uo JOIN org_node n ON n.id = uo.node_id WHERE uo.user_id = $1 ORDER BY org_path(n.id)`, [req.auth!.id])).rows;
     const st = Object.fromEntries((await pool.query(`SELECT key, value FROM app_setting`)).rows.map(r => [r.key, r.value]));
     const langs = (await pool.query(`SELECT code FROM language WHERE enabled`)).rows.map(r => r.code);

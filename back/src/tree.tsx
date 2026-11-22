@@ -1,13 +1,13 @@
 import { useMemo, useState, type ReactNode } from 'react';
 
-/** Outils d'affichage des arbres (organisation) : traits de liaison, niveaux colorés, branches repliables. Les nœuds sont donnés dans l'ordre de l'arbre, avec leur profondeur. */
+/** Outils d'affichage des arbres (organisation) : traits de liaison, niveaux colorés, départements repliables. Les nœuds sont donnés dans l'ordre de l'arbre, avec leur profondeur. */
 export interface TNode { id: string; depth: number }
-export const LEVEL = ['Niveau 1', 'Niveau 2', 'Niveau 3', 'Niveau 4', 'Niveau 5', 'Niveau 6'];   // « Niveau 1 » = premier niveau (plusieurs branches de premier niveau sont possibles)
+export const LEVEL = ['Niveau 1', 'Niveau 2', 'Niveau 3', 'Niveau 4', 'Niveau 5', 'Niveau 6'];   // « Niveau 1 » = premier niveau (plusieurs départements de premier niveau sont possibles)
 export const levelName = (rel: number) => LEVEL[rel] ?? `Niveau ${rel + 1}`;
 
 export interface TInfo { rel: number; subs: number; more: boolean[] }
 
-/** Pour chaque nœud : niveau relatif au premier niveau de la liste, nombre de sous-branches, et traits verticaux à prolonger (un frère suit-il ?). */
+/** Pour chaque nœud : niveau relatif au premier niveau de la liste, nombre de sous-départements, et traits verticaux à prolonger (un frère suit-il ?). */
 export function analyze(nodes: TNode[]): TInfo[] {
   const base = nodes.length ? Math.min(...nodes.map(n => n.depth)) : 0;
   return nodes.map((n, i) => {
@@ -34,20 +34,20 @@ export function useCollapsed(key: string): [Set<string>, (next: Set<string>) => 
 
 export const useTree = (nodes: TNode[]) => useMemo(() => analyze(nodes), [nodes]);
 
-/** Traits de liaison, bouton de repli et contenu (nom, cases…) d'une branche. */
+/** Traits de liaison, bouton de repli et contenu (nom, cases…) d'un département. */
 export function TreeCell({ rel, info, name, open, closed, onToggle, children }: { rel: number; info: TInfo; name: string; open: boolean; closed: boolean; onToggle: () => void; children: ReactNode }) {
   return (
     <div className="treerow">
       {Array.from({ length: rel }, (_, k) => k + 1).map(d => <span key={d} className={`guide${d === rel ? ' last' : ''}${info.more[d] ? ' more' : ''}`} aria-hidden />)}
       {info.subs > 0
-        ? <button type="button" className="chev" aria-expanded={open} aria-label={`${open ? 'Replier' : 'Déplier'} la branche ${name}`} onClick={onToggle}>{open ? '▾' : '▸'}</button>
+        ? <button type="button" className="chev" aria-expanded={open} aria-label={`${open ? 'Replier' : 'Déplier'} le département ${name}`} onClick={onToggle}>{open ? '▾' : '▸'}</button>
         : <span className="chev leaf" aria-hidden>•</span>}
       {children}
     </div>
   );
 }
 
-/** Boutons « Tout replier » (toutes les branches qui ont des sous-branches, premier niveau compris) / « Tout déplier ». */
+/** Boutons « Tout replier » (tous les départements qui ont des sous-départements, premier niveau compris) / « Tout déplier ». */
 export function CollapseAll({ nodes, infos, collapsed, set }: { nodes: TNode[]; infos: TInfo[]; collapsed: Set<string>; set: (s: Set<string>) => void }) {
   return (
     <>

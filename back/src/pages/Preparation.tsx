@@ -4,33 +4,21 @@ import type { Me } from '../App';
 import { Alert, Badge, Card, ClientFilter, Empty, Field, Loading, Modal, Tip, useLoad, errMsg } from '../ui';
 import { ROLE, REASON, STATUS, STATUS_TONE, TEMP, daysAgo, fmtDate, fmtDateTime, isoToLocal, localToIso } from '../format';
 
-type Tab = 'suggestions' | 'planning';
-
-export function Preparation({ me, params }: { me: Me; params: URLSearchParams }) {
-  const [tab, setTab] = useState<Tab>(params.get('tab') === 'planning' ? 'planning' : 'suggestions');
-  const [fiche, setFiche] = useState<string | null>(params.get('client'));
+/** Préparation des visites : fiche client, formulaire de préparation, attribution. Les écrans qui les déclenchent (visites, reporting) affichent `dialogs`. */
+export function usePrep(me: Me, onChanged: () => void) {
+  const [fiche, setFiche] = useState<string | null>(null);
   const [plan, setPlan] = useState<{ company?: R; visit?: R } | null>(null); const [assign, setAssign] = useState<R | null>(null);
-  const [version, setVersion] = useState(0);
-  const refresh = () => setVersion(v => v + 1);
-  return (
+  const dialogs = (
     <>
-      <header className="page-head">
-        <div><h1>Préparation des visites</h1><p className="muted">Repérer les clients à voir, préparer la visite (objectif, points à aborder), l'attribuer à un commercial, un manager ou un directeur, et suivre les visites à organiser avec le client, y compris celles en retard.</p></div>
-        <div className="toolbar"><button className="primary" onClick={() => setPlan({})}>+ Préparer une visite</button></div>
-      </header>
-      <div className="tabs" role="tablist">
-        <button role="tab" aria-selected={tab === 'suggestions'} className={tab === 'suggestions' ? 'on' : ''} onClick={() => setTab('suggestions')}>Clients à visiter</button>
-        <button role="tab" aria-selected={tab === 'planning'} className={tab === 'planning' ? 'on' : ''} onClick={() => setTab('planning')}>Visites en préparation</button>
-      </div>
-      {tab === 'suggestions' ? <Suggestions version={version} onFiche={setFiche} onPlan={company => setPlan({ company })} /> : <Planning version={version} onEdit={visit => setPlan({ visit })} onAssign={setAssign} />}
       {fiche && <Fiche id={fiche} onClose={() => setFiche(null)} onPlan={company => { setFiche(null); setPlan({ company }); }} onEdit={visit => { setFiche(null); setPlan({ visit }); }} />}
-      {assign && <AssignModal visit={assign} onClose={() => setAssign(null)} onDone={() => { setAssign(null); refresh(); }} />}
-      {plan && <PlanModal me={me} company={plan.company} visit={plan.visit} onClose={() => setPlan(null)} onDone={() => { setPlan(null); refresh(); setTab('planning'); }} />}
+      {assign && <AssignModal visit={assign} onClose={() => setAssign(null)} onDone={() => { setAssign(null); onChanged(); }} />}
+      {plan && <PlanModal me={me} company={plan.company} visit={plan.visit} onClose={() => setPlan(null)} onDone={() => { setPlan(null); onChanged(); }} />}
     </>
   );
+  return { dialogs, openFiche: setFiche, openPlan: (company?: R) => setPlan({ company }), openEdit: (visit: R) => setPlan({ visit }), openAssign: setAssign };
 }
 
-function Suggestions({ version, onFiche, onPlan }: { version: number; onFiche: (id: string) => void; onPlan: (c: R) => void }) {
+export function Suggestions({ version, onFiche, onPlan }: { version: number; onFiche: (id: string) => void; onPlan: (c: R) => void }) {
   const [days, setDays] = useState(60); const [user, setUser] = useState(''); const [incl, setIncl] = useState(false); const [clients, setClients] = useState<string[]>([]);
   const users = useLoad(() => api<R>('prep/commerciaux'), []);
   const { data, error, loading } = useLoad(() => api<R>(`prep/suggestions?days=${days}&include_planned=${incl}${user ? `&user_id=${user}` : ''}${clients.length ? `&company_ids=${clients.join(',')}` : ''}`), [days, user, incl, clients, version]);
@@ -38,14 +26,14 @@ function Suggestions({ version, onFiche, onPlan }: { version: number; onFiche: (
     <Card>
       <div className="toolbar filters">
         <label>Sans visite depuis <select value={days} onChange={e => setDays(Number(e.target.value))}>{[30, 60, 90, 180].map(d => <option key={d} value={d}>{d} jours</option>)}</select></label>
-        {(users.data?.users?.length ?? 0) > 1 && <label>Commercial <select value={user} onChange={e => setUser(e.target.value)}><option value="">Tous</option>{users.data!.users.map((u: R) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></label>}
+        {(users.data?.users?.length ?? 0) > 1 && <label>Visiteur <select value={user} onChange={e => setUser(e.target.value)}><option value="">Tous</option>{users.data!.users.map((u: R) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></label>}
         <ClientFilter value={clients} onChange={setClients} />
         <label className="check"><input type="checkbox" checked={incl} onChange={e => setIncl(e.target.checked)} /> Inclure les clients qui ont déjà une visite prévue</label>
       </div>
       {error && <Alert>{error}</Alert>}
       {loading && !data && <Loading />}
       {data && (data.suggestions.length === 0 ? <Empty>Aucun client à signaler : tout est à jour.</Empty> : (
-        <div className="scroll"><table><thead><tr><th>Client</th><th>Commerciaux</th><th>Dernière visite</th><th>Motifs</th><th>Actions en retard</th><th>Visite prévue</th><th /></tr></thead><tbody>
+        <div className="scroll"><table><thead><tr><th>Client</th><th>Visiteurs</th><th>Dernière visite</th><th>Motifs</th><th>Actions en retard</th><th>Visite prévue</th><th /></tr></thead><tbody>
           {data.suggestions.map((s: R) => (
             <tr key={s.id}>
               <td><strong>{s.name}</strong><br /><small className="muted">{[s.city, s.sector].filter(Boolean).join(' · ')}</small></td>
@@ -61,18 +49,20 @@ function Suggestions({ version, onFiche, onPlan }: { version: number; onFiche: (
   );
 }
 
-function Planning({ version, onEdit, onAssign }: { version: number; onEdit: (v: R) => void; onAssign: (v: R) => void }) {
-  const [clients, setClients] = useState<string[]>([]); const [status, setStatus] = useState(''); const [user, setUser] = useState(''); const [late, setLate] = useState(false);
+/** Visites en préparation par zones (non attribuées, puis une zone par personne). `fixed` : filtre imposé par la vue choisie (en retard, non attribuées). */
+export function Planning({ version, fixed, onEdit, onAssign, onOpen }: { version: number; fixed?: { late?: boolean; user?: string }; onEdit: (v: R) => void; onAssign: (v: R) => void; onOpen: (id: string) => void }) {
+  const [clients, setClients] = useState<string[]>([]); const [status, setStatus] = useState(''); const [userSel, setUser] = useState(''); const [lateSel, setLate] = useState(false);
+  const user = fixed?.user ?? userSel; const late = fixed?.late ?? lateSel;
   const [from, setFrom] = useState(''); const [to, setTo] = useState(''); const [closed, setClosed] = useState<Record<string, boolean>>({});
   const users = useLoad(() => api<R>('prep/commerciaux'), []);
   const qs = [status && `status=${status}`, user && `user_id=${user}`, late && 'late=true', from && `from=${from}`, to && `to=${to}`, clients.length && `company_ids=${clients.join(',')}`].filter(Boolean).join('&');
   const { data, error, loading } = useLoad(() => api<R>(`prep/visits${qs ? `?${qs}` : ''}`), [qs, version]);
-  // Zones : visites non attribuées d'abord, puis une zone par personne (commerciaux, managers, directeurs).
+  // Zones : visites non attribuées d'abord, puis une zone par personne (visiteurs, responsables, directeurs).
   const zones = useMemo(() => {
     const by = new Map<string, { key: string; title: string; visits: R[] }>();
     for (const v of (data?.visits ?? []) as R[]) {
       const key = v.author_id ?? 'none';
-      if (!by.has(key)) by.set(key, { key, title: v.author_id ? `${v.author_role && v.author_role !== 'commercial' ? `${ROLE[v.author_role]} ` : 'Commercial '}${v.author}` : 'Visites non attribuées', visits: [] });
+      if (!by.has(key)) by.set(key, { key, title: v.author_id ? `Visites de ${v.author} · ${ROLE[v.author_role] ?? 'Visiteur'}` : 'Visites non attribuées', visits: [] });
       by.get(key)!.visits.push(v);
     }
     return [...by.values()].sort((a, b) => (a.key === 'none' ? -1 : b.key === 'none' ? 1 : a.title.localeCompare(b.title, 'fr')));
@@ -82,8 +72,8 @@ function Planning({ version, onEdit, onAssign }: { version: number; onEdit: (v: 
       <div className="toolbar filters">
         <ClientFilter value={clients} onChange={setClients} />
         <select aria-label="Statut" value={status} onChange={e => setStatus(e.target.value)}><option value="">À organiser et organisées</option><option value="planned">À organiser avec le client</option><option value="organized">Organisées avec le client</option></select>
-        <select aria-label="Attribution" value={user} onChange={e => setUser(e.target.value)}><option value="">Toutes les personnes</option><option value="none">Non attribuées</option>{(users.data?.users ?? []).map((u: R) => <option key={u.id} value={u.id}>{u.name}</option>)}</select>
-        <label className="check"><input type="checkbox" checked={late} onChange={e => setLate(e.target.checked)} /> En retard seulement</label>
+        {!fixed?.user && <select aria-label="Attribution" value={user} onChange={e => setUser(e.target.value)}><option value="">Toutes les personnes</option><option value="none">Non attribuées</option>{(users.data?.users ?? []).map((u: R) => <option key={u.id} value={u.id}>{u.name}</option>)}</select>}
+        {fixed?.late === undefined && <label className="check"><input type="checkbox" checked={late} onChange={e => setLate(e.target.checked)} /> En retard seulement</label>}
         <label>Du <input type="date" value={from} onChange={e => setFrom(e.target.value)} /></label><label>au <input type="date" value={to} onChange={e => setTo(e.target.value)} /></label>
       </div>
       {error && <Alert>{error}</Alert>}
@@ -91,14 +81,14 @@ function Planning({ version, onEdit, onAssign }: { version: number; onEdit: (v: 
       {data && data.late_count > 0 && <Alert kind="warn">{data.late_count} visite{data.late_count > 1 ? 's' : ''} prévue{data.late_count > 1 ? 's' : ''} en retard (date dépassée, visite non commencée).</Alert>}
       {data && (zones.length === 0 ? <Empty>Aucune visite à organiser ou organisée ne correspond.</Empty> : zones.map(z => (
         <div className="zone" key={z.key}>
-          <h3><button type="button" className="link zone-toggle" aria-expanded={!closed[z.key]} onClick={() => setClosed(c => ({ ...c, [z.key]: !c[z.key] }))}>
+          <h3><button type="button" className="zone-toggle" aria-expanded={!closed[z.key]} onClick={() => setClosed(c => ({ ...c, [z.key]: !c[z.key] }))}>
             {closed[z.key] ? '▸' : '▾'} {z.title} <span className="count">({z.visits.length}{z.visits.some(v => v.late) ? ` dont ${z.visits.filter(v => v.late).length} en retard` : ''})</span>
           </button></h3>
-          {!closed[z.key] && <div className="scroll"><table><thead><tr><th>Date prévue</th><th>Client</th><th>Branche</th><th>Statut</th><th>Objectif</th><th>Points à aborder</th><th>Planifiée par</th><th /></tr></thead><tbody>
+          {!closed[z.key] && <div className="scroll"><table><thead><tr><th>Date prévue</th><th>Client</th><th>Département</th><th>Statut</th><th>Objectif</th><th>Points à aborder</th><th>Planifiée par</th><th /></tr></thead><tbody>
             {z.visits.map((v: R) => (
               <tr key={v.id} className={v.late ? 'is-late' : ''}>
                 <td>{v.planned_start ? fmtDateTime(v.planned_start) : <span className="muted">Date à fixer</span>}{v.late && <> <Badge tone="red">En retard</Badge></>}</td>
-                <td><strong>{v.company}</strong></td><td>{String(v.org_path ?? '').split(' › ').slice(-1)[0]}</td>
+                <td><button className="link" onClick={() => onOpen(v.id)}><strong>{v.company}</strong></button></td><td>{String(v.org_path ?? '').split(' › ').slice(-1)[0]}</td>
                 <td><Badge tone={STATUS_TONE[v.status]}>{STATUS[v.status]}</Badge></td>
                 <td className="wrap">{v.objective ?? '—'}</td><td className="notes-cell">{v.preparation_notes ?? '—'}</td>
                 <td>{v.created_by_name && v.created_by_name !== v.author ? v.created_by_name : '—'}</td>
@@ -125,7 +115,7 @@ function AssignModal({ visit, onClose, onDone }: { visit: R; onClose: () => void
       {visit.author_id && <button disabled={busy} onClick={() => void save(null)}>Retirer l'attribution</button>}
       <Tip why={!userId ? 'Choisissez une personne.' : same ? 'Cette personne est déjà attribuée.' : ''}><button className="primary" disabled={busy || !userId || same} onClick={() => void save(userId)}>Attribuer</button></Tip></>}>
       {(error || err) && <Alert>{error ?? err}</Alert>}
-      <Field label="Personne" hint="Commerciaux, managers et directeurs ayant accès à la branche de la visite et au client. La visite arrive dans leur application à la prochaine synchronisation.">
+      <Field label="Personne" hint="Visiteurs, responsables et directeurs ayant accès au département de la visite et au client. La visite arrive dans leur application à la prochaine synchronisation.">
         <select value={userId} onChange={e => setUserId(e.target.value)}><option value="">Choisir…</option>{(data?.users ?? []).map((u: R) => <option key={u.id} value={u.id}>{u.name} ({ROLE[u.role]}){u.assigned ? ' — client affecté' : ''}</option>)}</select>
       </Field>
     </Modal>
@@ -142,7 +132,7 @@ function Fiche({ id, onClose, onPlan, onEdit }: { id: string; onClose: () => voi
       {data && <div className="fiche">
         <section><h3>Client</h3>
           <p>{co.address || 'Adresse non renseignée'}{co.sector ? <><br /><span className="muted">Secteur : {co.sector}</span></> : null}</p>
-          <p className="muted">Commerciaux : {data.commerciaux.map((u: R) => u.name).join(', ') || '—'}</p>
+          <p className="muted">Visiteurs : {data.commerciaux.map((u: R) => u.name).join(', ') || '—'}</p>
           <h4>Contacts</h4>
           {data.contacts.length === 0 ? <p className="muted">Aucun contact.</p> : <ul>{data.contacts.map((c: R) => <li key={c.id}><strong>{c.full_name}</strong>{c.job_title ? `, ${c.job_title}` : ''}<br /><small className="muted">{[c.phone, c.email].filter(Boolean).join(' · ')}</small></li>)}</ul>}
         </section>
@@ -185,7 +175,7 @@ function PlanModal({ me, company, visit, onClose, onDone }: { me: Me; company?: 
   }, [q, edit, company]);
   const users = useLoad(() => (edit ? api<R>(`prep/assignees?visit_id=${visit!.id}`) : companyId ? api<R>(`prep/assignees?company_id=${companyId}`) : Promise.resolve({ users: [] })), [companyId]);
   const [userId, setUserId] = useState<string>(visit?.author_id ?? (supervisor ? '' : me.id));
-  // Création : par défaut le commercial affecté au client s'il n'y en a qu'un ; sinon « non attribuée » (managers) ou soi-même (commerciaux).
+  // Création : par défaut le visiteur affecté au client s'il n'y en a qu'un ; sinon « non attribuée » (responsables) ou soi-même (visiteurs).
   useEffect(() => {
     if (edit || !users.data || !companyId) return;
     const list: R[] = users.data.users; const assigned = list.filter(u => u.assigned);
@@ -195,7 +185,7 @@ function PlanModal({ me, company, visit, onClose, onDone }: { me: Me; company?: 
   const [when, setWhen] = useState(visit?.planned_start ? isoToLocal(visit.planned_start) : '');
   const [address, setAddress] = useState<string>(visit?.location_text ?? ''); const [objective, setObjective] = useState<string>(visit?.objective ?? ''); const [notes, setNotes] = useState<string>(visit?.preparation_notes ?? '');
   const [status, setStatus] = useState<string>(visit?.status ?? 'planned');
-  const [choices, setChoices] = useState<R[]>([]); const [nodeId, setNodeId] = useState('');   // branches possibles quand plusieurs conviennent
+  const [choices, setChoices] = useState<R[]>([]); const [nodeId, setNodeId] = useState('');   // départements possibles quand plusieurs conviennent
   const [err, setErr] = useState<string>(); const [busy, setBusy] = useState(false);
   const agenda = useLoad(() => (companyId ? api<R>(`prep/companies/${companyId}`) : Promise.resolve(null)), [companyId]);
   const points: R[] = agenda.data?.agenda ?? [];
@@ -213,7 +203,7 @@ function PlanModal({ me, company, visit, onClose, onDone }: { me: Me; company?: 
     } finally { setBusy(false); }
   };
   const ok = edit || !!companyId;
-  const why = choices.length > 0 && !nodeId ? 'Choisissez la branche de la visite.' : !ok ? 'Choisissez un client.' : '';
+  const why = choices.length > 0 && !nodeId ? 'Choisissez le département de la visite.' : !ok ? 'Choisissez un client.' : '';
   const title = edit ? `Préparer la visite : ${visit!.company}` : 'Préparer une visite';
   return (
     <Modal title={title} onClose={onClose} footer={<><button onClick={onClose}>Annuler</button><Tip why={why}><button className="primary" disabled={!ok || busy || (choices.length > 0 && !nodeId)} onClick={() => void save()}>{busy ? 'Enregistrement…' : 'Enregistrer'}</button></Tip></>}>
@@ -227,7 +217,7 @@ function PlanModal({ me, company, visit, onClose, onDone }: { me: Me; company?: 
           <select value={userId} onChange={e => setUserId(e.target.value)} disabled={!companyId || !supervisor}>
             {supervisor && <option value="">Non attribuée</option>}{(users.data?.users ?? []).map((u: R) => <option key={u.id} value={u.id}>{u.name} ({ROLE[u.role]}){u.assigned ? ' — client affecté' : ''}</option>)}</select>
         </Field>
-        {choices.length > 0 && <Field full label="Branche de la visite" hint="Plusieurs branches conviennent : la visite appartient à celle-ci (visible de ses managers et directeurs)."><select value={nodeId} onChange={e => setNodeId(e.target.value)} autoFocus><option value="">Choisir…</option>{choices.map(n => <option key={n.id} value={n.id}>{n.path}</option>)}</select></Field>}
+        {choices.length > 0 && <Field full label="Département de la visite" hint="Plusieurs départements conviennent : la visite appartient à celui-ci (visible de ses responsables et directeurs)."><select value={nodeId} onChange={e => setNodeId(e.target.value)} autoFocus><option value="">Choisir…</option>{choices.map(n => <option key={n.id} value={n.id}>{n.path}</option>)}</select></Field>}
         <Field label="Date et heure prévues" hint="Facultatif : vide = date à fixer avec le client."><input type="datetime-local" step={900} value={when} onChange={e => setWhen(e.target.value)} /></Field>
         <Field label="Statut"><select value={status} onChange={e => setStatus(e.target.value)} disabled={!edit}><option value="planned">À organiser avec le client</option><option value="organized">Organisée avec le client</option>{edit && <option value="cancelled">Annulée</option>}</select></Field>
         <Field full label="Adresse de la visite" hint="Vide : adresse du client."><input value={address} onChange={e => setAddress(e.target.value)} maxLength={500} /></Field>

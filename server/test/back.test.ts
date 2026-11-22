@@ -156,7 +156,7 @@ test('back : reporting par commercial, limité au périmètre ; export CSV', asy
   assert.equal((await get('dir@x.fr', '/reports/activity?from=2000-01-01&to=2026-01-01')).status, 400);
   // CSV
   const csv = await get('dir@x.fr', `/reports/activity.csv${q}`);
-  assert.equal(csv.status, 200); assert.match(String(csv.raw ?? csv.body), /Commercial;Visites prévues/);
+  assert.equal(csv.status, 200); assert.match(String(csv.raw ?? csv.body), /Visiteur;Visites prévues/);
   // nom commençant par « = » : neutralisé dans le tableur
   await env.pool.query(`UPDATE app_user SET display_name = '=HYPERLINK("x")' WHERE email = 'c2@x.fr'`);
   const csv2 = await get('dir@x.fr', `/reports/activity.csv${q}`);
@@ -265,4 +265,36 @@ test('back : visites non attribuées : préparation sans commercial ni date, att
   assert.ok((await get('mgr1@x.fr', '/prep/assignees?company_id=' + f.f1)).body.users.some((u: any) => u.id === f.c1));
   // un client lisible via une visite : nom visible dans l'appli du commercial même sans affectation
   assert.equal((await env.pool.query(`SELECT can_read_company($1,$2) AS ok`, [f.c1, f.f1])).rows[0].ok, true);
+});
+
+test('back : objectifs mensuels par visiteur, pris en compte par le reporting ; export CSV par département', async () => {
+  const month = new Date().toISOString().slice(0, 7);
+  const q = `?from=${month}-01&to=${new Date().toISOString().slice(0, 10)}`;
+  assert.equal((await get('mgr1@x.fr', `/reports/activity${q}`)).body.targets_defined, false, 'sans objectif : rien n\'est affiché');
+  assert.equal((await send('c1@x.fr', 'PUT', '/targets', { month, targets: [{ user_id: f.c1, target: 5 }] })).status, 403, 'un visiteur ne fixe pas son objectif');
+  assert.equal((await send('mgr1@x.fr', 'PUT', '/targets', { month, targets: [{ user_id: f.c3, target: 5 }] })).status, 403, 'hors périmètre');
+  assert.equal((await send('mgr1@x.fr', 'PUT', '/targets', { month, targets: [{ user_id: f.c1, target: -1 }] })).status, 400);
+  assert.equal((await send('mgr1@x.fr', 'PUT', '/targets', { month: '2026-13', targets: [] })).status, 400);
+  const ok = await send('mgr1@x.fr', 'PUT', '/targets', { month, targets: [{ user_id: f.c1, target: 4 }, { user_id: f.c2, target: 2 }] });
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  const list = (await get('mgr1@x.fr', `/targets?month=${month}`)).body.users;
+  assert.equal(list.find((u: any) => u.user_id === f.c1).target, 4);
+  assert.deepEqual((await get('c1@x.fr', `/targets?month=${month}`)).body.users.map((u: any) => u.user_id), [f.c1], 'un visiteur ne voit que le sien');
+  const rep = (await get('mgr1@x.fr', `/reports/activity${q}`)).body;
+  assert.equal(rep.targets_defined, true);
+  assert.equal(rep.by_user.find((u: any) => u.user_id === f.c1).target, 4);
+  assert.equal(rep.totals.target, 6);
+  // période à cheval sur deux mois : les deux mois comptent
+  const prev = new Date(); prev.setMonth(prev.getMonth() - 1); const pm = prev.toISOString().slice(0, 7);
+  await send('mgr1@x.fr', 'PUT', '/targets', { month: pm, targets: [{ user_id: f.c1, target: 3 }] });
+  assert.equal((await get('mgr1@x.fr', `/reports/activity?from=${pm}-15&to=${new Date().toISOString().slice(0, 10)}`)).body.by_user.find((u: any) => u.user_id === f.c1).target, 7);
+  const csv = await get('mgr1@x.fr', `/reports/activity.csv${q}`);
+  assert.match(String(csv.raw ?? csv.body), /Visiteur;Objectif;Atteinte/);
+  // export par département
+  const byNode = await get('dir@x.fr', `/reports/activity.csv${q}&by=node`);
+  assert.equal(byNode.status, 200); assert.match(String(byNode.raw ?? byNode.body), /Département;Niveau;Membres/); assert.match(String(byNode.raw ?? byNode.body), /Équipe mgr1/);
+  // supprimer un objectif
+  assert.equal((await send('mgr1@x.fr', 'PUT', '/targets', { month, targets: [{ user_id: f.c1, target: null }, { user_id: f.c2, target: null }] })).status, 200);
+  await send('mgr1@x.fr', 'PUT', '/targets', { month: pm, targets: [{ user_id: f.c1, target: null }] });
+  assert.equal((await get('mgr1@x.fr', `/reports/activity${q}`)).body.targets_defined, false);
 });

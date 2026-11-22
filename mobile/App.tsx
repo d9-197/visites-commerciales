@@ -101,9 +101,9 @@ function Root() {
     const client = new ApiClient(sess.server, APP_VERSION, sess.tokens, t => { void saveTokens(t); onTokens(t); });
     const engine = new SyncEngine(store, client, { newId: uuidv4, userId: sess.userId });
     let role: UserRole = sess.role ?? 'commercial';
-    let nodes: OrgNode[] = sess.nodes ?? [];   // branches de l'organisation : une visite se crée dans l'une d'elles
+    let nodes: OrgNode[] = sess.nodes ?? [];   // départements de l'organisation : une visite se crée dans l'un d'eux
     let lang = sess.lang ?? 'fr';          // langue des comptes rendus (champ `dictation_language` du profil) ; la dictée, elle, détecte la langue parlée
-    try {   // profil à jour quand le réseau est disponible ; sinon valeurs conservées (hors-ligne : commercial et français par défaut)
+    try {   // profil à jour quand le réseau est disponible ; sinon valeurs conservées (hors-ligne : visiteur et français par défaut)
       const me = await client.me();
       const meNodes: OrgNode[] = me.nodes ?? [];
       if (me.role !== role || me.dictation_language !== lang || JSON.stringify(meNodes) !== JSON.stringify(nodes)) { role = me.role; lang = me.dictation_language; nodes = meNodes; await saveSession({ ...sess, role, lang, nodes }); }
@@ -250,11 +250,11 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
     return [...m.entries()].map(([id, vs]) => ({ id, name: companyName(id), visits: vs.sort(byDateDesc) })).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   })();
 
-  // Regroupement par branche (consolidé) : proposé quand les visites visibles appartiennent à plusieurs branches (direction, managers, commerciaux multi-branches).
+  // Regroupement par département (consolidé) : proposé quand les visites visibles appartiennent à plusieurs départements (direction, responsables, visiteurs multi-départements).
   const manyBranches = new Set(visibleVisits.map(v => v.org_node_id)).size > 1;
   const branchGroups = (() => {
     const m = new Map<string, { id: string; name: string; visits: Row[] }>();
-    for (const v of shownVisits) { const g = m.get(v.org_node_id) ?? { id: v.org_node_id, name: v.org_node_name ?? 'Sans branche', visits: [] as Row[] }; g.visits.push(v); m.set(v.org_node_id, g); }
+    for (const v of shownVisits) { const g = m.get(v.org_node_id) ?? { id: v.org_node_id, name: v.org_node_name ?? 'Sans département', visits: [] as Row[] }; g.visits.push(v); m.set(v.org_node_id, g); }
     return [...m.values()].map(g => ({ ...g, visits: g.visits.sort(byDateDesc) })).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   })();
 
@@ -272,7 +272,7 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
       {screen.name !== 'report' && screen.name !== 'visit' && <ScrollView ref={mainScroll} contentContainerStyle={s.pad}>
         {screen.name === 'today' && <>
           <View style={s.rowBetween}><Text style={s.h1}>Visites</Text><BrandMark name={false} /></View>
-          <Seg value={group} onChange={setGroup} options={[['client', 'Par client'], ['date', 'Par date'], ...(manyBranches ? [['branch', 'Par branche'] as ['branch', string]] : [])]} />
+          <Seg value={group} onChange={setGroup} options={[['client', 'Par client'], ['date', 'Par date'], ...(manyBranches ? [['branch', 'Par département'] as ['branch', string]] : [])]} />
           {lateReports.length > 0 && <View style={[s.rowCard, { borderLeftWidth: 6, borderLeftColor: c.late, flexDirection: 'column', alignItems: 'stretch', gap: 2 }]} accessibilityRole="alert">
             <Text style={[s.t, { color: c.late, fontWeight: '700' }]}>{lateReports.length} compte{lateReports.length > 1 ? 's' : ''} rendu{lateReports.length > 1 ? 's' : ''} à valider depuis plus de {REPORT_LATE_DAYS} jours</Text>
             <Text style={s.muted}>{lateReports.slice(0, 3).map(v => companyName(v.company_id)).join(', ')}{lateReports.length > 3 ? '…' : ''}{ctx.role !== 'commercial' ? ' · équipe incluse' : ''}. Sans validation, aucune action n'est créée.</Text>
@@ -335,7 +335,7 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
                 e.todo++; if (isActionLate(x, today)) e.late++;
                 by.set(x.owner_id, e);
               }
-              const rows = [...by.entries()].map(([id, e]) => ({ id, name: data.colleagues.find(u => u.id === id)?.display_name ?? 'Commercial', ...e })).sort((p, q) => q.late - p.late || p.name.localeCompare(q.name, 'fr'));
+              const rows = [...by.entries()].map(([id, e]) => ({ id, name: data.colleagues.find(u => u.id === id)?.display_name ?? 'Visiteur', ...e })).sort((p, q) => q.late - p.late || p.name.localeCompare(q.name, 'fr'));
               if (rows.length === 0) return null;
               const totalLate = rows.reduce((n, r) => n + r.late, 0);
               return <View style={[s.rowCard, { flexDirection: 'column', alignItems: 'stretch', gap: 4 }]} accessibilityLabel="Actions de l'équipe">
@@ -378,7 +378,7 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
           <View style={[s.rowCard, { flexDirection: 'column', alignItems: 'stretch', gap: 4 }]} accessibilityLabel="À propos">
             <View style={s.fact}><Text style={s.muted}>Version de l'application</Text><Text style={s.t}>{APP_VERSION}</Text></View>
             <View style={s.fact}><Text style={s.muted}>Serveur</Text><Text style={[s.t, { flexShrink: 1, textAlign: 'right' }]} numberOfLines={1}>{ctx.server.replace(/^https?:\/\//, '').replace(/\/api\/mobile\/v1\/?$/, '')}</Text></View>
-            <View style={s.fact}><Text style={s.muted}>Compte</Text><Text style={s.t}>{ctx.role === 'commercial' ? 'Commercial' : ctx.role === 'manager' ? 'Manager' : 'Directeur'}</Text></View>
+            <View style={s.fact}><Text style={s.muted}>Compte</Text><Text style={s.t}>{ctx.role === 'commercial' ? 'Visiteur' : ctx.role === 'manager' ? 'Responsable' : 'Directeur'}</Text></View>
           </View>
           <Text style={s.muted}>Dictée et synthèse par IA : lorsque le serveur les active, l'audio dicté et les notes durant visite transitent par le serveur vers Mistral ; les notes internes ne sont jamais envoyées. Elles demandent une connexion.</Text>
           <Text style={s.muted}>Les données de l'appareil ne sont pas chiffrées dans ce prototype.</Text>
@@ -434,8 +434,8 @@ function ClientScreen({ companyId, data, ctx, act, back, showDeleted, showFinish
       <Text style={s.muted}>Source : CRM, lecture seule.</Text>
     </View>
     <Btn title="+ Planifier une visite" onPress={() => { if (busy) return; if (ctx.nodes.length > 1) setPick(true); else start(ctx.nodes[0]?.id); }} />
-    <Sheet title="Pour quelle branche ?" visible={pick} onClose={() => setPick(false)}>
-      <Text style={s.muted}>Vous êtes affecté à plusieurs branches de l'organisation : la visite appartient à celle que vous choisissez (visible de ses managers et directeurs).</Text>
+    <Sheet title="Pour quel département ?" visible={pick} onClose={() => setPick(false)}>
+      <Text style={s.muted}>Vous êtes affecté à plusieurs départements de l'organisation : la visite appartient à celui que vous choisissez (visible de ses responsables et directeurs).</Text>
       {ctx.nodes.map(n => <Btn key={n.id} title={n.path} onPress={() => { setPick(false); setTimeout(() => start(n.id), 300); }} />)}   
       <Btn small title="Annuler" onPress={() => setPick(false)} />
     </Sheet>
@@ -504,7 +504,7 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName, offline, open
     ? <Hint why={why} label={label} align="right"><View style={s.iconBtn}><Text style={[s.iconText, { opacity: 0.5 }]}>🔒</Text></View></Hint>
     : <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={label} style={s.iconBtn}><Text style={s.iconText}>✎</Text></Pressable>;
   const dateWhy = v.status === 'deleted' ? undefined : !canDate ? (!mine ? "Seul l'auteur de la visite modifie la date." : 'La date prévue n\'est plus modifiable une fois la visite commencée.') : undefined;
-  const addressWhy = v.status === 'deleted' ? undefined : !canAddress ? (v.status === 'organized' ? "Une fois la visite organisée, seuls les commerciaux modifient l'adresse." : "L'adresse n'est plus modifiable une fois la visite commencée.") : undefined;
+  const addressWhy = v.status === 'deleted' ? undefined : !canAddress ? (v.status === 'organized' ? "Une fois la visite organisée, seuls les visiteurs modifient l'adresse." : "L'adresse n'est plus modifiable une fois la visite commencée.") : undefined;
   return <>
     <ScrollView contentContainerStyle={s.pad}>
     <View style={s.headerRow}>
@@ -519,7 +519,7 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName, offline, open
           <Text style={[s.t, { flexShrink: 1, textAlign: 'right' }, isVisitLate(v) && { color: c.late }]}>{v.planned_start ? fmtDateTime(v.planned_start) : 'non planifiée'}</Text>
           {(canDate || dateWhy) && <Icon label="Modifier la date prévue" onPress={() => setSheet('date')} why={canDate ? undefined : dateWhy} />}
         </View></View>
-      {!!v.org_node_name && (ctx.nodes.length > 1 || ctx.role !== 'commercial') && <View style={s.fact}><Text style={s.muted}>Branche</Text><Text style={[s.t, { flexShrink: 1, textAlign: 'right' }]}>{v.org_node_name}</Text></View>}
+      {!!v.org_node_name && (ctx.nodes.length > 1 || ctx.role !== 'commercial') && <View style={s.fact}><Text style={s.muted}>Département</Text><Text style={[s.t, { flexShrink: 1, textAlign: 'right' }]}>{v.org_node_name}</Text></View>}
       <View style={s.fact}><Text style={s.muted}>Commencée</Text><Text style={s.t}>{v.started_at ? fmtDateTime(v.started_at) : '—'}</Text></View>
       <View style={s.fact}><Text style={s.muted}>Fin du rendez-vous</Text><Text style={s.t}>{v.ended_at ? fmtDateTime(v.ended_at) : '—'}</Text></View>
       <View style={s.fact}><Text style={s.muted}>Adresse de la visite</Text>{(canAddress || addressWhy) && <Icon label="Modifier l'adresse de la visite" onPress={() => setSheet('address')} why={canAddress ? undefined : addressWhy} />}</View>
@@ -563,7 +563,7 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName, offline, open
         <Text style={s.muted}>{n.author_id === ctx.userId ? 'Vous' : n.author_name}</Text>
       </Pressable>))}
     {v.status !== 'deleted' && <View style={{ flexDirection: 'row' }}><Btn small title="+ Ajouter une note interne" onPress={() => setNoteSheet('internal')} disabled={ctx.role !== 'commercial'}
-      why="Les notes internes sont écrites par les commerciaux ; vous les lisez en lecture seule." /></View>}
+      why="Les notes internes sont écrites par les visiteurs ; vous les lisez en lecture seule." /></View>}
     </FoldSection>
 
     <FoldSection title="Actions" summary={visitActions.length ? `${todoCount} à faire · ${doneCount} terminée${doneCount > 1 ? 's' : ''}` : 'aucune'} defaultOpen>
@@ -598,7 +598,7 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName, offline, open
           <View style={{ flex: 1 }} />
           <Btn small title="✉" label="Envoyer par e-mail" align="right" onPress={() => setEmailSheet(true)} />
           <Btn small danger title="🗑" label="Supprimer la visite" align="right" onPress={() => setConfirmDelete(true)} disabled={!canDeleteVisit(ctx.role as UserRole, mine) || todoCount > 0}
-            why={!canDeleteVisit(ctx.role as UserRole, mine) ? 'La suppression est réservée au commercial auteur de la visite et au directeur.' : `Suppression impossible : ${todoCount} action${todoCount > 1 ? 's' : ''} à faire. Terminez-les ou annulez-les d'abord.`} />
+            why={!canDeleteVisit(ctx.role as UserRole, mine) ? 'La suppression est réservée au visiteur auteur de la visite et au directeur.' : `Suppression impossible : ${todoCount} action${todoCount > 1 ? 's' : ''} à faire. Terminez-les ou annulez-les d'abord.`} />
         </View>
       </View>)}
     <EmailSheet visible={emailSheet} visitId={visitId} ctx={ctx} offline={offline} onClose={() => setEmailSheet(false)} />
@@ -783,7 +783,7 @@ function ReportScreen({ visitId, data, ctx, act, back, companyName, offline, ope
   </>;
 }
 
-/** Section repliable : titre cliquable (▸ / ▾), résumé quand elle est repliée, zone libre à droite (ex. micro) toujours accessible. */
+/** Section repliable : titre cliquable (▸ / ▾), résumé quand elle est replié, zone libre à droite (ex. micro) toujours accessible. */
 function Section({ title, summary, open, onToggle, right, children }: { title: string; summary?: string; open: boolean; onToggle: () => void; right?: React.ReactNode; children: React.ReactNode }) {
   const { s, c } = useTheme();
   return (
@@ -1012,7 +1012,7 @@ function HistorySheet({ visible, entries, onClose }: { visible: boolean; entries
       {entries.length === 0 && <Text style={s.muted}>Aucune modification depuis la création de la visite.</Text>}
       {entries.map(e => (
         <View key={e.id} style={s.hist}>
-          <Text style={s.t}>{EVENT_LABEL[e.field] ?? (e.field === 'planned_start' ? 'Date prévue' : e.field === 'org_node' ? 'Branche' : 'Adresse de la visite')}</Text>
+          <Text style={s.t}>{EVENT_LABEL[e.field] ?? (e.field === 'planned_start' ? 'Date prévue' : e.field === 'org_node' ? 'Département' : 'Adresse de la visite')}</Text>
           <Text style={s.muted}>{fmtDateTime(e.changed_at)} · {e.changed_by_name}</Text>
           {!EVENT_LABEL[e.field] && <Text style={{ color: s.t.color }}>{val(e, e.old_value)}  →  {val(e, e.new_value)}</Text>}
         </View>))}

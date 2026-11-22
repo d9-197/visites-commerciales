@@ -19,7 +19,7 @@ export const canTransition = (from: VisitStatus, to: VisitStatus) => from === to
 /**
  * Adresse de la visite :
  *  - avant l'organisation avec le client : toute personne qui peut voir la visite ;
- *  - une fois organisée : les commerciaux seulement ;
+ *  - une fois organisée : les visiteurs seulement ;
  *  - dès que la visite est commencée : plus modifiable.
  */
 export function canEditVisitAddress(status: VisitStatus, role: UserRole): boolean {
@@ -37,7 +37,7 @@ export function canEditVisitNotes(status: VisitStatus | string): boolean {
 }
 
 /**
- * Suppression d'une visite (statut « supprimée », masquée par défaut) : le commercial auteur de la visite, ou un directeur qui la voit.
+ * Suppression d'une visite (statut « supprimée », masquée par défaut) : le visiteur auteur de la visite, ou un directeur qui la voit.
  * Refusée tant qu'il reste des actions à faire (voir `canDeleteVisit` côté serveur et application).
  */
 export function canDeleteVisit(role: UserRole, isAuthor: boolean): boolean {
@@ -82,7 +82,7 @@ export function needsNoActionAck(draftCount: number, existingActions: number, no
 
 /**
  * Étape d'une visite pour l'affichage : « validée » (compte rendu validé) devient « terminée » quand plus aucune action n'est à faire.
- * Les autres statuts sont inchangés. `done` s'affiche « effectuée » (le commercial a quitté le client ; il reste le compte rendu et les actions).
+ * Les autres statuts sont inchangés. `done` s'affiche « effectuée » (le visiteur a quitté le client ; il reste le compte rendu et les actions).
  */
 export function visitStage(status: VisitStatus | string, openActions: number): string {
   return status === 'validated' && openActions === 0 ? 'closed' : status;

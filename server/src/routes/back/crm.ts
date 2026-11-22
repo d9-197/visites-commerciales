@@ -121,8 +121,8 @@ export function crmRouter(pool: Pool) {
 
   /**
    * Import CSV (même sémantique que l'import du CRM). Clients : crm_id;name;address_line;postal_code;city;country;sector;sales_emails
-   * (sales_emails : adresses des commerciaux séparées par espace, virgule, point-virgule ou barre). Contacts : company_crm_id;crm_id;full_name;job_title;phone;email.
-   * Les erreurs de format bloquent tout l'import ; une adresse de commercial inconnue n'est qu'un avertissement. `dry_run` : vérifie sans écrire.
+   * (sales_emails : adresses des visiteurs séparées par espace, virgule, point-virgule ou barre). Contacts : company_crm_id;crm_id;full_name;job_title;phone;email.
+   * Les erreurs de format bloquent tout l'import ; une adresse de visiteur inconnue n'est qu'un avertissement. `dry_run` : vérifie sans écrire.
    */
   r.post('/import', wrap(async (req, res) => {
     requireAdmin(req);
@@ -140,7 +140,7 @@ export function crmRouter(pool: Pool) {
         if (!c.crm_id || !c.name) { errors.push({ file: 'clients', line, message: 'crm_id et name sont obligatoires' }); continue; }
         if (map.has(c.crm_id)) { errors.push({ file: 'clients', line, message: `crm_id en double : ${c.crm_id}` }); continue; }
         const sales = (c.sales_emails ?? '').split(/[\s,;|]+/).map(x => x.trim().toLowerCase()).filter(Boolean);
-        for (const e of sales) if (!emails.has(e)) warnings.push(`Ligne ${line} : commercial inconnu « ${e} » (affectation ignorée)`);
+        for (const e of sales) if (!emails.has(e)) warnings.push(`Ligne ${line} : visiteur inconnu « ${e} » (affectation ignorée)`);
         map.set(c.crm_id, { crm_id: c.crm_id, name: c.name, address_line: c.address_line || undefined, postal_code: c.postal_code || undefined, city: c.city || undefined, country: c.country || undefined, sector: c.sector || undefined, contacts: [], sales_emails: sales });
       }
     }

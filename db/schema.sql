@@ -731,3 +731,13 @@ CREATE VIEW crm_action AS
 CREATE VIEW crm_visit_history AS
   SELECT h.id, h.visit_id, h.field, h.old_value, h.new_value, h.changed_by_name, h.changed_at, h.updated_at, h.seq
   FROM visit_history h;
+
+-- Objectif mensuel de visites par utilisateur (visiteur) : nombre de visites à réaliser dans le mois.
+CREATE TABLE visit_target (
+  user_id    uuid NOT NULL REFERENCES app_user(id),
+  month      date NOT NULL CHECK (month = date_trunc('month', month)::date),
+  target     integer NOT NULL CHECK (target >= 0 AND target <= 9999),
+  set_by     uuid REFERENCES app_user(id),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, month)
+);

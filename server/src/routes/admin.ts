@@ -28,7 +28,7 @@ export function adminRouter(pool: Pool, cfg: Config) {
       for (const n of new Set(d.node_ids ?? [])) await c.query(`INSERT INTO user_org(user_id, node_id) VALUES ($1,$2)`, [row.id, n]);
       await c.query('SELECT rebuild_hierarchy()');
       return row;
-    }).catch(e => { if (e.code === '23505') throw new HttpError(409, 'email_taken', 'E-mail déjà utilisé'); if (e.code === '23503') throw new HttpError(404, 'not_found', 'Branche inconnue'); throw e; });
+    }).catch(e => { if (e.code === '23505') throw new HttpError(409, 'email_taken', 'E-mail déjà utilisé'); if (e.code === '23503') throw new HttpError(404, 'not_found', 'Département inconnu'); throw e; });
     res.status(201).json({ user: u });
   }));
 
@@ -41,7 +41,7 @@ export function adminRouter(pool: Pool, cfg: Config) {
       await c.query(`DELETE FROM user_org WHERE user_id = $1`, [req.params.id]);
       for (const n of new Set(b.data.node_ids)) await c.query(`INSERT INTO user_org(user_id, node_id) VALUES ($1,$2)`, [req.params.id, n]);
       await c.query('SELECT rebuild_hierarchy()');
-    })).catch(e => { if (e.code === '23503') throw new HttpError(404, 'not_found', 'Branche inconnue'); throw e; });
+    })).catch(e => { if (e.code === '23503') throw new HttpError(404, 'not_found', 'Département inconnu'); throw e; });
     res.json({ id: req.params.id, revoked: out.revoked });
   }));
 

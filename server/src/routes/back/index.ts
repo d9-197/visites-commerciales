@@ -8,6 +8,7 @@ import { reportsRouter } from './reports.js';
 import { prepRouter } from './prep.js';
 import { visitsRouter } from './visits.js';
 import { orgRouter } from './org.js';
+import { targetsRouter } from './targets.js';
 import { requireAdmin } from './scope.js';
 
 /** API de l'application back (PC) : /api/back/v1. Authentification par le même jeton que l'application mobile ; périmètre selon le rôle. */
@@ -20,6 +21,6 @@ export function backRouter(pool: Pool, cfg: Config) {
       FROM app_user u WHERE u.id = $1`, [req.auth!.id]).then(q => res.json(q.rows[0])).catch(next);
   });
   r.use(['/users', '/settings'], (req, _res, next) => { try { requireAdmin(req); next(); } catch (e) { next(e); } });
-  r.use(usersRouter(pool)); r.use(orgRouter(pool)); r.use(crmRouter(pool)); r.use(reportsRouter(pool)); r.use(prepRouter(pool)); r.use(visitsRouter(pool));
+  r.use(usersRouter(pool)); r.use(orgRouter(pool)); r.use(crmRouter(pool)); r.use(reportsRouter(pool)); r.use(prepRouter(pool)); r.use(visitsRouter(pool)); r.use(targetsRouter(pool));
   return r;
 }

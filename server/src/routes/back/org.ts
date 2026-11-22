@@ -9,14 +9,14 @@ import { requireAdmin, scopeNodes } from './scope.js';
 const name = z.string().trim().min(1).max(100);
 const uuid = z.string().uuid();
 
-/** Organisation arborescente. Lecture de ses propres branches : tout utilisateur ; modification de l'arbre : administrateurs seulement. */
+/** Organisation arborescente. Lecture de ses propres départements : tout utilisateur ; modification de l'arbre : administrateurs seulement. */
 export function orgRouter(pool: Pool) {
   const r = express.Router();
 
   const NODE_SQL = `SELECT n.id, n.parent_id, n.name, org_path(n.id) AS path,
       (SELECT max(c.depth) FROM org_closure c WHERE c.descendant_id = n.id) AS depth`;
 
-  /** Mes branches et les branches auxquelles j'ai accès (les miennes et leurs descendantes), dans l'ordre de l'arbre. */
+  /** Mes départements et les départements auxquels j'ai accès (les miens et leurs descendants), dans l'ordre de l'arbre. */
   r.get('/org/mine', wrap(async (req, res) => {
     const mine = (await pool.query(`${NODE_SQL} FROM user_org uo JOIN org_node n ON n.id = uo.node_id WHERE uo.user_id = $1 ORDER BY org_path(n.id)`, [req.auth!.id])).rows;
     const scope = await scopeNodes(pool, req);
@@ -30,7 +30,7 @@ export function orgRouter(pool: Pool) {
     const { rows } = await pool.query(
       `${NODE_SQL},
         (SELECT count(*)::int FROM org_node k WHERE k.parent_id = n.id) AS children_count,
-        (SELECT count(*)::int FROM visit v WHERE v.org_node_id = n.id) AS visits_count,   -- toutes les visites (supprimées comprises) : ce sont elles qui empêchent la suppression de la branche
+        (SELECT count(*)::int FROM visit v WHERE v.org_node_id = n.id) AS visits_count,   -- toutes les visites (supprimées comprises) : ce sont elles qui empêchent la suppression du département
         COALESCE((SELECT json_agg(json_build_object('id', u.id, 'name', u.display_name, 'role', u.role) ORDER BY u.display_name)
                   FROM user_org uo JOIN app_user u ON u.id = uo.user_id WHERE uo.node_id = n.id), '[]'::json) AS members
        FROM org_node n ORDER BY org_path(n.id)`);
@@ -42,13 +42,13 @@ export function orgRouter(pool: Pool) {
 
   r.post('/org/nodes', wrap(async (req, res) => {
     requireAdmin(req);
-    // Sans parent (absent ou null) : une branche de premier niveau. Plusieurs branches de premier niveau sont permises (l'arbre est une forêt).
+    // Sans parent (absent ou null) : un département de premier niveau. Plusieurs départements de premier niveau sont permis (l'arbre est une forêt).
     const b = z.object({ name, parent_id: uuid.nullable().optional() }).strict().safeParse(req.body);
     if (!b.success) throw new HttpError(400, 'validation_failed', 'Nom requis');
     const parent = b.data.parent_id ?? null;
     const id = await tx(pool, async c => {
-      if (parent && !(await c.query(`SELECT 1 FROM org_node WHERE id = $1`, [parent])).rows[0]) throw new HttpError(404, 'not_found', 'Branche parente inconnue');
-      if (await sameName(c, parent, b.data.name)) throw new HttpError(409, 'name_taken', 'Une branche de ce nom existe déjà à cet endroit');
+      if (parent && !(await c.query(`SELECT 1 FROM org_node WHERE id = $1`, [parent])).rows[0]) throw new HttpError(404, 'not_found', 'Département parent inconnu');
+      if (await sameName(c, parent, b.data.name)) throw new HttpError(409, 'name_taken', 'Un département de ce nom existe déjà à cet endroit');
       const row = (await c.query(`INSERT INTO org_node(parent_id, name) VALUES ($1,$2) RETURNING id`, [parent, b.data.name])).rows[0];
       await c.query('SELECT rebuild_org()');
       await c.query(`INSERT INTO audit_log(actor_user_id, action, entity, entity_id) VALUES ($1,'org_node_created','org_node',$2)`, [req.auth!.id, row.id]);
@@ -65,14 +65,14 @@ export function orgRouter(pool: Pool) {
     const id = req.params.id!;
     const out = await tx(pool, c => withRevocations(c, async () => {
       const cur = (await c.query(`SELECT * FROM org_node WHERE id = $1 FOR UPDATE`, [id])).rows[0];
-      if (!cur) throw new HttpError(404, 'not_found', 'Branche inconnue');
-      // parent_id null : la branche devient une branche de premier niveau.
+      if (!cur) throw new HttpError(404, 'not_found', 'Département inconnu');
+      // parent_id null : le département devient un département de premier niveau.
       const parent: string | null = b.data.parent_id !== undefined ? b.data.parent_id : cur.parent_id; const nm = b.data.name ?? cur.name;
       if (b.data.parent_id) {
-        if (!(await c.query(`SELECT 1 FROM org_node WHERE id = $1`, [b.data.parent_id])).rows[0]) throw new HttpError(404, 'not_found', 'Branche parente inconnue');
-        if ((await c.query(`SELECT 1 FROM org_closure WHERE ancestor_id = $1 AND descendant_id = $2`, [id, b.data.parent_id])).rows[0]) throw new HttpError(409, 'org_cycle', 'Une branche ne peut pas être déplacée sous elle-même ou sous une de ses descendantes');
+        if (!(await c.query(`SELECT 1 FROM org_node WHERE id = $1`, [b.data.parent_id])).rows[0]) throw new HttpError(404, 'not_found', 'Département parent inconnu');
+        if ((await c.query(`SELECT 1 FROM org_closure WHERE ancestor_id = $1 AND descendant_id = $2`, [id, b.data.parent_id])).rows[0]) throw new HttpError(409, 'org_cycle', 'Un département ne peut pas être déplacé sous lui-même ou sous un de ses descendants');
       }
-      if (await sameName(c, parent, nm, id)) throw new HttpError(409, 'name_taken', 'Une branche de ce nom existe déjà à cet endroit');
+      if (await sameName(c, parent, nm, id)) throw new HttpError(409, 'name_taken', 'Un département de ce nom existe déjà à cet endroit');
       await c.query(`UPDATE org_node SET name = $2, parent_id = $3, updated_at = now() WHERE id = $1`, [id, nm, parent]);
       await c.query('SELECT rebuild_org()');
       await c.query(`INSERT INTO audit_log(actor_user_id, action, entity, entity_id, detail) VALUES ($1,'org_node_updated','org_node',$2,$3)`, [req.auth!.id, id, { fields: Object.keys(b.data) }]);
@@ -80,10 +80,10 @@ export function orgRouter(pool: Pool) {
     res.json({ id, revoked: out.revoked });
   }));
 
-  /** Auteurs des visites d'une branche (pour préparer une réaffectation). */
+  /** Auteurs des visites d'un département (pour préparer une réaffectation). */
   r.get('/org/nodes/:id/visit-authors', wrap(async (req, res) => {
     requireAdmin(req);
-    if (!(await pool.query(`SELECT 1 FROM org_node WHERE id = $1`, [req.params.id])).rows[0]) throw new HttpError(404, 'not_found', 'Branche inconnue');
+    if (!(await pool.query(`SELECT 1 FROM org_node WHERE id = $1`, [req.params.id])).rows[0]) throw new HttpError(404, 'not_found', 'Département inconnu');
     const { rows } = await pool.query(
       `SELECT u.id, u.display_name AS name, u.status, u.role, count(*)::int AS visits
        FROM visit v JOIN app_user u ON u.id = v.author_id WHERE v.org_node_id = $1 AND v.author_id IS NOT NULL GROUP BY u.id ORDER BY u.display_name`, [req.params.id]);
@@ -91,21 +91,21 @@ export function orgRouter(pool: Pool) {
   }));
 
   /**
-   * Réaffecter les visites d'une branche à une autre (toutes, ou celles de `visit_ids`) : pour vider une branche avant de la supprimer, ou corriger une erreur.
-   * Change les droits (les managers de l'ancienne branche perdent l'accès, ceux de la nouvelle le gagnent) : retraits transmis aux appareils.
-   * Chaque visite garde sa trace dans son historique. `add_authors` : affecte aussi à la branche cible les auteurs qui n'en sont pas membres.
+   * Réaffecter les visites d'un département à un autre (toutes, ou celles de `visit_ids`) : pour vider un département avant de le supprimer, ou corriger une erreur.
+   * Change les droits (les responsables de l'ancien département perdent l'accès, ceux du nouveau le gagnent) : retraits transmis aux appareils.
+   * Chaque visite garde sa trace dans son historique. `add_authors` : affecte aussi au département cible les auteurs qui n'en sont pas membres.
    */
   r.post('/org/nodes/:id/reassign-visits', wrap(async (req, res) => {
     requireAdmin(req);
     const b = z.object({ target_id: uuid, visit_ids: z.array(uuid).max(5000).optional(), add_authors: z.boolean().optional() }).strict().safeParse(req.body);
-    if (!b.success) throw new HttpError(400, 'validation_failed', 'Branche cible requise');
+    if (!b.success) throw new HttpError(400, 'validation_failed', 'Département cible requise');
     const from = req.params.id!; const to = b.data.target_id;
-    if (from === to) throw new HttpError(409, 'same_node', 'La branche cible est la branche actuelle');
+    if (from === to) throw new HttpError(409, 'same_node', 'Le département cible est le département actuelle');
     const me = (await pool.query(`SELECT display_name FROM app_user WHERE id = $1`, [req.auth!.id])).rows[0];
     const out = await tx(pool, c => withRevocations(c, async () => {
       const names = (await c.query(`SELECT id, name FROM org_node WHERE id = ANY($1::uuid[])`, [[from, to]])).rows;
       const src = names.find(n => n.id === from), dst = names.find(n => n.id === to);
-      if (!src || !dst) throw new HttpError(404, 'not_found', 'Branche inconnue');
+      if (!src || !dst) throw new HttpError(404, 'not_found', 'Département inconnu');
       const moved = (await c.query(
         `UPDATE visit SET org_node_id = $2, version = version + 1 WHERE org_node_id = $1 AND ($3::uuid[] IS NULL OR id = ANY($3)) RETURNING id, author_id`, [from, to, b.data.visit_ids ?? null])).rows;
       for (const v of moved) {
@@ -123,16 +123,16 @@ export function orgRouter(pool: Pool) {
     res.json({ ...out.result, revoked: out.revoked });
   }));
 
-  /** Supprimer une branche vide (de n'importe quel niveau, premier niveau compris) : sans sous-branche, sans membre, sans visite. */
+  /** Supprimer un département vide (de n'importe quel niveau, premier niveau compris) : sans sous-département, sans membre, sans visite. */
   r.delete('/org/nodes/:id', wrap(async (req, res) => {
     requireAdmin(req);
     const id = req.params.id!;
     await tx(pool, async c => {
       const cur = (await c.query(`SELECT parent_id FROM org_node WHERE id = $1 FOR UPDATE`, [id])).rows[0];
-      if (!cur) throw new HttpError(404, 'not_found', 'Branche inconnue');
-      if ((await c.query(`SELECT 1 FROM org_node WHERE parent_id = $1`, [id])).rows[0]) throw new HttpError(409, 'has_children', "Cette branche a des sous-branches : supprimez-les ou déplacez-les d'abord");
-      if ((await c.query(`SELECT 1 FROM user_org WHERE node_id = $1`, [id])).rows[0]) throw new HttpError(409, 'has_members', 'Des utilisateurs sont affectés à cette branche : affectez-les ailleurs d\'abord');
-      if ((await c.query(`SELECT 1 FROM visit WHERE org_node_id = $1`, [id])).rows[0]) throw new HttpError(409, 'has_visits', 'Des visites appartiennent à cette branche : elle ne peut pas être supprimée');
+      if (!cur) throw new HttpError(404, 'not_found', 'Département inconnu');
+      if ((await c.query(`SELECT 1 FROM org_node WHERE parent_id = $1`, [id])).rows[0]) throw new HttpError(409, 'has_children', "Ce département a des sous-départements : supprimez-les ou déplacez-les d'abord");
+      if ((await c.query(`SELECT 1 FROM user_org WHERE node_id = $1`, [id])).rows[0]) throw new HttpError(409, 'has_members', 'Des utilisateurs sont affectés à ce département : affectez-les ailleurs d\'abord');
+      if ((await c.query(`SELECT 1 FROM visit WHERE org_node_id = $1`, [id])).rows[0]) throw new HttpError(409, 'has_visits', 'Des visites appartiennent à ce département : il ne peut pas être supprimé');
       await c.query(`DELETE FROM org_node WHERE id = $1`, [id]);
       await c.query('SELECT rebuild_org()');
       await c.query(`INSERT INTO audit_log(actor_user_id, action, entity, entity_id) VALUES ($1,'org_node_deleted','org_node',$2)`, [req.auth!.id, id]);

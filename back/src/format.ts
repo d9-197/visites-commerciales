@@ -9,7 +9,7 @@ export const isoToLocal = (v?: string | null) => { if (!v) return ''; const d = 
 export const STATUS: Record<string, string> = { planned: 'À organiser avec le client', organized: 'Organisée avec le client', in_progress: 'En cours', done: 'Effectuée', validated: 'CR validé', closed: 'Terminée', cancelled: 'Annulée', deleted: 'Supprimée' };
 export const STATUS_TONE: Record<string, string> = { planned: 'amber', organized: 'blue', in_progress: 'green', done: 'grey', validated: 'violet', closed: 'green', cancelled: 'grey', deleted: 'grey' };
 export const TEMP: Record<string, string> = { cold: 'Froide', warm: 'Tiède', hot: 'Chaude' };
-export const ROLE: Record<string, string> = { commercial: 'Commercial', manager: 'Manager', directeur: 'Directeur' };
+export const ROLE: Record<string, string> = { commercial: 'Visiteur', manager: 'Responsable', directeur: 'Directeur' };
 export const REASON: Record<string, [string, string]> = {
   never_visited: ['Jamais visité', 'amber'], stale: ['Sans visite récente', 'amber'], late_actions: ['Actions en retard', 'red'], hot_no_followup: ['Opportunité chaude sans suite', 'red'],
 };

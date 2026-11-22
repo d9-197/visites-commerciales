@@ -19,18 +19,18 @@ export function reportsRouter(pool: Pool) {
     if (Date.parse(to) - Date.parse(from) > 800 * 86400000) throw new HttpError(400, 'validation_failed', 'Période trop longue (800 jours au plus)');
     const scope = await scopeUsers(pool, req);     // utilisateurs supervisés (hiérarchie) : sert aux clients et aux comptes à lister
     const userId = typeof req.query.user_id === 'string' ? req.query.user_id : undefined;
-    const ids = await authorFilter(pool, req, userId);     // auteurs des visites : tous (limités par les branches) ou un seul ; indépendant de leur statut et de leur rôle actuels
+    const ids = await authorFilter(pool, req, userId);     // auteurs des visites : tous (limités par les départements) ou un seul ; indépendant de leur statut et de leur rôle actuels
     const assignIds = userId ? [userId] : scope;     // null = tout
-    // Branches : celles de l'utilisateur et leurs descendantes ; `node_id` descend dans une branche (consolidée avec ses sous-branches).
+    // Départements : ceux de l'utilisateur et leurs descendants ; `node_id` descend dans un département (consolidé avec ses sous-départements).
     const allowedNodes = await scopeNodes(pool, req);
     const nodeId = typeof req.query.node_id === 'string' && req.query.node_id ? req.query.node_id : undefined;
     let nodes = allowedNodes;
     if (nodeId) {
       const sub = await subtree(pool, nodeId, allowedNodes);
-      if (!sub) throw new HttpError(404, 'not_found', 'Branche hors de votre périmètre');
+      if (!sub) throw new HttpError(404, 'not_found', 'Département hors de votre périmètre');
       nodes = sub;
     }
-    const viewer = nodeId ? null : req.auth!.id;     // ses propres visites comptent toujours, sauf quand on regarde une branche précise
+    const viewer = nodeId ? null : req.auth!.id;     // ses propres visites comptent toujours, sauf quand on regarde un département précise
     const P = [ids, from, addDays(to, 1), REPORT_LATE_DAYS, nodes, viewer];
 
     // Visites de la période : date de référence = fin du rendez-vous, sinon début, sinon date prévue.
@@ -40,8 +40,8 @@ export function reportsRouter(pool: Pool) {
         AND ($4::int IS NOT NULL) AND ($5::uuid[] IS NULL OR v.org_node_id = ANY($5) OR v.author_id = $6::uuid)
         AND COALESCE(v.ended_at, v.started_at, v.planned_start) >= $2::date AND COALESCE(v.ended_at, v.started_at, v.planned_start) < $3::date)`;
 
-    // Utilisateurs listés : les commerciaux actifs du périmètre, PLUS tout auteur de visite (ou responsable d'action) de la période, même désactivé ou
-    // devenu manager/directeur : ses visites ne disparaissent ni des lignes ni des totaux. Complétés après les requêtes ci-dessous.
+    // Utilisateurs listés : les visiteurs actifs du périmètre, PLUS tout auteur de visite (ou responsable d'action) de la période, même désactivé ou
+    // devenu responsable/directeur : ses visites ne disparaissent ni des lignes ni des totaux. Complétés après les requêtes ci-dessous.
     const activeUsers = (await pool.query(
       `SELECT u.id, u.display_name, u.role, u.status FROM app_user u WHERE u.status = 'active' AND u.role = 'commercial' AND ($1::uuid[] IS NULL OR u.id = ANY($1))
          AND (NOT u.is_admin OR EXISTS (SELECT 1 FROM visit v WHERE v.author_id = u.id) OR EXISTS (SELECT 1 FROM company_assignment a WHERE a.user_id = u.id AND a.removed_at IS NULL))
@@ -69,8 +69,12 @@ export function reportsRouter(pool: Pool) {
        WHERE ($1::uuid[] IS NULL OR a.owner_id = ANY($1))
          AND (CASE WHEN v.id IS NULL THEN ($6::uuid[] IS NULL OR a.owner_id = ANY($6)) ELSE ($4::uuid[] IS NULL OR v.org_node_id = ANY($4) OR v.author_id = $5::uuid) END)
        GROUP BY a.owner_id`, [userId ? [userId] : null, from, addDays(to, 1), nodes, viewer, scope])).rows;
+    // Objectifs mensuels : somme des objectifs des mois civils couverts par la période (les mois partiellement couverts comptent en entier).
+    const targets = (await pool.query(
+      `SELECT user_id, sum(target)::int AS target FROM visit_target WHERE month >= date_trunc('month', $2::date) AND month <= date_trunc('month', $3::date)
+         AND ($1::uuid[] IS NULL OR user_id = ANY($1)) GROUP BY user_id`, [userId ? [userId] : scope, from, to])).rows;
     const known = new Set(activeUsers.map(u => u.id as string));
-    const extraIds = [...new Set([...perUser.map(x => x.user_id as string), ...actions.map(x => x.user_id as string)])].filter(id => !known.has(id));
+    const extraIds = [...new Set([...perUser.map(x => x.user_id as string), ...actions.map(x => x.user_id as string), ...targets.map(x => x.user_id as string)])].filter(Boolean).filter(id => !known.has(id));
     const extra = extraIds.length ? (await pool.query(`SELECT id, display_name, role, status FROM app_user WHERE id = ANY($1::uuid[])`, [extraIds])).rows : [];
     const users = [...activeUsers, ...extra].sort((a, b) => String(a.display_name).localeCompare(String(b.display_name), 'fr'));
 
@@ -78,17 +82,18 @@ export function reportsRouter(pool: Pool) {
       const v = perUser.find(x => x.user_id === u.id) ?? {}; const a = actions.find(x => x.user_id === u.id) ?? {};
       return { user_id: u.id, name: u.display_name, role: u.role, status: u.status, planned: v.planned ?? 0, in_progress: v.in_progress ?? 0, done: v.done ?? 0, cancelled: v.cancelled ?? 0,
         cr_validated: v.cr_validated ?? 0, cr_pending: v.cr_pending ?? 0, cr_late: v.cr_late ?? 0, avg_cr_delay_days: v.avg_cr_delay_days === null || v.avg_cr_delay_days === undefined ? null : Number(v.avg_cr_delay_days),
-        actions_todo: a.todo ?? 0, actions_late: a.late ?? 0, actions_done: a.done_in_period ?? 0 };
+        actions_todo: a.todo ?? 0, actions_late: a.late ?? 0, actions_done: a.done_in_period ?? 0,
+        target: targets.find(x => x.user_id === u.id)?.target ?? null };
     });
     // Visites non attribuées (sans auteur) : une ligne à part, pour qu'elles comptent dans les totaux.
     const un = perUser.find(x => x.user_id === null);
     if (un) byUser.unshift({ user_id: null as unknown as string, name: 'Non attribuées', role: null as unknown as string, status: 'active', planned: un.planned ?? 0, in_progress: 0, done: 0, cancelled: un.cancelled ?? 0,
-      cr_validated: 0, cr_pending: 0, cr_late: 0, avg_cr_delay_days: null, actions_todo: 0, actions_late: 0, actions_done: 0 });
+      cr_validated: 0, cr_pending: 0, cr_late: 0, avg_cr_delay_days: null, actions_todo: 0, actions_late: 0, actions_done: 0, target: null });
     const sum = (k: keyof (typeof byUser)[number]) => byUser.reduce((n, u) => n + (Number(u[k]) || 0), 0);
     const delays = byUser.filter(u => u.avg_cr_delay_days !== null && u.cr_validated > 0);
     const totals = {
       planned: sum('planned'), in_progress: sum('in_progress'), done: sum('done'), cancelled: sum('cancelled'), cr_validated: sum('cr_validated'), cr_pending: sum('cr_pending'), cr_late: sum('cr_late'),
-      actions_todo: sum('actions_todo'), actions_late: sum('actions_late'), actions_done: sum('actions_done'),
+      target: sum('target'), actions_todo: sum('actions_todo'), actions_late: sum('actions_late'), actions_done: sum('actions_done'),
       avg_cr_delay_days: delays.length ? Math.round(delays.reduce((n, u) => n + (u.avg_cr_delay_days as number) * u.cr_validated, 0) / delays.reduce((n, u) => n + u.cr_validated, 0) * 10) / 10 : null,
     };
 
@@ -116,7 +121,7 @@ export function reportsRouter(pool: Pool) {
          AND ($3::uuid[] IS NULL OR v.org_node_id = ANY($3) OR v.author_id = $4::uuid)
        ORDER BY v.ended_at LIMIT 50`, [ids, REPORT_LATE_DAYS, nodes, viewer])).rows;
 
-    // Consolidation par branche : chaque nœud cumule ses visites et celles de ses sous-branches (celles que l'utilisateur peut voir).
+    // Consolidation par département : chaque nœud cumule ses visites et celles de ses sous-départements (ceux que l'utilisateur peut voir).
     const byNode = (await pool.query(`${VISITS}
       SELECT n.id AS node_id, n.parent_id, n.name, org_path(n.id) AS path,
         (SELECT max(c2.depth) FROM org_closure c2 WHERE c2.descendant_id = n.id)::int AS depth,
@@ -143,16 +148,24 @@ export function reportsRouter(pool: Pool) {
        FROM visit v WHERE v.deleted_at IS NULL AND v.status IN ('planned','organized') AND ($1::uuid[] IS NULL OR v.author_id = ANY($1) OR v.author_id IS NULL)
          AND ($2::uuid[] IS NULL OR v.org_node_id = ANY($2) OR v.author_id = $3::uuid)`, [ids, nodes, viewer])).rows[0];
 
-    return { pipeline, period: { from, to }, scope: ids === null ? 'all' : 'team', node_id: nodeId ?? null, totals, by_user: byUser, by_node: byNode, by_week: byWeek, clients, late_reports: late };
+    return { targets_defined: targets.length > 0, pipeline, period: { from, to }, scope: ids === null ? 'all' : 'team', node_id: nodeId ?? null, totals, by_user: byUser, by_node: byNode, by_week: byWeek, clients, late_reports: late };
   }
 
   r.get('/reports/activity', wrap(async (req, res) => { res.json(await activity(req)); }));
 
   r.get('/reports/activity.csv', wrap(async (req, res) => {
     const a = await activity(req);
-    const head = ['Commercial', 'Visites prévues', 'En cours', 'Effectuées', 'Annulées', 'CR validés', 'CR à valider', 'CR en retard', 'Délai moyen de validation du CR (jours)', 'Actions à faire', 'Actions en retard', 'Actions terminées (période)'];
-    const rows = a.by_user.map(u => [u.name, u.planned, u.in_progress, u.done, u.cancelled, u.cr_validated, u.cr_pending, u.cr_late, u.avg_cr_delay_days ?? '', u.actions_todo, u.actions_late, u.actions_done]);
-    res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="activite-${a.period.from}-${a.period.to}.csv"` }).send(toCsv(head, rows));
+    const file = (name: string) => ({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${name}-${a.period.from}-${a.period.to}.csv"` });
+    if (req.query.by === 'node') {
+      // Export par département : une ligne par département, consolidée avec ses sous-départements.
+      const head = ['Département', 'Niveau', 'Membres', 'Visites prévues', 'En cours', 'Effectuées', 'Annulées', 'CR validés', 'CR à valider', 'CR en retard'];
+      const rows = a.by_node.map((n: any) => [n.path, n.depth + 1, n.members, n.planned, n.in_progress, n.done, n.cancelled, n.cr_validated, n.cr_pending, n.cr_late]);
+      res.set(file('activite-departements')).send(toCsv(head, rows)); return;
+    }
+    const obj = a.targets_defined;
+    const head = ['Visiteur', ...(obj ? ['Objectif', 'Atteinte (%)'] : []), 'Visites prévues', 'En cours', 'Effectuées', 'Annulées', 'CR validés', 'CR à valider', 'CR en retard', 'Délai moyen de validation du CR (jours)', 'Actions à faire', 'Actions en retard', 'Actions terminées (période)'];
+    const rows = a.by_user.map(u => [u.name, ...(obj ? [u.target ?? '', u.target ? Math.round(u.done * 100 / u.target) : ''] : []), u.planned, u.in_progress, u.done, u.cancelled, u.cr_validated, u.cr_pending, u.cr_late, u.avg_cr_delay_days ?? '', u.actions_todo, u.actions_late, u.actions_done]);
+    res.set(file('activite')).send(toCsv(head, rows));
   }));
 
   return r;

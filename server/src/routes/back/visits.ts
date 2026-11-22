@@ -19,11 +19,11 @@ export function visitsRouter(pool: Pool) {
     const company = csvIds(req.query.company_ids ?? req.query.company_id);   // un ou plusieurs clients (identifiants séparés par des virgules)
     const { limit, offset } = pagination(req);
     const A = req.auth!;
-    // Branche : filtre sur le sous-arbre choisi (limité aux branches accessibles).
+    // Département : filtre sur le sous-arbre choisi (limité aux départements accessibles).
     let nodes: string[] | null = null;
     if (typeof req.query.node_id === 'string' && req.query.node_id) {
       nodes = await subtree(pool, req.query.node_id, await scopeNodes(pool, req));
-      if (!nodes) throw new HttpError(404, 'not_found', 'Branche hors de votre périmètre');
+      if (!nodes) throw new HttpError(404, 'not_found', 'Département hors de votre périmètre');
     }
     const where = `v.deleted_at IS NULL AND ($1::uuid[] IS NULL OR v.author_id = ANY($1)) AND ($2::boolean OR can_read_visit($3, v.id))
       AND ($4::text IS NULL OR v.status = $4) AND ($5 = '' OR c.name ILIKE '%'||$5||'%') AND ($6::date IS NULL OR COALESCE(v.ended_at, v.started_at, v.planned_start) >= $6::date)

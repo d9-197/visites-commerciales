@@ -15,9 +15,9 @@ export async function scopeUsers(pool: Pool, req: Request): Promise<string[] | n
 }
 
 /**
- * Branches accessibles à l'utilisateur : ses nœuds et leurs descendants (administrateur : tout, `null`).
- * Une visite n'est visible dans l'application back que si son auteur est l'utilisateur lui-même ou si elle appartient à l'une de ces branches
- * (et, pour un commercial, `scopeUsers` le limite à lui-même).
+ * Départements accessibles à l'utilisateur : ses nœuds et leurs descendants (administrateur : tout, `null`).
+ * Une visite n'est visible dans l'application back que si son auteur est l'utilisateur lui-même ou si elle appartient à l'un de ces départements
+ * (et, pour un visiteur, `scopeUsers` le limite à lui-même).
  */
 export async function scopeNodes(pool: Pool, req: Request): Promise<string[] | null> {
   if (req.auth!.isAdmin) return null;
@@ -25,7 +25,7 @@ export async function scopeNodes(pool: Pool, req: Request): Promise<string[] | n
   return rows.map(r => r.descendant_id as string);
 }
 
-/** Sous-arbre d'un nœud (le nœud et ses descendants), limité aux branches accessibles ; `null` si le nœud est inconnu ou hors périmètre. */
+/** Sous-arbre d'un nœud (le nœud et ses descendants), limité aux départements accessibles ; `null` si le nœud est inconnu ou hors périmètre. */
 export async function subtree(pool: Pool, nodeId: unknown, allowed: string[] | null): Promise<string[] | null> {
   if (typeof nodeId !== 'string' || !/^[0-9a-f-]{36}$/i.test(nodeId)) return null;
   if (allowed !== null && !allowed.includes(nodeId)) return null;
@@ -35,8 +35,8 @@ export async function subtree(pool: Pool, nodeId: unknown, allowed: string[] | n
 
 /**
  * Auteurs dont on affiche les visites. Ne dépend NI du statut NI du rôle actuels de l'auteur : une visite d'un utilisateur désactivé, ou qui n'est plus
- * commercial, reste visible tant qu'elle appartient à une branche accessible. Un utilisateur précis (`uid`) n'est accepté que si l'on voit au moins une de ses visites.
- * Sans `uid` : tous les auteurs (administrateur, manager, directeur : la branche limite déjà) ou soi-même (commercial).
+ * visiteur, reste visible tant qu'elle appartient à un département accessible. Un utilisateur précis (`uid`) n'est accepté que si l'on voit au moins une de ses visites.
+ * Sans `uid` : tous les auteurs (administrateur, responsable, directeur : le département limite déjà) ou soi-même (visiteur).
  */
 export async function authorFilter(pool: Pool, req: Request, uid?: string): Promise<string[] | null> {
   const a = req.auth!;
