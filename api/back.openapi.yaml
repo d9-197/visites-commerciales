@@ -79,18 +79,18 @@ paths:
     post:
       tags: [Organisation]
       summary: Créer une sous-branche (administrateurs)
-      description: "Le parent est obligatoire (une seule racine). Deux branches de même parent ne portent pas le même nom (insensible à la casse)."
+      description: "Sans `parent_id` (absent ou null) : une branche de premier niveau ; plusieurs sont permises (l'arbre est une forêt). Deux branches de même parent (ou deux branches de premier niveau) ne portent pas le même nom (insensible à la casse)."
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [name, parent_id]
+              required: [name]
               additionalProperties: false
               properties:
                 name: {type: string, minLength: 1, maxLength: 100}
-                parent_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+                parent_id: {type: [string, 'null'], format: uuid}
       responses:
         '201': {description: Créée., content: {application/json: {schema: {$ref: '#/components/schemas/IdOnly'}}}}
         '400': {$ref: 'common.yaml#/components/responses/BadRequest'}
@@ -102,7 +102,7 @@ paths:
     patch:
       tags: [Organisation]
       summary: Renommer ou déplacer une branche (administrateurs)
-      description: "Déplacer (`parent_id`) change les droits : les directeurs et managers des anciennes branches parentes perdent l'accès aux données de la branche, ceux des nouvelles le gagnent ; les retraits sont transmis aux appareils (`revoked`). Refus : `root_immutable` (la racine ne se déplace pas), `org_cycle` (sous elle-même ou une descendante), `name_taken`."
+      description: "Déplacer (`parent_id`) change les droits : les directeurs et managers des anciennes branches parentes perdent l'accès aux données de la branche, ceux des nouvelles le gagnent ; les retraits sont transmis aux appareils (`revoked`). `parent_id: null` : la branche devient une branche de premier niveau. Refus : `org_cycle` (sous elle-même ou une descendante), `name_taken`."
       parameters:
         - {$ref: '#/components/parameters/Id'}
       requestBody:
@@ -114,7 +114,7 @@ paths:
               additionalProperties: false
               properties:
                 name: {type: string, minLength: 1, maxLength: 100}
-                parent_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+                parent_id: {type: [string, 'null'], format: uuid}
       responses:
         '200':
           description: Modifiée.
@@ -123,11 +123,11 @@ paths:
         '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
         '403': {$ref: 'common.yaml#/components/responses/Forbidden'}
         '404': {$ref: 'common.yaml#/components/responses/NotFound'}
-        '409': {description: "`root_immutable`, `org_cycle` ou `name_taken`.", content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}}
+        '409': {description: "`org_cycle` ou `name_taken`.", content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}}
     delete:
       tags: [Organisation]
       summary: Supprimer une branche vide (administrateurs)
-      description: "Refus (409) : `root_immutable`, `has_children`, `has_members`, `has_visits`."
+      description: "Toute branche vide, de n'importe quel niveau (premier niveau compris). Refus (409) : `has_children`, `has_members`, `has_visits`."
       parameters:
         - {$ref: '#/components/parameters/Id'}
       responses:
@@ -135,7 +135,7 @@ paths:
         '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
         '403': {$ref: 'common.yaml#/components/responses/Forbidden'}
         '404': {$ref: 'common.yaml#/components/responses/NotFound'}
-        '409': {description: "`root_immutable`, `has_children`, `has_members` ou `has_visits`.", content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}}
+        '409': {description: "`has_children`, `has_members` ou `has_visits`.", content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}}
 
   /reports/activity:
     get:
@@ -830,7 +830,7 @@ components:
         parent_id: {type: [string, 'null'], format: uuid}
         name: {type: string}
         path: {type: string}
-        depth: {type: integer, description: "Nombre d'ancêtres (racine : 0)."}
+        depth: {type: integer, description: "Nombre d'ancêtres (premier niveau : 0)."}
     OrgNodeDetail:
       allOf:
         - {$ref: '#/components/schemas/OrgNode'}

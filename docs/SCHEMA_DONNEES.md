@@ -76,7 +76,7 @@ Table `visit_email` (migration 007) : journal des envois d'e-mail d'une visite (
 
 Elle **remplace** l'ancien supérieur par utilisateur (`app_user.manager_id`, conservé en base pour la conversion, plus utilisé).
 
-- `org_node` (id, parent, nom) : l'arbre, une seule racine (« Entreprise »). `org_closure` : fermeture transitive (ancêtre, descendant, profondeur ; profondeur 0 pour le nœud lui-même), reconstruite par `rebuild_org()` à chaque changement de l'arbre. `org_path(nœud)` : chemin lisible « Entreprise › Région › Agence ».
+- `org_node` (id, parent, nom) : l'arbre : **une ou plusieurs branches de premier niveau** (forêt ; la migration 009 crée « Entreprise » au-dessus des équipes converties, mais elle n'a rien de spécial : elle se renomme, se déplace, se supprime quand elle est vide). `org_closure` : fermeture transitive (ancêtre, descendant, profondeur ; profondeur 0 pour le nœud lui-même), reconstruite par `rebuild_org()` à chaque changement de l'arbre. `org_path(nœud)` : chemin lisible « Entreprise › Région › Agence ».
 - `user_org` (utilisateur, nœud) : un utilisateur est affecté à **un ou plusieurs nœuds** et garde **le même rôle partout** (le rôle reste `app_user.role`).
 - `visit.org_node_id` (obligatoire) : la **branche de la visite**, un nœud de son auteur, choisi par l'auteur à la création s'il en a plusieurs (non modifiable ensuite). Un changement de branche de l'auteur ne déplace pas ses visites existantes.
 - `org_access(utilisateur, nœud)` : le nœud est l'un des nœuds de l'utilisateur ou un descendant. `org_supervises(utilisateur, nœud)` : idem, **et** le rôle est manager ou directeur.

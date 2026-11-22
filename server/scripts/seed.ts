@@ -23,11 +23,15 @@ await mk('admin@exemple.invalid', 'Admin IT', 'commercial', true);
 const node = async (name: string, parent: string | null) =>
   ((await pool.query(`SELECT id FROM org_node WHERE name = $1 AND parent_id IS NOT DISTINCT FROM $2`, [name, parent])).rows[0]
     ?? (await pool.query(`INSERT INTO org_node(name, parent_id) VALUES ($1,$2) RETURNING id`, [name, parent])).rows[0]).id as string;
-const root = await node('Entreprise', null);
-const lyon = await node('Agence Lyon', root);
-const member = (u: string, n: string) => pool.query(`INSERT INTO user_org(user_id, node_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [u, n]);
-await member(dir, root); await member(mgr, lyon); await member(c1, lyon); await member(c2, lyon);
-await pool.query('SELECT rebuild_org()');
+// Seulement si aucune organisation n'existe : relancé sur une base déjà configurée (SEED_DEMO=1 à chaque démarrage), le seed ne recrée ni ne modifie l'arbre
+// (sinon il recréerait « Entreprise » après un renommage, avec deux branches de premier niveau, et ajouterait les comptes de démonstration à de nouvelles branches).
+if (Number((await pool.query(`SELECT count(*)::int AS n FROM org_node`)).rows[0].n) === 0) {
+  const root = await node('Entreprise', null);
+  const lyon = await node('Agence Lyon', root);
+  const member = (u: string, n: string) => pool.query(`INSERT INTO user_org(user_id, node_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [u, n]);
+  await member(dir, root); await member(mgr, lyon); await member(c1, lyon); await member(c2, lyon);
+  await pool.query('SELECT rebuild_org()');
+}
 
 await importCrm(pool, [
   { crm_id: 'D-001', name: 'Dupont SA', address_line: '12 rue des Lilas', postal_code: '69003', city: 'Lyon', country: 'France', sector: 'Industrie', contacts: [{ crm_id: 'D-001-1', full_name: 'M. Martin', job_title: 'Directeur achats' }], sales_emails: ['commercial1@exemple.invalid'] },

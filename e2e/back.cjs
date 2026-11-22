@@ -127,8 +127,16 @@ const dialog = page => page.getByRole('dialog');
   await dialog(page).getByLabel('Nom de la branche').fill('Équipe Nord');
   await dialog(page).getByRole('button', { name: 'Enregistrer', exact: true }).click();
   await rowOf('Équipe Nord').waitFor();
-  assert.equal(await rowOf('Équipe Nord').getByText('Niveau 2', { exact: true }).count(), 1, 'niveau affiché');
-  assert.equal(await rowOf('Entreprise').getByText('Racine', { exact: true }).count(), 1);
+  assert.equal(await rowOf('Équipe Nord').getByText('Niveau 3', { exact: true }).count(), 1, 'niveau affiché');
+  assert.equal(await rowOf('Entreprise').getByText('Niveau 1', { exact: true }).count(), 1);
+  // plusieurs branches de premier niveau : création et suppression d'une branche vide de premier niveau
+  await page.getByRole('button', { name: '+ Branche de premier niveau' }).click();
+  await dialog(page).getByLabel('Nom de la branche').fill('Premier niveau test');
+  await dialog(page).getByRole('button', { name: 'Enregistrer', exact: true }).click();
+  await rowOf('Premier niveau test').waitFor();
+  assert.equal(await rowOf('Premier niveau test').getByText('Niveau 1', { exact: true }).count(), 1, 'deuxième branche de premier niveau');
+  await rowOf('Premier niveau test').getByRole('button', { name: 'Supprimer' }).click();
+  await page.getByRole('row').filter({ hasText: 'Premier niveau test' }).waitFor({ state: 'detached' });
   await shot(page, 'b2b-organisation');
   await page.getByRole('button', { name: 'Replier la branche Agence Lyon' }).click();
   await page.getByRole('row').filter({ hasText: 'Équipe Nord' }).waitFor({ state: 'detached' });

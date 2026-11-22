@@ -2,8 +2,8 @@ import { useMemo, useState, type ReactNode } from 'react';
 
 /** Outils d'affichage des arbres (organisation) : traits de liaison, niveaux colorés, branches repliables. Les nœuds sont donnés dans l'ordre de l'arbre, avec leur profondeur. */
 export interface TNode { id: string; depth: number }
-export const LEVEL = ['Racine', 'Niveau 1', 'Niveau 2', 'Niveau 3', 'Niveau 4', 'Niveau 5'];
-export const levelName = (rel: number) => LEVEL[Math.min(rel, 5)] ?? `Niveau ${rel}`;
+export const LEVEL = ['Niveau 1', 'Niveau 2', 'Niveau 3', 'Niveau 4', 'Niveau 5', 'Niveau 6'];   // « Niveau 1 » = premier niveau (plusieurs branches de premier niveau sont possibles)
+export const levelName = (rel: number) => LEVEL[rel] ?? `Niveau ${rel + 1}`;
 
 export interface TInfo { rel: number; subs: number; more: boolean[] }
 

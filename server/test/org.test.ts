@@ -255,3 +255,35 @@ test('les visites d\'un utilisateur désactivé, devenu manager ou changé de br
   assert.equal((await visitsOf('mgrA2')).some(v => v.id === V.cA2), true);
   await back('admin', 'PATCH', `/users/${U.cA2}`, { status: 'active', role: 'commercial', node_ids: [N['Agence A2']] });
 });
+
+test('plusieurs branches de premier niveau : création, déplacement vers le premier niveau, suppression d\'une branche vide à n\'importe quel niveau', async () => {
+  const mkRoot = async (nm: string) => back('admin', 'POST', '/org/nodes', { name: nm });          // sans parent : premier niveau
+  const a = await mkRoot('Premier A'); assert.equal(a.status, 201);
+  assert.equal((await mkRoot('premier a')).status, 409, 'même nom entre branches de premier niveau');
+  const b = await mkRoot('Premier B'); assert.equal(b.status, 201);
+  const tree = (await back('admin', 'GET', '/org')).body.nodes;
+  assert.deepEqual(tree.filter((n: any) => n.depth === 0).map((n: any) => n.name).sort(), ['Entreprise', 'Premier A', 'Premier B'], 'trois branches de premier niveau');
+  assert.equal((await back('dirA', 'POST', '/org/nodes', { name: 'X' })).status, 403, 'toujours réservé aux administrateurs');
+  // une branche de premier niveau vide se supprime
+  assert.equal((await back('admin', 'DELETE', `/org/nodes/${b.body.id}`)).status, 200);
+  assert.equal((await back('admin', 'GET', '/org')).body.nodes.some((n: any) => n.name === 'Premier B'), false);
+  // déplacer sous une autre, puis remonter au premier niveau
+  const sub = await back('admin', 'POST', '/org/nodes', { name: 'Sous A', parent_id: a.body.id });
+  assert.equal((await back('admin', 'PATCH', `/org/nodes/${sub.body.id}`, { parent_id: null })).status, 200, 'promue au premier niveau');
+  assert.equal((await back('admin', 'GET', '/org')).body.nodes.find((n: any) => n.name === 'Sous A').depth, 0);
+  assert.equal((await back('admin', 'PATCH', `/org/nodes/${a.body.id}`, { parent_id: sub.body.id })).status, 200, 'un premier niveau peut devenir sous-branche');
+  assert.equal((await back('admin', 'PATCH', `/org/nodes/${sub.body.id}`, { parent_id: a.body.id })).status, 409, 'cycle refusé');
+  // suppression : toujours refusée si non vide, à tous les niveaux
+  assert.equal((await back('admin', 'DELETE', `/org/nodes/${sub.body.id}`)).body.code, 'has_children');
+  assert.equal((await back('admin', 'DELETE', `/org/nodes/${a.body.id}`)).status, 200, 'feuille vide');
+  assert.equal((await back('admin', 'DELETE', `/org/nodes/${sub.body.id}`)).status, 200, 'puis son ancien parent, devenu feuille vide de premier niveau');
+  // une branche de premier niveau avec membres ou visites ne se supprime pas
+  assert.equal((await back('admin', 'DELETE', `/org/nodes/${N.Entreprise}`)).body.code, 'has_children');
+  // un utilisateur peut être affecté à une branche de premier niveau
+  const top = await mkRoot('Direction Nord');
+  assert.equal((await back('admin', 'PATCH', `/users/${U.cNone}`, { node_ids: [top.body.id] })).status, 200);
+  assert.equal((await back('admin', 'DELETE', `/org/nodes/${top.body.id}`)).body.code, 'has_members');
+  const ok = await (await as('cNone')).push([op('visit', 'create', uuid(), { company_id: U.company, status: 'planned' })]);
+  assert.equal(ok.body.results[0].result, 'applied', 'la visite va dans la branche de premier niveau');
+  assert.deepEqual((await back('cNone', 'GET', '/org/mine')).body.access.map((n: any) => n.name), ['Direction Nord']);
+});
