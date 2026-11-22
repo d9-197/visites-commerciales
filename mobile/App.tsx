@@ -16,7 +16,8 @@ import { AudioFilePicker } from './src/AudioFilePicker';
 import { companyAddress } from './src/nav';
 
 // Prototype : écrans minimaux pour exercer la synchro. La dictée vocale et l'IA ne sont PAS implémentées.
-const APP_VERSION = '0.1.0';
+import pkg from './package.json';
+const APP_VERSION: string = pkg.version;     // une seule source : mobile/package.json (envoyée aussi au serveur, qui peut exiger une version minimale)
 // Web : même adresse que la page. Mobile natif : à saisir (10.0.2.2 = machine hôte depuis l'émulateur Android).
 // Sous un sous-chemin (https://exemple.fr/visit), le back transmet le préfixe dans window.__BASE_PATH__.
 const WEB_BASE = Platform.OS === 'web' ? ((globalThis as { __BASE_PATH__?: string }).__BASE_PATH__ ?? '') : '';
@@ -53,7 +54,7 @@ const emailErrorMessage = (e: unknown): string => {
 
 type Screen = { name: 'today' } | { name: 'visit'; id: string } | { name: 'report'; id: string } | { name: 'clients' } | { name: 'client'; id: string } | { name: 'actions'; visitId?: string } | { name: 'action'; id: string } | { name: 'settings' };
 interface Data { visits: Row[]; companies: Row[]; actions: Row[]; reports: Row[]; notes: Row[]; internalNotes: Row[]; history: Row[]; colleagues: Row[]; pending: number }
-interface Ctx { store: SqliteStore; engine: SyncEngine; client: ApiClient; userId: string; role: UserRole; lang: string }
+interface Ctx { server: string; store: SqliteStore; engine: SyncEngine; client: ApiClient; userId: string; role: UserRole; lang: string }
 type Act = (f: () => Promise<unknown>) => Promise<void>;
 
 export default function App() {
@@ -105,7 +106,7 @@ function Root() {
       const me = await client.me();
       if (me.role !== role || me.dictation_language !== lang) { role = me.role; lang = me.dictation_language; await saveSession({ ...sess, role, lang }); }
     } catch { /* hors-ligne */ }
-    setCtx({ store, engine, client, userId: sess.userId, role, lang });
+    setCtx({ server: sess.server, store, engine, client, userId: sess.userId, role, lang });
     setBoot('ready');
     void fetchBrand(sess.server).then(b => { if (b) updateBrand(b); });
   }, [updateBrand]);
@@ -259,7 +260,8 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
         <Pressable onPress={() => void sync()} accessibilityRole="button"><Text style={s.link}>Synchroniser</Text></Pressable>
       </View>
       {screen.name === 'report' && <ReportScreen key={screen.id} visitId={screen.id} data={data} ctx={ctx} act={act} back={goBack} companyName={companyName} offline={status.offline} openActions={() => navigate({ name: 'actions', visitId: screen.id })} />}
-      {screen.name !== 'report' && <ScrollView ref={mainScroll} contentContainerStyle={s.pad}>
+      {screen.name === 'visit' && <VisitScreen key={screen.id} visitId={screen.id} data={data} ctx={ctx} act={act} back={goBack} companyName={companyName} offline={status.offline} openReport={() => navigate({ name: 'report', id: screen.id })} openActions={() => navigate({ name: 'actions', visitId: screen.id })} />}
+      {screen.name !== 'report' && screen.name !== 'visit' && <ScrollView ref={mainScroll} contentContainerStyle={s.pad}>
         {screen.name === 'today' && <>
           <View style={s.rowBetween}><Text style={s.h1}>Visites</Text><BrandMark name={false} /></View>
           <Seg value={group} onChange={setGroup} options={[['client', 'Par client'], ['date', 'Par date']]} />
@@ -297,7 +299,6 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
           openVisit={id => navigate({ name: 'visit', id })} openAction={id => navigate({ name: 'action', id })}
           planVisit={async co => { const addr = companyAddress(co);
             const id = await ctx.engine.create('visit', { company_id: co.id, status: 'planned', planned_start: ceilTo15(new Date()).toISOString(), ...(addr ? { location_text: addr } : {}) }); await load(); void sync(); navigate({ name: 'visit', id }); }} />}
-        {screen.name === 'visit' && <VisitScreen key={screen.id} visitId={screen.id} data={data} ctx={ctx} act={act} back={goBack} companyName={companyName} offline={status.offline} openReport={() => navigate({ name: 'report', id: screen.id })} openActions={() => navigate({ name: 'actions', visitId: screen.id })} />}
         {screen.name === 'actions' && (() => {
           const filterVisit = screen.visitId ? data.visits.find(x => x.id === screen.visitId) : undefined;
           const inScope = data.actions.filter(a => !screen.visitId || a.visit_id === screen.visitId);
@@ -360,7 +361,13 @@ function Main({ ctx, onLogout }: { ctx: Ctx; onLogout: () => void }) {
           <Seg value={pref} onChange={setPref} options={themeLabels} />
           <Text style={s.muted}>« Système » suit le réglage de votre téléphone.</Text>
           <BrandMark height={36} />
-          <Text style={s.muted}>Version {APP_VERSION}. Dictée, IA et chiffrement de la base : non implémentés dans ce prototype.</Text>
+          <View style={[s.rowCard, { flexDirection: 'column', alignItems: 'stretch', gap: 4 }]} accessibilityLabel="À propos">
+            <View style={s.fact}><Text style={s.muted}>Version de l'application</Text><Text style={s.t}>{APP_VERSION}</Text></View>
+            <View style={s.fact}><Text style={s.muted}>Serveur</Text><Text style={[s.t, { flexShrink: 1, textAlign: 'right' }]} numberOfLines={1}>{ctx.server.replace(/^https?:\/\//, '').replace(/\/api\/mobile\/v1\/?$/, '')}</Text></View>
+            <View style={s.fact}><Text style={s.muted}>Compte</Text><Text style={s.t}>{ctx.role === 'commercial' ? 'Commercial' : ctx.role === 'manager' ? 'Manager' : 'Directeur'}</Text></View>
+          </View>
+          <Text style={s.muted}>Dictée et synthèse par IA : lorsque le serveur les active, l'audio dicté et les notes durant visite transitent par le serveur vers Mistral ; les notes internes ne sont jamais envoyées. Elles demandent une connexion.</Text>
+          <Text style={s.muted}>Les données de l'appareil ne sont pas chiffrées dans ce prototype.</Text>
           <Btn title="Se déconnecter (efface les données de l'appareil)" onPress={onLogout} />
         </>}
       </ScrollView>}
@@ -475,6 +482,7 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName, offline, open
   const Icon = ({ label, onPress }: { label: string; onPress: () => void }) => (
     <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={label} style={s.iconBtn}><Text style={s.iconText}>✎</Text></Pressable>);
   return <>
+    <ScrollView contentContainerStyle={s.pad}>
     <View style={s.headerRow}>
       <Pressable onPress={back} accessibilityRole="button" style={s.backBtn}><Text style={s.link}>‹ Retour</Text></Pressable>
       <Text style={s.titleCenter} numberOfLines={1} accessibilityRole="header">{companyName(v.company_id)}</Text>
@@ -507,9 +515,6 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName, offline, open
         {!!v.preparation_notes && <Text style={{ color: c.text }}><Text style={{ fontWeight: '700' }}>À aborder : </Text>{v.preparation_notes}</Text>}
       </View>)}
     {v.status === 'deleted' && <Text style={s.muted}>Cette visite est supprimée : elle est conservée mais n'est plus modifiable.</Text>}
-    {mine && v.status === 'planned' && <Btn title="Visite organisée avec le client" onPress={() => setStatus('organized')} />}
-    {mine && (v.status === 'planned' || v.status === 'organized') && <Btn title="Démarrer la visite" onPress={() => setStatus('in_progress', { started_at: new Date().toISOString() })} />}
-    {mine && v.status === 'in_progress' && <Btn title="Fin du rendez-vous" onPress={() => visitNotes.length === 0 ? setConfirmEnd(true) : setStatus('done', { ended_at: new Date().toISOString() })} />}
     {mine && v.status === 'in_progress' && <Text style={s.muted}>Quand vous quittez le client. Il restera à valider le compte rendu et à faire les actions ; la visite sera « Terminée » quand tout sera fait.</Text>}
     {isReportLate(v) && <Text style={[s.muted, { color: c.late, fontWeight: '600' }]}>Compte rendu à valider depuis plus de {REPORT_LATE_DAYS} jours.</Text>}
 
@@ -558,24 +563,28 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName, offline, open
     <Label>Compte rendu</Label>
     {reportOpen
       ? <Pressable onPress={openReport} accessibilityRole="button" accessibilityLabel="Ouvrir le compte rendu" style={s.rowCard}>
-          <View style={{ flex: 1, gap: 4 }}>
-            <Text style={s.t}>{mine && report?.status !== 'validated' ? (report ? 'Rédiger / corriger le compte rendu' : 'Rédiger le compte rendu') : 'Voir le compte rendu'}</Text>
-            <Pill text={reportState.text} color={reportState.color} />
-          </View><Text style={s.muted}>›</Text></Pressable>
+          <Text style={[s.t, { flex: 1 }]}>{mine && report?.status !== 'validated' ? (report ? 'Rédiger / corriger le compte rendu' : 'Rédiger le compte rendu') : 'Voir le compte rendu'}</Text>
+          <Pill text={reportState.text} color={reportState.color} /><Text style={s.muted}>›</Text></Pressable>
       : <Text style={s.muted}>Le compte rendu sera disponible une fois la visite commencée.</Text>}
 
-    {v.status !== 'deleted' && <>
-      <Label>Partage</Label>
-      <View style={{ flexDirection: 'row' }}><Btn small title="✉ Envoyer par e-mail" onPress={() => setEmailSheet(true)} /></View>
-    </>}
-    <EmailSheet visible={emailSheet} visitId={visitId} ctx={ctx} offline={offline} onClose={() => setEmailSheet(false)} />
+    </ScrollView>
 
-    {canDeleteVisit(ctx.role as UserRole, mine) && v.status !== 'deleted' && <>
-      <Label>Suppression</Label>
-      {todoCount > 0
-        ? <Text style={s.muted}>Suppression impossible : {todoCount} action{todoCount > 1 ? 's' : ''} à faire. Terminez-les ou annulez-les d'abord.</Text>
-        : <View style={{ flexDirection: 'row' }}><Btn small danger title="Supprimer la visite" onPress={() => setConfirmDelete(true)} /></View>}
-    </>}
+    {/* Barre d'actions fixe : changement de statut, e-mail et suppression sur une seule ligne, toujours visibles. */}
+    {(v.status !== 'deleted') && (
+      <View style={s.actionBar} accessibilityLabel="Actions de la visite">
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          {mine && v.status === 'planned' && <Btn small title="Organisée" label="Visite organisée avec le client" onPress={() => setStatus('organized')} />}
+          {mine && (v.status === 'planned' || v.status === 'organized') && <Btn small title="Démarrer" label="Démarrer la visite" onPress={() => setStatus('in_progress', { started_at: new Date().toISOString() })} />}
+          {mine && v.status === 'in_progress' && <Btn small title="Fin du rendez-vous" onPress={() => visitNotes.length === 0 ? setConfirmEnd(true) : setStatus('done', { ended_at: new Date().toISOString() })} />}
+          <View style={{ flex: 1 }} />
+          <Btn small title="✉" label="Envoyer par e-mail" onPress={() => setEmailSheet(true)} />
+          {canDeleteVisit(ctx.role as UserRole, mine) && <Btn small danger title="🗑" label="Supprimer la visite" disabled={todoCount > 0} onPress={() => setConfirmDelete(true)} />}
+        </View>
+        {canDeleteVisit(ctx.role as UserRole, mine) && todoCount > 0 && <Text style={s.muted}>Suppression impossible : {todoCount} action{todoCount > 1 ? 's' : ''} à faire. Terminez-les ou annulez-les d'abord.</Text>}
+        {!mine && <Text style={s.muted}>Seul l'auteur de la visite change son statut.</Text>}
+        {mine && !canDeleteVisit(ctx.role as UserRole, mine) && <Text style={s.muted}>La suppression est réservée au commercial auteur et au directeur.</Text>}
+      </View>)}
+    <EmailSheet visible={emailSheet} visitId={visitId} ctx={ctx} offline={offline} onClose={() => setEmailSheet(false)} />
     <ConfirmSheet visible={confirmEnd} title="Terminer le rendez-vous sans note ?" confirmLabel="Fin du rendez-vous"
       message="Vous n'avez saisi aucune note durant la visite : la génération du compte rendu par l'IA s'appuie sur ces notes, et elles ne seront plus modifiables ensuite."
       onClose={() => setConfirmEnd(false)} onConfirm={() => { setConfirmEnd(false); setStatus('done', { ended_at: new Date().toISOString() }); }} />
@@ -1149,9 +1158,9 @@ function Seg<T extends string>({ value, onChange, options }: { value: T; onChang
       <Text style={[s.segText, value === k && s.segTextOn]}>{l}</Text></Pressable>))}</View>;
 }
 const Label = ({ children }: { children: React.ReactNode }) => { const { s } = useTheme(); return <Text style={s.label}>{children}</Text>; };
-const Btn = ({ title, onPress, disabled, small, danger }: { title: string; onPress: () => void; disabled?: boolean; small?: boolean; danger?: boolean }) => {
+const Btn = ({ title, onPress, disabled, small, danger, label }: { title: string; onPress: () => void; disabled?: boolean; small?: boolean; danger?: boolean; label?: string }) => {
   const { s, c } = useTheme();
-  return <Pressable onPress={onPress} disabled={disabled} accessibilityRole="button" style={[s.btn, small && s.btnSmall, danger && { backgroundColor: c.late }, disabled && s.btnOff]}><Text style={s.btnText}>{title}</Text></Pressable>;
+  return <Pressable onPress={onPress} disabled={disabled} accessibilityRole="button" accessibilityLabel={label} style={[s.btn, small && s.btnSmall, danger && { backgroundColor: c.late }, disabled && s.btnOff]}><Text style={s.btnText}>{title}</Text></Pressable>;
 };
 const Pill = ({ text, color }: { text: string; color: string }) => {
   const { s } = useTheme();
@@ -1164,8 +1173,8 @@ const Row = ({ title, sub, pills, stripe, onPress, tone }: { title: string; sub?
       <View style={{ flex: 1, gap: 2 }}>
         <Text style={s.t}>{title}</Text>
         {sub ? <Text style={[s.muted, tone === 'late' && { color: c.late, fontWeight: '600' }]}>{sub}</Text> : null}
-        {pills?.length ? <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap', marginTop: 2 }}>{pills.map(p => <Pill key={p.text} text={p.text} color={p.color} />)}</View> : null}
       </View>
+      {pills?.length ? <View style={{ gap: 4, alignItems: 'flex-end', maxWidth: '42%' }}>{pills.map(p => <Pill key={p.text} text={p.text} color={p.color} />)}</View> : null}
       <Text style={s.muted}>›</Text>
     </Pressable>
   );

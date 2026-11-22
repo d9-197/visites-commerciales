@@ -299,7 +299,7 @@ const newPhone = (browser, extra = {}) => browser.newContext({ viewport: { width
   await page.getByText('2 à faire · 0 terminée').waitFor();
 
   // Envoi par e-mail : à soi et au manager ; compte rendu, actions, notes durant visite ; jamais les notes internes
-  await page.getByRole('button', { name: '✉ Envoyer par e-mail' }).click();
+  await page.getByRole('button', { name: 'Envoyer par e-mail' }).click();
   await page.getByText('Moi (commercial1@exemple.invalid)').waitFor();
   assert.equal(await page.getByRole('checkbox', { name: 'Compte rendu' }).getByText('✓').count(), 1, 'compte rendu validé : proposé par défaut')
   await page.getByRole('checkbox', { name: /Manager Démo/ }).click();
