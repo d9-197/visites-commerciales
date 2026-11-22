@@ -24,6 +24,17 @@ export function prepRouter(pool: Pool) {
     return c;
   }
 
+  /** Recherche de clients accessibles (pour planifier une visite) : l'administrateur voit tout, les autres les clients affectés à leur périmètre. */
+  r.get('/prep/companies', wrap(async (req, res) => {
+    const scope = await scopeUsers(pool, req);
+    const q = String(req.query.q ?? '').trim();
+    const { rows } = await pool.query(
+      `SELECT c.id, c.name, c.city, c.sector FROM company c WHERE c.status = 'active' AND c.deleted_at IS NULL AND ($2 = '' OR c.name ILIKE '%'||$2||'%' OR c.city ILIKE '%'||$2||'%')
+         AND EXISTS (SELECT 1 FROM company_assignment a WHERE a.company_id = c.id AND a.removed_at IS NULL AND ($1::uuid[] IS NULL OR a.user_id = ANY($1)))
+       ORDER BY c.name LIMIT 30`, [scope, q]);
+    res.json({ companies: rows });
+  }));
+
   r.get('/prep/commerciaux', wrap(async (req, res) => {
     const scope = await scopeUsers(pool, req);
     const company = typeof req.query.company_id === 'string' && z.string().uuid().safeParse(req.query.company_id).success ? req.query.company_id : null;

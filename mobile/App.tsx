@@ -491,6 +491,13 @@ function VisitScreen({ visitId, data, ctx, act, back, companyName, offline, open
       <Pressable onPress={() => setSheet('history')} accessibilityRole="button" style={{ minHeight: 36, justifyContent: 'center' }}>
         <Text style={s.link}>Historique des modifications ({entries.length})</Text></Pressable>
     </View>
+    {(v.objective || v.preparation_notes || (v.created_by && v.created_by !== v.author_id)) && (
+      <View style={[s.rowCard, { flexDirection: 'column', alignItems: 'stretch', gap: 4 }]} accessibilityLabel="Préparation de la visite">
+        <Text style={s.t}>Préparation</Text>
+        {v.created_by && v.created_by !== v.author_id && <Text style={s.muted}>Planifiée par {v.created_by_name ?? 'votre hiérarchie'}</Text>}
+        {!!v.objective && <Text style={{ color: c.text }}><Text style={{ fontWeight: '700' }}>Objectif : </Text>{v.objective}</Text>}
+        {!!v.preparation_notes && <Text style={{ color: c.text }}><Text style={{ fontWeight: '700' }}>À aborder : </Text>{v.preparation_notes}</Text>}
+      </View>)}
     {v.status === 'deleted' && <Text style={s.muted}>Cette visite est supprimée : elle est conservée mais n'est plus modifiable.</Text>}
     {mine && v.status === 'planned' && <Btn title="Visite organisée avec le client" onPress={() => setStatus('organized')} />}
     {mine && (v.status === 'planned' || v.status === 'organized') && <Btn title="Démarrer la visite" onPress={() => setStatus('in_progress', { started_at: new Date().toISOString() })} />}

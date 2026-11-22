@@ -20,6 +20,7 @@ const applied = await migrate(pool);
 if (applied.length) console.log('Migrations appliquées :', applied.join(', '));
 
 const webDir = resolve(process.env.WEB_DIR ?? new URL('../../mobile/dist-web', import.meta.url).pathname);
+const backDir = resolve(process.env.BACK_DIR ?? new URL('../../back/dist', import.meta.url).pathname);
 const port = Number(process.env.PORT ?? 3000);
 const ai = aiFromEnv();
 console.log(ai ? 'Synthèse par IA et transcription vocale : activées (Mistral).' : 'Synthèse par IA et transcription vocale : désactivées (MISTRAL_API_KEY absente).');
@@ -29,4 +30,4 @@ console.log(`Marque : ${brand.name}${brand.logo ? ' (logo chargé)' : ''}.`);
 const mail = mailFromEnv(process.env, brand.name === DEFAULT_BRAND_NAME ? undefined : brand.name);
 console.log(mail ? 'Envoi d\'e-mail : activé (SMTP).' : 'Envoi d\'e-mail : désactivé (SMTP_HOST / SMTP_FROM absents).');
 
-createApp(pool, defaultConfig, { webDir, ai, mail, brand, basePath }).listen(port, () => console.log(`API et application web sur http://localhost:${port}${basePath ? ` (sous-chemin ${basePath})` : ''}`));
+createApp(pool, defaultConfig, { webDir, backDir, ai, mail, brand, basePath }).listen(port, () => console.log(`API et application web sur http://localhost:${port}${basePath ? ` (sous-chemin ${basePath})` : ''}`));

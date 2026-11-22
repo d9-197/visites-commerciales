@@ -2,12 +2,17 @@
   "name": "visites-commerciales",
   "private": true,
   "description": "Prototype : back, cœur de synchronisation partagé, application mobile minimale",
-  "workspaces": ["server", "packages/*"],
+  "workspaces": [
+    "server",
+    "packages/*"
+  ],
   "scripts": {
     "test": "npm -w server test",
-    "typecheck": "npm -w server run typecheck && npm -w packages/sync-core run typecheck && npm --prefix mobile run typecheck",
+    "typecheck": "npm -w server run typecheck && npm -w packages/sync-core run typecheck && npm --prefix mobile run typecheck && npm --prefix back run typecheck",
     "e2e:web": "node e2e/web.cjs",
     "pg:start": "bash server/scripts/pg-local.sh start",
-    "pg:stop": "bash server/scripts/pg-local.sh stop"
+    "pg:stop": "bash server/scripts/pg-local.sh stop",
+    "build:back": "npm --prefix back run build",
+    "e2e:back": "node e2e/back.cjs"
   }
 }

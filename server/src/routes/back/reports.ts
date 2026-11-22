@@ -30,7 +30,8 @@ export function reportsRouter(pool: Pool) {
         AND COALESCE(v.ended_at, v.started_at, v.planned_start) >= $2::date AND COALESCE(v.ended_at, v.started_at, v.planned_start) < $3::date)`;
 
     const users = (await pool.query(
-      `SELECT u.id, u.display_name, u.role FROM app_user u WHERE u.status = 'active' AND u.role = 'commercial' AND ($1::uuid[] IS NULL OR u.id = ANY($1)) ORDER BY u.display_name`, [ids])).rows;
+      `SELECT u.id, u.display_name, u.role FROM app_user u WHERE u.status = 'active' AND u.role = 'commercial' AND ($1::uuid[] IS NULL OR u.id = ANY($1))
+         AND (NOT u.is_admin OR EXISTS (SELECT 1 FROM visit v WHERE v.author_id = u.id) OR EXISTS (SELECT 1 FROM company_assignment a WHERE a.user_id = u.id AND a.removed_at IS NULL)) ORDER BY u.display_name`, [ids])).rows;
 
     const perUser = (await pool.query(`${VISITS}
       SELECT vv.author_id AS user_id,

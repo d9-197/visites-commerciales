@@ -6,6 +6,11 @@ COPY packages packages
 COPY mobile mobile
 RUN cd mobile && npm ci --no-audit --no-fund && npx expo export --platform web --output-dir dist-web
 
+FROM node:22-slim AS back
+WORKDIR /app
+COPY back back
+RUN cd back && npm ci --no-audit --no-fund && npm run build
+
 FROM node:22-slim
 WORKDIR /app
 ENV NODE_ENV=production
@@ -17,5 +22,6 @@ COPY server server
 COPY packages packages
 COPY db db
 COPY --from=web /app/mobile/dist-web mobile/dist-web
+COPY --from=back /app/back/dist back/dist
 EXPOSE 3000
 CMD ["sh", "-c", "if [ \"$SEED_DEMO\" = 1 ]; then npx tsx server/scripts/seed.ts; fi; exec npx tsx server/src/index.ts"]

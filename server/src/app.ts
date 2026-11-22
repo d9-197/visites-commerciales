@@ -36,7 +36,7 @@ export function renderIndex(html: string, basePath: string, brand?: Brand): stri
     .replace('</head>', `<script>window.__BASE_PATH__=${JSON.stringify(basePath)};</script></head>`);
 }
 
-export function createApp(pool: Pool, cfg: Config = defaultConfig, opts: { webDir?: string; ai?: AiServices; mail?: MailService; brand?: Brand; basePath?: string } = {}) {
+export function createApp(pool: Pool, cfg: Config = defaultConfig, opts: { webDir?: string; ai?: AiServices; mail?: MailService; brand?: Brand; backDir?: string; basePath?: string } = {}) {
   const app = express();
   app.disable('x-powered-by');
   const basePath = normalizeBasePath(opts.basePath);
@@ -47,6 +47,15 @@ export function createApp(pool: Pool, cfg: Config = defaultConfig, opts: { webDi
   routes.use('/api/back/v1', backRouter(pool, cfg));
   routes.use('/api/crm/v1', crmRouter(pool, cfg));
   routes.use('/api/admin/v1', adminRouter(pool, cfg));
+  // Application back (PC) sur /admin/ : fichiers statiques ; les URL relatives de l'application fonctionnent sous n'importe quel sous-chemin.
+  if (opts.backDir && existsSync(join(opts.backDir, 'index.html'))) {
+    routes.get('/admin', (req, res, next) => { if (req.path !== '/admin') return next(); res.redirect(302, req.originalUrl.replace(/\/admin(\?.*)?$/, '/admin/$1')); });
+    routes.use('/admin', (_req, res, next) => {
+      res.set({ 'X-Frame-Options': 'DENY', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'same-origin',
+        'Content-Security-Policy': "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'" });
+      next();
+    }, express.static(opts.backDir, { index: 'index.html', maxAge: '1h' }));
+  }
   // Application web (même origine que l'API : pas de CORS). Les routes /api/* inconnues restent en 404 JSON.
   if (opts.webDir && existsSync(join(opts.webDir, 'index.html'))) {
     const index = renderIndex(readFileSync(join(opts.webDir, 'index.html'), 'utf8'), basePath, opts.brand);
