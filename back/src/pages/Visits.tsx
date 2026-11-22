@@ -79,7 +79,7 @@ function Detail({ id, onClose }: { id: string; onClose: () => void }) {
         </section>
         <section><h3>Historique</h3>
           {data.history.length === 0 && data.emails.length === 0 ? <p className="muted">Rien.</p> : <ul>
-            {data.history.map((h: R, i: number) => <li key={i}><small className="muted">{fmtDateTime(h.changed_at)} · {h.changed_by_name}</small><br />{({ planned_start: 'Date prévue', location_text: 'Adresse', report_validated: 'Compte rendu validé', report_reopened: 'Compte rendu remis en brouillon', visit_deleted: 'Visite supprimée' } as R)[h.field]}{h.new_value ? ` : ${h.old_value ?? '—'} → ${h.new_value}` : ''}</li>)}
+            {data.history.map((h: R, i: number) => <li key={i}><small className="muted">{fmtDateTime(h.changed_at)} · {h.changed_by_name}</small><br />{({ planned_start: 'Date prévue', location_text: 'Adresse', org_node: 'Branche', report_validated: 'Compte rendu validé', report_reopened: 'Compte rendu remis en brouillon', visit_deleted: 'Visite supprimée' } as R)[h.field]}{h.new_value ? ` : ${h.old_value ?? '—'} → ${h.new_value}` : ''}</li>)}
             {data.emails.map((e: R, i: number) => <li key={`e${i}`}><small className="muted">{fmtDateTime(e.created_at)} · {e.sender}</small><br />E-mail {e.status === 'sent' ? 'envoyé' : 'en échec'} à {e.recipients.join(', ')}</li>)}</ul>}
         </section>
       </div>}

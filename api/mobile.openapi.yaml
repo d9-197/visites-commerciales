@@ -685,7 +685,7 @@ components:
       properties:
         id: {$ref: 'common.yaml#/components/schemas/Uuid'}
         visit_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
-        field: {type: string, enum: [planned_start, location_text, report_validated, report_reopened, visit_deleted]}
+        field: {type: string, enum: [planned_start, location_text, report_validated, report_reopened, visit_deleted, org_node]}
         old_value: {type: [string, 'null']}
         new_value: {type: [string, 'null']}
         changed_by_name: {type: string}

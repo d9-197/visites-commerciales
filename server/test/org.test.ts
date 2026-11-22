@@ -287,3 +287,52 @@ test('plusieurs branches de premier niveau : création, déplacement vers le pre
   assert.equal(ok.body.results[0].result, 'applied', 'la visite va dans la branche de premier niveau');
   assert.deepEqual((await back('cNone', 'GET', '/org/mine')).body.access.map((n: any) => n.name), ['Direction Nord']);
 });
+
+test('réaffecter les visites d\'une branche à une autre : droits, historique, membres, puis suppression de la branche vidée', async () => {
+  logins.delete('cA2');      // sa session a été révoquée par le test précédent (désactivation)
+  const a2 = N['Agence A2']!;
+  const authors = (await back('admin', 'GET', `/org/nodes/${a2}/visit-authors`)).body;
+  assert.ok(authors.total >= 2 && authors.authors.some((x: any) => x.name === 'cA2' && x.visits >= 2), JSON.stringify(authors));
+  assert.equal((await back('dirA', 'GET', `/org/nodes/${a2}/visit-authors`)).status, 403);
+  assert.equal((await back('dirA', 'POST', `/org/nodes/${a2}/reassign-visits`, { target_id: N['Agence A1'] })).status, 403, 'administrateurs seulement');
+  assert.equal((await back('admin', 'POST', `/org/nodes/${a2}/reassign-visits`, { target_id: a2 })).body.code, 'same_node');
+  assert.equal((await back('admin', 'POST', `/org/nodes/${a2}/reassign-visits`, { target_id: uuid() })).status, 404);
+  const archive = (await back('admin', 'POST', '/org/nodes', { name: 'Archive' })).body.id as string;
+  assert.equal((await back('admin', 'DELETE', `/org/nodes/${archive}`)).status, 200, 'vide : supprimable'); // (contrôle) puis on la recrée
+  const arch = (await back('admin', 'POST', '/org/nodes', { name: 'Archive' })).body.id as string;
+  const dirA = await as('dirA'); const first = await dirA.pullAll();
+  assert.ok(first.changes.visits?.some((v: any) => v.id === V.cA2));
+  const versionBefore = (await env.pool.query(`SELECT version FROM visit WHERE id = $1`, [V.cA2])).rows[0].version;
+  const r = await back('admin', 'POST', `/org/nodes/${a2}/reassign-visits`, { target_id: arch, add_authors: true });
+  assert.equal(r.status, 200); assert.equal(r.body.moved, authors.total); assert.ok(r.body.authors_added >= 1); assert.ok(r.body.revoked > 0);
+  // droits : la direction de région A et le manager de A2 perdent l'accès ; l'auteur garde le sien
+  assert.ok((await dirA.pullAll(first.cursor)).revocations.some(x => x.entity === 'visit' && x.entity_id === V.cA2), 'ancienne branche : retrait');
+  assert.equal((await visitsOf('mgrA2')).some(v => v.id === V.cA2), false);
+  assert.equal((await visitsOf('cA2')).some(v => v.id === V.cA2), true, 'l\'auteur garde sa visite');
+  assert.equal((await back('dirA', 'GET', `/visits/${V.cA2}`)).status, 404);
+  assert.equal((await back('admin', 'GET', `/visits/${V.cA2}`)).body.visit.org_path, 'Archive');
+  // historique et version
+  const h = (await env.pool.query(`SELECT old_value, new_value, changed_by_name FROM visit_history WHERE visit_id = $1 AND field = 'org_node'`, [V.cA2])).rows;
+  assert.deepEqual(h, [{ old_value: 'Agence A2', new_value: 'Archive', changed_by_name: 'admin' }]);
+  assert.ok((await env.pool.query(`SELECT version FROM visit WHERE id = $1`, [V.cA2])).rows[0].version > versionBefore);
+  assert.equal((await visitsOf('cA2')).find(v => v.id === V.cA2).org_node_name, 'Archive', 'mobile : la nouvelle branche est transmise');
+  // auteur ajouté à la branche cible ; la branche vidée n'a plus de visites
+  assert.equal((await env.pool.query(`SELECT 1 FROM user_org WHERE user_id = $1 AND node_id = $2`, [U.cA2, arch])).rows.length, 1);
+  assert.equal((await back('admin', 'GET', '/org')).body.nodes.find((n: any) => n.id === a2).visits_count, 0);
+  assert.equal((await back('admin', 'DELETE', `/org/nodes/${arch}`)).body.code, 'has_members', 'l\'auteur ajouté en est membre');
+  // retour d'une seule visite (sélection), sans ajouter l'auteur
+  const back1 = await back('admin', 'POST', `/org/nodes/${arch}/reassign-visits`, { target_id: a2, visit_ids: [V.cA2] });
+  assert.equal(back1.body.moved, 1);
+  assert.equal((await back('dirA', 'GET', `/visits/${V.cA2}`)).status, 200, 'de retour dans la région A');
+  // sans ajout d'auteur : ce sont les visites qui empêchent la suppression
+  const arch2 = (await back('admin', 'POST', '/org/nodes', { name: 'Archive 2' })).body.id as string;
+  assert.equal((await back('admin', 'POST', `/org/nodes/${arch}/reassign-visits`, { target_id: arch2 })).status, 200);
+  assert.equal((await back('admin', 'DELETE', `/org/nodes/${arch2}`)).body.code, 'has_visits');
+  await back('admin', 'POST', `/org/nodes/${arch2}/reassign-visits`, { target_id: arch });
+  assert.equal((await back('admin', 'DELETE', `/org/nodes/${arch2}`)).status, 200);
+  // le reste, puis suppression de la branche vidée (après avoir retiré le membre ajouté)
+  await back('admin', 'POST', `/org/nodes/${arch}/reassign-visits`, { target_id: a2 });
+  assert.equal((await back('admin', 'DELETE', `/org/nodes/${arch}`)).body.code, 'has_members');
+  assert.equal((await back('admin', 'PATCH', `/users/${U.cA2}`, { node_ids: [a2] })).status, 200);
+  assert.equal((await back('admin', 'DELETE', `/org/nodes/${arch}`)).status, 200, 'branche vidée : supprimée');
+});

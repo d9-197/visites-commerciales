@@ -30,7 +30,7 @@ export function orgRouter(pool: Pool) {
     const { rows } = await pool.query(
       `${NODE_SQL},
         (SELECT count(*)::int FROM org_node k WHERE k.parent_id = n.id) AS children_count,
-        (SELECT count(*)::int FROM visit v WHERE v.org_node_id = n.id AND v.deleted_at IS NULL) AS visits_count,
+        (SELECT count(*)::int FROM visit v WHERE v.org_node_id = n.id) AS visits_count,   -- toutes les visites (supprimées comprises) : ce sont elles qui empêchent la suppression de la branche
         COALESCE((SELECT json_agg(json_build_object('id', u.id, 'name', u.display_name, 'role', u.role) ORDER BY u.display_name)
                   FROM user_org uo JOIN app_user u ON u.id = uo.user_id WHERE uo.node_id = n.id), '[]'::json) AS members
        FROM org_node n ORDER BY org_path(n.id)`);
@@ -78,6 +78,49 @@ export function orgRouter(pool: Pool) {
       await c.query(`INSERT INTO audit_log(actor_user_id, action, entity, entity_id, detail) VALUES ($1,'org_node_updated','org_node',$2,$3)`, [req.auth!.id, id, { fields: Object.keys(b.data) }]);
     }));
     res.json({ id, revoked: out.revoked });
+  }));
+
+  /** Auteurs des visites d'une branche (pour préparer une réaffectation). */
+  r.get('/org/nodes/:id/visit-authors', wrap(async (req, res) => {
+    requireAdmin(req);
+    if (!(await pool.query(`SELECT 1 FROM org_node WHERE id = $1`, [req.params.id])).rows[0]) throw new HttpError(404, 'not_found', 'Branche inconnue');
+    const { rows } = await pool.query(
+      `SELECT u.id, u.display_name AS name, u.status, u.role, count(*)::int AS visits
+       FROM visit v JOIN app_user u ON u.id = v.author_id WHERE v.org_node_id = $1 GROUP BY u.id ORDER BY u.display_name`, [req.params.id]);
+    res.json({ authors: rows, total: rows.reduce((n, a) => n + a.visits, 0) });
+  }));
+
+  /**
+   * Réaffecter les visites d'une branche à une autre (toutes, ou celles de `visit_ids`) : pour vider une branche avant de la supprimer, ou corriger une erreur.
+   * Change les droits (les managers de l'ancienne branche perdent l'accès, ceux de la nouvelle le gagnent) : retraits transmis aux appareils.
+   * Chaque visite garde sa trace dans son historique. `add_authors` : affecte aussi à la branche cible les auteurs qui n'en sont pas membres.
+   */
+  r.post('/org/nodes/:id/reassign-visits', wrap(async (req, res) => {
+    requireAdmin(req);
+    const b = z.object({ target_id: uuid, visit_ids: z.array(uuid).max(5000).optional(), add_authors: z.boolean().optional() }).strict().safeParse(req.body);
+    if (!b.success) throw new HttpError(400, 'validation_failed', 'Branche cible requise');
+    const from = req.params.id!; const to = b.data.target_id;
+    if (from === to) throw new HttpError(409, 'same_node', 'La branche cible est la branche actuelle');
+    const me = (await pool.query(`SELECT display_name FROM app_user WHERE id = $1`, [req.auth!.id])).rows[0];
+    const out = await tx(pool, c => withRevocations(c, async () => {
+      const names = (await c.query(`SELECT id, name FROM org_node WHERE id = ANY($1::uuid[])`, [[from, to]])).rows;
+      const src = names.find(n => n.id === from), dst = names.find(n => n.id === to);
+      if (!src || !dst) throw new HttpError(404, 'not_found', 'Branche inconnue');
+      const moved = (await c.query(
+        `UPDATE visit SET org_node_id = $2, version = version + 1 WHERE org_node_id = $1 AND ($3::uuid[] IS NULL OR id = ANY($3)) RETURNING id, author_id`, [from, to, b.data.visit_ids ?? null])).rows;
+      for (const v of moved) {
+        await c.query(`INSERT INTO visit_history(visit_id, field, old_value, new_value, changed_by, changed_by_name) VALUES ($1,'org_node',$2,$3,$4,$5)`, [v.id, src.name, dst.name, req.auth!.id, me.display_name]);
+      }
+      let added = 0;
+      if (b.data.add_authors && moved.length) {
+        const authors = [...new Set(moved.map(v => v.author_id as string))];
+        added = (await c.query(`INSERT INTO user_org(user_id, node_id) SELECT a, $2 FROM unnest($1::uuid[]) a ON CONFLICT DO NOTHING`, [authors, to])).rowCount ?? 0;
+        if (added) await c.query('SELECT rebuild_hierarchy()');
+      }
+      await c.query(`INSERT INTO audit_log(actor_user_id, action, entity, entity_id, detail) VALUES ($1,'org_visits_reassigned','org_node',$2,$3)`, [req.auth!.id, from, { to, visits: moved.length, authors_added: added }]);
+      return { moved: moved.length, authors_added: added };
+    }));
+    res.json({ ...out.result, revoked: out.revoked });
   }));
 
   /** Supprimer une branche vide (de n'importe quel niveau, premier niveau compris) : sans sous-branche, sans membre, sans visite. */

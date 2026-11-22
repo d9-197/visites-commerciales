@@ -4,7 +4,7 @@ import { Alert, Badge, Card, Empty, Field, Loading, Modal, Tip, useLoad, errMsg 
 import { ROLE } from '../format';
 import { CollapseAll, TreeCell, levelName, useCollapsed, useTree, visibleIndexes } from '../tree';
 
-type Dlg = { kind: 'add'; parent: R } | { kind: 'addTop' } | { kind: 'rename'; node: R } | { kind: 'move'; node: R } | null;
+type Dlg = { kind: 'reassign'; node: R } | { kind: 'add'; parent: R } | { kind: 'addTop' } | { kind: 'rename'; node: R } | { kind: 'move'; node: R } | null;
 
 /** Organisation arborescente (administrateurs) : branches, sous-branches et leurs membres. Les droits d'accès aux données en découlent. */
 type TotalsInfo = { members: number; visits: number };
@@ -21,7 +21,7 @@ export function Organisation() {
   const toggle = (id: string) => { const n = new Set(collapsed); if (n.has(id)) n.delete(id); else n.add(id); setC(n); };
   const remove = async (n: R) => { setMsg(undefined); try { await api(`org/nodes/${n.id}`, { method: 'DELETE' }); reload(); } catch (e) { setMsg({ kind: 'error', text: errMsg(e) }); } };
   const whyNoDelete = (n: R) => n.children_count > 0 ? "Cette branche a des sous-branches : supprimez-les ou déplacez-les d'abord."
-    : n.members.length > 0 ? "Des utilisateurs sont affectés à cette branche : affectez-les ailleurs d'abord (rubrique Comptes)." : n.visits_count > 0 ? 'Des visites appartiennent à cette branche : elle ne peut pas être supprimée.' : undefined;
+    : n.members.length > 0 ? "Des utilisateurs sont affectés à cette branche : affectez-les ailleurs d'abord (rubrique Comptes)." : n.visits_count > 0 ? 'Des visites appartiennent à cette branche : réaffectez-les d\'abord à une autre branche (bouton « Réaffecter les visites »).' : undefined;
   return (
     <>
       <header className="page-head"><div className="toolbar" style={{ justifyContent: 'flex-end', order: 2 }}><button className="primary" onClick={() => setDlg({ kind: 'addTop' })}>+ Branche de premier niveau</button></div><div><h1>Organisation</h1><p className="muted">Arbre des branches. Un utilisateur affecté à une branche voit les données de cette branche et de ses sous-branches (managers et directeurs : consolidées ; commerciaux : les leurs). Déplacer une branche change les droits d'accès.</p></div></header>
@@ -50,14 +50,46 @@ export function Organisation() {
                   <button onClick={() => setDlg({ kind: 'add', parent: n })}>+ Sous-branche</button>
                   <button onClick={() => setDlg({ kind: 'rename', node: n })}>Renommer</button>
                   <button onClick={() => setDlg({ kind: 'move', node: n })}>Déplacer</button>
+                  {n.visits_count > 0 && <button onClick={() => setDlg({ kind: 'reassign', node: n })}>Réaffecter les visites</button>}
                   <Tip why={whyNoDelete(n)}><button disabled={!!whyNoDelete(n)} onClick={() => void remove(n)}>Supprimer</button></Tip>
                 </td>
               </tr>); })}
           </tbody></table></div></>))}
       </Card>
       <p className="muted">Les utilisateurs se rattachent aux branches depuis la rubrique « Comptes » (un utilisateur peut être dans plusieurs branches, avec le même rôle partout).</p>
-      {dlg && <NodeModal dlg={dlg} nodes={nodes} onClose={() => setDlg(null)} onDone={(text) => { setDlg(null); reload(); if (text) setMsg({ kind: 'ok', text }); }} />}
+      {dlg?.kind === 'reassign' && <ReassignModal node={dlg.node} nodes={nodes} onClose={() => setDlg(null)} onDone={text => { setDlg(null); reload(); setMsg({ kind: 'ok', text }); }} />}
+      {dlg && dlg.kind !== 'reassign' && <NodeModal dlg={dlg} nodes={nodes} onClose={() => setDlg(null)} onDone={(text) => { setDlg(null); reload(); if (text) setMsg({ kind: 'ok', text }); }} />}
     </>
+  );
+}
+
+/** Réaffectation des visites d'une branche à une autre (pour la vider avant de la supprimer, ou corriger une erreur). */
+function ReassignModal({ node, nodes, onClose, onDone }: { node: R; nodes: R[]; onClose: () => void; onDone: (msg: string) => void }) {
+  const authors = useLoad(() => api<R>(`org/nodes/${node.id}/visit-authors`), [node.id]);
+  const [target, setTarget] = useState(''); const [addAuthors, setAddAuthors] = useState(false); const [err, setErr] = useState<string>(); const [busy, setBusy] = useState(false);
+  const dest = nodes.find(n => n.id === target);
+  const list: R[] = authors.data?.authors ?? [];
+  const missing = dest ? list.filter(a => !dest.members.some((m: R) => m.id === a.id)) : [];
+  const save = async () => {
+    setBusy(true); setErr(undefined);
+    try {
+      const r = await api<R>(`org/nodes/${node.id}/reassign-visits`, { method: 'POST', body: { target_id: target, ...(addAuthors && missing.length ? { add_authors: true } : {}) } });
+      onDone(`${r.moved} visite${r.moved > 1 ? 's' : ''} réaffectée${r.moved > 1 ? 's' : ''} à « ${dest!.name} »${r.authors_added ? `, ${r.authors_added} auteur${r.authors_added > 1 ? 's' : ''} affecté${r.authors_added > 1 ? 's' : ''} à cette branche` : ''}. ${r.revoked} accès retiré(s) sur les appareils.`);
+    } catch (e) { setErr(errMsg(e)); } finally { setBusy(false); }
+  };
+  const why = !target ? 'Choisissez la branche qui recevra les visites.' : undefined;
+  return (
+    <Modal title={`Réaffecter les visites de « ${node.name} »`} onClose={onClose} footer={<><button onClick={onClose}>Annuler</button><Tip why={why}><button className="primary" disabled={!!why || busy || list.length === 0} onClick={() => void save()}>{busy ? 'Réaffectation…' : `Réaffecter ${authors.data?.total ?? ''} visite${(authors.data?.total ?? 0) > 1 ? 's' : ''}`}</button></Tip></>}>
+      {authors.loading && <Loading />}{authors.error && <Alert>{authors.error}</Alert>}
+      {authors.data && <>
+        <p><strong>{authors.data.total}</strong> visite{authors.data.total > 1 ? 's' : ''} (supprimées comprises) de : {list.map((a, i) => <span key={a.id}>{i > 0 ? ', ' : ''}{a.name} ({a.visits}){a.status === 'disabled' ? ' — désactivé' : ''}</span>)}.</p>
+        <div className="form one"><Field label="Branche qui reçoit les visites"><select value={target} onChange={e => { setTarget(e.target.value); setAddAuthors(false); }}>
+          <option value="">Choisir…</option>{nodes.filter(n => n.id !== node.id).map(n => <option key={n.id} value={n.id}>{'\u00A0\u00A0'.repeat(n.depth)}{n.name}</option>)}</select></Field></div>
+        <Alert kind="warn">Les directeurs et managers de « {node.name} » perdent l'accès à ces visites, ceux de la branche choisie le gagnent ; les retraits sont transmis aux appareils. Chaque visite garde la trace du changement dans son historique. Les auteurs gardent l'accès à leurs visites.</Alert>
+        {dest && missing.length > 0 && <label className="check" style={{ marginTop: 8 }}><input type="checkbox" checked={addAuthors} onChange={e => setAddAuthors(e.target.checked)} /> Affecter aussi à « {dest.name} » les auteurs qui n'en sont pas membres : {missing.map(a => a.name).join(', ')}</label>}
+      </>}
+      {err && <Alert>{err}</Alert>}
+    </Modal>
   );
 }
 

@@ -47,12 +47,12 @@ export function TreeCell({ rel, info, name, open, closed, onToggle, children }: 
   );
 }
 
-/** Boutons « Tout replier / Tout déplier » (la racine reste dépliée). */
+/** Boutons « Tout replier » (toutes les branches qui ont des sous-branches, premier niveau compris) / « Tout déplier ». */
 export function CollapseAll({ nodes, infos, collapsed, set }: { nodes: TNode[]; infos: TInfo[]; collapsed: Set<string>; set: (s: Set<string>) => void }) {
   return (
     <>
       <button type="button" onClick={() => set(new Set())} disabled={collapsed.size === 0}>Tout déplier</button>
-      <button type="button" onClick={() => set(new Set(nodes.filter((_, i) => infos[i]!.subs > 0 && infos[i]!.rel > 0).map(n => n.id)))}>Tout replier</button>
+      <button type="button" onClick={() => set(new Set(nodes.filter((_, i) => infos[i]!.subs > 0).map(n => n.id)))}>Tout replier</button>
     </>
   );
 }

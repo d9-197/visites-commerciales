@@ -310,7 +310,7 @@ CREATE TRIGGER visit_contact_seq BEFORE INSERT OR UPDATE ON visit_contact FOR EA
 CREATE TABLE visit_history (
   id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   visit_id        uuid NOT NULL REFERENCES visit(id),
-  field           text NOT NULL CHECK (field IN ('planned_start','location_text','report_validated','report_reopened','visit_deleted')),
+  field           text NOT NULL CHECK (field IN ('planned_start','location_text','report_validated','report_reopened','visit_deleted','org_node')),
   old_value       text,
   new_value       text,
   changed_by      uuid REFERENCES app_user(id),

@@ -1013,7 +1013,7 @@ function HistorySheet({ visible, entries, onClose }: { visible: boolean; entries
       {entries.length === 0 && <Text style={s.muted}>Aucune modification depuis la création de la visite.</Text>}
       {entries.map(e => (
         <View key={e.id} style={s.hist}>
-          <Text style={s.t}>{EVENT_LABEL[e.field] ?? (e.field === 'planned_start' ? 'Date prévue' : 'Adresse de la visite')}</Text>
+          <Text style={s.t}>{EVENT_LABEL[e.field] ?? (e.field === 'planned_start' ? 'Date prévue' : e.field === 'org_node' ? 'Branche' : 'Adresse de la visite')}</Text>
           <Text style={s.muted}>{fmtDateTime(e.changed_at)} · {e.changed_by_name}</Text>
           {!EVENT_LABEL[e.field] && <Text style={{ color: s.t.color }}>{val(e, e.old_value)}  →  {val(e, e.new_value)}</Text>}
         </View>))}

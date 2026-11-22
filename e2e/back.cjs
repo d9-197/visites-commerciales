@@ -146,6 +146,8 @@ const dialog = page => page.getByRole('dialog');
   await rowOf('Équipe Nord').waitFor();
   await page.getByRole('button', { name: 'Tout replier' }).click();
   await page.getByRole('row').filter({ hasText: 'Équipe Nord' }).waitFor({ state: 'detached' });
+  await page.getByRole('row').filter({ hasText: 'Agence Lyon' }).waitFor({ state: 'detached' });     // « Tout replier » replie aussi le premier niveau : seule la branche de premier niveau reste
+  await rowOf('Entreprise').getByText('+', { exact: false }).first().waitFor();
   await page.getByRole('button', { name: 'Tout déplier' }).click();
   await rowOf('Équipe Nord').waitFor();
   await nav(page, 'Comptes');
@@ -251,6 +253,17 @@ const dialog = page => page.getByRole('dialog');
   await page.getByRole('button', { name: 'Exporter en CSV' }).click();
   const file = await dl; assert.match(file.suggestedFilename(), /^activite-\d{4}-\d{2}-\d{2}-\d{4}-\d{2}-\d{2}\.csv$/);
   await shot(page, 'b7-reporting');
+
+  // 7 bis. Réaffecter les visites d'une branche à une autre (pour la vider avant de la supprimer)
+  await nav(page, 'Organisation');
+  await rowOf('Agence Grenoble').getByRole('button', { name: 'Réaffecter les visites' }).click();         // la visite de Commercial Deux y a été créée sur mobile
+  await dialog(page).getByText(/Commercial Deux \(1\)/).waitFor();
+  const lyon = await dialog(page).locator('option', { hasText: 'Agence Lyon' }).first().getAttribute('value');
+  await dialog(page).locator('select').selectOption(lyon);
+  await shot(page, 'b7b-reaffecter');
+  await dialog(page).getByRole('button', { name: /^Réaffecter 1 visite/ }).click();
+  await page.getByText(/1 visite réaffectée à « Agence Lyon »/).waitFor();
+  assert.equal(await rowOf('Agence Grenoble').getByRole('button', { name: 'Réaffecter les visites' }).count(), 0, 'plus de visite dans la branche vidée');
 
   // 8. Manager : périmètre limité (pas de comptes), planification pour son équipe seulement
   const c3 = await browser.newContext({ viewport: { width: 1360, height: 900 } });

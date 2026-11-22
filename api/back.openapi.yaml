@@ -137,6 +137,65 @@ paths:
         '404': {$ref: 'common.yaml#/components/responses/NotFound'}
         '409': {description: "`has_children`, `has_members` ou `has_visits`.", content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}}
 
+  /org/nodes/{id}/visit-authors:
+    get:
+      tags: [Organisation]
+      summary: Auteurs des visites d'une branche (administrateurs)
+      description: "Pour préparer une réaffectation : auteurs et nombre de visites de la branche (toutes, supprimées comprises)."
+      parameters:
+        - {$ref: '#/components/parameters/Id'}
+      responses:
+        '200':
+          description: Auteurs.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [authors, total]
+                properties:
+                  total: {type: integer}
+                  authors:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+                        name: {type: string}
+                        status: {type: string, enum: [active, disabled]}
+                        role: {$ref: '#/components/schemas/Role'}
+                        visits: {type: integer}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: 'common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+  /org/nodes/{id}/reassign-visits:
+    post:
+      tags: [Organisation]
+      summary: Réaffecter les visites d'une branche à une autre (administrateurs)
+      description: "Toutes les visites de la branche (supprimées comprises), ou seulement `visit_ids`. Change les droits : les managers et directeurs de la branche d'origine perdent l'accès, ceux de la branche cible le gagnent ; les retraits sont transmis aux appareils (`revoked`). Chaque visite reçoit un événement `org_node` dans son historique (ancienne et nouvelle branche, auteur du changement) et sa version augmente. Les auteurs gardent l'accès à leurs visites. `add_authors` : affecte aussi à la branche cible les auteurs qui n'en sont pas membres. Sert notamment à vider une branche avant de la supprimer."
+      parameters:
+        - {$ref: '#/components/parameters/Id'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_id]
+              additionalProperties: false
+              properties:
+                target_id: {$ref: 'common.yaml#/components/schemas/Uuid'}
+                visit_ids: {type: array, maxItems: 5000, items: {$ref: 'common.yaml#/components/schemas/Uuid'}}
+                add_authors: {type: boolean}
+      responses:
+        '200':
+          description: Réaffectées.
+          content: {application/json: {schema: {type: object, properties: {moved: {type: integer}, authors_added: {type: integer}, revoked: {type: integer}}}}}
+        '400': {$ref: 'common.yaml#/components/responses/BadRequest'}
+        '401': {$ref: 'common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: 'common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: 'common.yaml#/components/responses/NotFound'}
+        '409': {description: "`same_node` (la cible est la branche actuelle).", content: {application/problem+json: {schema: {$ref: 'common.yaml#/components/schemas/Problem'}}}}
+
   /reports/activity:
     get:
       tags: [Reporting]
@@ -837,7 +896,7 @@ components:
         - type: object
           properties:
             children_count: {type: integer}
-            visits_count: {type: integer}
+            visits_count: {type: integer, description: "Toutes les visites de la branche, supprimées comprises (ce sont elles qui empêchent sa suppression)."}
             members:
               type: array
               items: {type: object, properties: {id: {$ref: 'common.yaml#/components/schemas/Uuid'}, name: {type: string}, role: {$ref: '#/components/schemas/Role'}}}
@@ -1066,7 +1125,7 @@ components:
           items:
             type: object
             properties:
-              field: {type: string, enum: [planned_start, location_text, report_validated, report_reopened, visit_deleted]}
+              field: {type: string, enum: [planned_start, location_text, report_validated, report_reopened, visit_deleted, org_node]}
               old_value: {type: [string, 'null']}
               new_value: {type: [string, 'null']}
               changed_by_name: {type: string}
